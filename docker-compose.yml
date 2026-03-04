@@ -1,0 +1,58 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: voicechat_api
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mongo
+    volumes:
+      - ./:/app
+      - uploads_data:/app/uploads
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  mongo:
+    image: mongo:7
+    container_name: voicechat_mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: voice_chat
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  # Optional: SMTP test server with web UI at http://localhost:8025
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: voicechat_mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI
+
+  # Optional: S3-compatible object storage (MinIO)
+  minio:
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
+    container_name: voicechat_minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000" # S3 endpoint
+      - "9001:9001" # MinIO console
+    volumes:
+      - minio_data:/data
+
+volumes:
+  mongo_data:
+  uploads_data:
+  minio_data:
