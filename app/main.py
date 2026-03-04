@@ -23,6 +23,8 @@ from app.core.logging import setup_logging
 from app.db.mongo import connect_mongo, disconnect_mongo, get_db
 from app.db.indexes import ensure_indexes
 
+from app.modules.auth.router import router as auth_router
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -47,13 +49,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# middleware
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(SuccessEnvelopeMiddleware)
 
+# exception handlers
 app.add_exception_handler(AppError, app_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)
+
+# routers
+app.include_router(auth_router)
 
 # Serve local uploads (dev/local storage mode)
 # This gives URLs like: /media/<filename>
