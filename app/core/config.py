@@ -1,11 +1,14 @@
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
+_ENV_FILE = os.getenv("ENV_FILE", ".env")
 
 class Settings(BaseSettings):
     # Keep strict (forbidden extras) so you catch typos in env vars early
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )

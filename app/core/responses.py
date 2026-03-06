@@ -16,5 +16,5 @@ def ok(
     status_code: int = 200,
 ) -> JSONResponse:
     request_id = getattr(request.state, "request_id", None)
-    payload = SuccessResponse(data=data, meta=meta, request_id=request_id).model_dump()
+    payload = SuccessResponse(data=data, meta=meta, request_id=request_id).model_dump(mode="json")
     return JSONResponse(status_code=status_code, content=payload)

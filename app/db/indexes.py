@@ -26,5 +26,13 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
         name="ix_messages_conversation_createdAt_desc",
     )
 
-    # Helpful secondary indexes
-    await db[COL_MESSAGES].create_index([("receiver_id", ASCENDING), ("created_at", DESCENDING)], name="ix_messages_receiver_createdAt_desc")
+    # Optional but useful for inbox-like queries later:
+    await db[COL_MESSAGES].create_index(
+        [("receiver_id", ASCENDING), ("created_at", DESCENDING)],
+        name="ix_messages_receiver_createdAt_desc",
+    )
+
+    await db[COL_MESSAGES].create_index(
+        [("sender_id", ASCENDING), ("created_at", DESCENDING)],
+        name="ix_messages_sender_createdAt_desc",
+    )
