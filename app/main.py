@@ -4,26 +4,29 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.exceptions import RequestValidationError
-from starlette.exceptions import HTTPException as StarletteHTTPException
+from socketio import ASGIApp
 
+from app.core.config import settings
 from app.core.middleware import RequestIdMiddleware, SuccessEnvelopeMiddleware
+from app.core.exceptions import AppError
 from app.core.error_handlers import (
     app_error_handler,
     validation_error_handler,
     http_exception_handler,
     unhandled_exception_handler,
 )
-from app.core.exceptions import AppError
-from app.core.config import settings
 from app.core.logging import setup_logging
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.db.mongo import connect_mongo, disconnect_mongo, get_db
 from app.db.indexes import ensure_indexes
 
 from app.modules.auth.router import router as auth_router
+from app.modules.messages.router import router as messages_router
+from app.modules.realtime.socket_server import sio
 
 
 @asynccontextmanager
@@ -61,11 +64,14 @@ app.add_exception_handler(Exception, unhandled_exception_handler)
 
 # routers
 app.include_router(auth_router)
+app.include_router(messages_router)
 
 # Serve local uploads (dev/local storage mode)
 # This gives URLs like: /media/<filename>
 app.mount("/media", StaticFiles(directory=settings.upload_dir), name="media")
 
+# ✅ The real ASGI app (FastAPI + Socket.IO)
+asgi_app = ASGIApp(sio, other_asgi_app=app, socketio_path="socket.io",)
 
 @app.get("/health")
 async def health():
