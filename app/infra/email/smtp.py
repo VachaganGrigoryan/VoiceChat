@@ -5,7 +5,7 @@ from email.message import EmailMessage
 import aiosmtplib
 
 from app.core.config import settings
-from app.core.exceptions import AppError
+from app.core.errors import AppError
 from app.infra.email.base import EmailSender
 
 

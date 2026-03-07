@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any, Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 
-from app.core.exceptions import AppError
+from app.core.errors import AppError
 from app.db.indexes import COL_USERS
 
 
@@ -26,8 +26,8 @@ class UsersRepository:
         doc = {
             "email": email.lower().strip(),
             "is_verified": False,
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
         }
         try:
             res = await self.col.insert_one(doc)
@@ -45,7 +45,7 @@ class UsersRepository:
     async def set_verified(self, user_id: str) -> None:
         res = await self.col.update_one(
             {"_id": _oid(user_id)},
-            {"$set": {"is_verified": True, "updated_at": datetime.utcnow()}},
+            {"$set": {"is_verified": True, "updated_at": datetime.now(UTC)}},
         )
         if res.matched_count == 0:
             raise AppError(code="USER_NOT_FOUND", message="User not found", status_code=404)
@@ -63,8 +63,8 @@ class UsersRepository:
         doc = {
             "email": email_n,
             "is_verified": False,
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
         }
         try:
             res = await self.col.insert_one(doc)

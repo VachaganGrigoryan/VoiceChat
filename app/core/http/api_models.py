@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Generic, Optional, TypeVar
+from typing import Any, Generic, Optional, TypeVar
+
 from pydantic import BaseModel, Field
 
 T = TypeVar("T")
+
 
 class ErrorDetail(BaseModel):
     field: Optional[str] = None
@@ -23,8 +25,7 @@ class ErrorResponse(BaseModel):
     request_id: Optional[str] = None
 
 
-class Meta(BaseModel):
-    # Optional: for pagination, counts, etc.
+class PaginationMeta(BaseModel):
     cursor: Optional[str] = None
     next_cursor: Optional[str] = None
     limit: Optional[int] = None
@@ -34,5 +35,8 @@ class Meta(BaseModel):
 class SuccessResponse(BaseModel, Generic[T]):
     success: bool = Field(default=True)
     data: T
-    meta: Optional[Meta] = None
     request_id: Optional[str] = None
+
+
+class PaginatedResponse(SuccessResponse, Generic[T]):
+    meta: PaginationMeta

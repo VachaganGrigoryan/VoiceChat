@@ -5,24 +5,29 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from starlette.requests import Request
 
-from app.core.api_models import Meta, SuccessResponse
-from app.core.openapi import COMMON_ERROR_RESPONSES
-from app.core.responses import ok
+from app.core.http import ok, PaginationMeta, SuccessResponse, PaginatedResponse, ok_paginated
+from app.core.errors.openapi import build_error_responses
+from app.core.rate_limit import rate_limit
 from app.core.security import require_verified_user
 from app.db.mongo import get_db
 from app.modules.messages.repository import MessagesRepository
 from app.modules.messages.schemas import MessageDoc
 from app.modules.messages.service import MessagesService
-from app.modules.realtime.socket_server import emit_voice_message_to_receiver
+from app.modules.realtime import emit_voice_message_to_receiver
 
 router = APIRouter(
     prefix="/messages",
     tags=["messages"],
-    responses=COMMON_ERROR_RESPONSES,
+    responses=build_error_responses(400, 401, 422, 500),
 )
 
 
-@router.post("/voice", status_code=201, response_model=SuccessResponse[MessageDoc])
+@router.post(
+    "/voice",
+    status_code=201,
+    response_model=SuccessResponse[MessageDoc],
+    dependencies=[Depends(rate_limit("30/minute", scope="voice_upload"))],
+)
 async def upload_voice(
     request: Request,
     receiver_id: str = Form(...),
@@ -52,7 +57,11 @@ async def upload_voice(
     )
 
 
-@router.get("/{user_id}", response_model=SuccessResponse[list[MessageDoc]])
+@router.get(
+    "/{user_id}",
+    response_model=PaginatedResponse[list[MessageDoc]],
+    dependencies=[Depends(rate_limit("30/minute", scope="message_history"))],
+)
 async def history(
     request: Request,
     user_id: str,
@@ -70,10 +79,10 @@ async def history(
         cursor=cursor,
     )
 
-    return ok(
+    return ok_paginated(
         request,
         data=items,
-        meta=Meta(
+        meta=PaginationMeta(
             cursor=cursor,
             next_cursor=next_cursor,
             limit=limit,

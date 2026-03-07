@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hmac
 import hashlib
-from datetime import datetime, timedelta
+import secrets
+from datetime import datetime, timedelta, UTC
 from typing import Any
 
 from fastapi import Depends
@@ -10,7 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt, JWTError
 
 from app.core.config import settings
-from app.core.exceptions import AppError
+from app.core.errors import AppError
 from app.db.mongo import get_db
 from app.modules.auth.repository import UsersRepository
 
@@ -18,9 +19,14 @@ bearer = HTTPBearer(auto_error=False)
 
 
 def create_access_token(*, subject: str, extra: dict[str, Any] | None = None) -> str:
-    now = datetime.utcnow()
-    exp = now + timedelta(minutes=settings.jwt_expire_minutes)
-    payload: dict[str, Any] = {"sub": subject, "iat": int(now.timestamp()), "exp": int(exp.timestamp())}
+    now = datetime.now(UTC)
+    exp = now + timedelta(minutes=settings.access_token_expire_minutes)
+    payload: dict[str, Any] = {
+        "sub": subject,
+        "iat": int(now.timestamp()),
+        "exp": int(exp.timestamp()),
+        "type": "access",
+    }
     if extra:
         payload.update(extra)
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_alg)
@@ -28,9 +34,22 @@ def create_access_token(*, subject: str, extra: dict[str, Any] | None = None) ->
 
 def decode_token(token: str) -> dict[str, Any]:
     try:
-        return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_alg])
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_alg])
     except JWTError:
         raise AppError(code="UNAUTHORIZED", message="Invalid or expired token", status_code=401)
+
+    if payload.get("type") != "access":
+        raise AppError(code="UNAUTHORIZED", message="Invalid token type", status_code=401)
+
+    return payload
+
+
+def generate_refresh_token() -> str:
+    return secrets.token_urlsafe(48)
+
+
+def hash_refresh_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 async def get_current_user(
