@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Generic, Optional, TypeVar
+from typing import Any, Generic, Optional, TypeVar
 from pydantic import BaseModel, Field
 
 T = TypeVar("T")

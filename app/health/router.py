@@ -3,8 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Response, status
 from starlette.requests import Request
 
-from app.core.api_models import SuccessResponse
-from app.core.responses import ok
+from app.core.http import ok, SuccessResponse
 from app.health.schemas import HealthStatus, LiveStatus
 from app.health.service import HealthService
 

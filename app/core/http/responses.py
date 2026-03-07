@@ -5,7 +5,7 @@ from typing import Any, Optional
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
-from app.core.api_models import SuccessResponse, Meta
+from app.core.http.api_models import SuccessResponse, Meta
 
 
 def ok(

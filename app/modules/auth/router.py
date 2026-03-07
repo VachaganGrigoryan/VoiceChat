@@ -3,10 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from starlette.requests import Request
 
-from app.core.api_models import SuccessResponse
-from app.core.openapi import build_error_responses
-from app.core.rate_limit_deps import rate_limit
-from app.core.responses import ok
+from app.core.http import ok, SuccessResponse
+from app.core.errors.openapi import build_error_responses
+from app.core.rate_limit import rate_limit
 from app.db.mongo import get_db
 from app.modules.auth.schemas import (
     GenericEmailRequest,

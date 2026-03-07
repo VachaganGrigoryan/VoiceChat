@@ -4,7 +4,7 @@ import secrets
 from datetime import datetime, timedelta
 
 from app.core.config import settings
-from app.core.exceptions import AppError
+from app.core.errors import AppError
 from app.core.security import (
     create_access_token,
     generate_refresh_token,

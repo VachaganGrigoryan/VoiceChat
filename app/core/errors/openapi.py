@@ -1,4 +1,4 @@
-from app.core.api_models import ErrorResponse
+from app.core.http import ErrorResponse
 
 DEFAULT_ERROR_CODES = (400, 401, 404, 422, 500)
 

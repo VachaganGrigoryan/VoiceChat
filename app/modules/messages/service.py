@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import UploadFile
 
 from app.core.config import settings
-from app.core.exceptions import AppError
+from app.core.errors import AppError
 from app.infra.storage import get_storage
 from app.modules.messages.mappers import to_message_doc
 from app.modules.messages.repository import MessagesRepository

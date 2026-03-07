@@ -3,9 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from starlette.requests import Request
 
-from app.core.api_models import SuccessResponse
-from app.core.openapi import build_error_responses
-from app.core.responses import ok
+from app.core.http import ok, SuccessResponse
+from app.core.errors.openapi import build_error_responses
 from app.core.security import require_verified_user
 from app.modules.realtime.presence import get_presence_backend
 

@@ -6,7 +6,7 @@ from limits import parse
 from limits.aio import storage, strategies
 
 from app.core.config import settings
-from app.core.exceptions import AppError
+from app.core.errors import AppError
 
 
 def build_storage(storage_uri: str):

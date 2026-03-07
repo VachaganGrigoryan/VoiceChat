@@ -5,7 +5,7 @@ from typing import Awaitable
 
 from fastapi import Request
 
-from app.core.rate_limit import RateLimitRule, rate_limiter
+from app.core.rate_limit.limiter import RateLimitRule, rate_limiter
 
 
 def get_client_ip(request: Request) -> str:

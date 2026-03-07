@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.core.exceptions import AppError
+from app.core.errors import AppError
 from app.core.security import decode_token
 
 

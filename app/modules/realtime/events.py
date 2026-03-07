@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.core.exceptions import AppError
+from app.core.errors import AppError
 from app.db.mongo import get_db
 from app.modules.messages.repository import MessagesRepository
 from app.modules.realtime.auth import authenticate_socket, get_socket_user_id

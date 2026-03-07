@@ -11,7 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt, JWTError
 
 from app.core.config import settings
-from app.core.exceptions import AppError
+from app.core.errors import AppError
 from app.db.mongo import get_db
 from app.modules.auth.repository import UsersRepository
 

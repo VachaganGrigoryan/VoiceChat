@@ -6,14 +6,14 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import settings
-from app.core.error_handlers import (
+from app.core.errors import (
+    AppError,
     app_error_handler,
     http_exception_handler,
     unhandled_exception_handler,
     validation_error_handler,
 )
-from app.core.exceptions import AppError
-from app.core.middleware import RequestIdMiddleware, SuccessEnvelopeMiddleware
+from app.core.http import RequestIdMiddleware, SuccessEnvelopeMiddleware
 from app.lifespan import lifespan
 from app.routes import register_routers
 

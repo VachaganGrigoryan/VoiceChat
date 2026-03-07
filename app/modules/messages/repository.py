@@ -6,7 +6,7 @@ from typing import Any, Optional
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.exceptions import AppError
+from app.core.errors import AppError
 from app.db.indexes import COL_MESSAGES
 
 
