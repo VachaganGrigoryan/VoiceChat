@@ -18,7 +18,7 @@ services:
     volumes:
       - ./:/app
       - uploads_data:/app/uploads
-    command: poetry run uvicorn app:asgi_app --host 0.0.0.0 --port 8000 --reload
+    command: poetry run uvicorn app.main:asgi_app --host 0.0.0.0 --port 8000 --reload
 
   email_worker:
     build:
@@ -46,6 +46,11 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   # Optional: SMTP test server with web UI at http://localhost:8025
   mailhog:
@@ -77,6 +82,11 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -90,6 +100,53 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  api_test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: voicechat_api_test
+    env_file:
+      - .env.test
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    profiles: ["test"]
+    volumes:
+      - ./:/app
+    ports:
+      - "8001:8000"
+    command: poetry run uvicorn app.main:asgi_app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: voicechat_tests
+    env_file:
+      - .env.test
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      api_test:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    profiles: [ "test" ]
+    command: poetry run pytest -v app/tests
 
 volumes:
   mongo_data:
