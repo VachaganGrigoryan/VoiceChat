@@ -5,13 +5,28 @@ from typing import Any
 import socketio
 from fastapi.encoders import jsonable_encoder
 
+from app.core.config import settings
 
-sio = socketio.AsyncServer(
-    async_mode="asgi",
-    cors_allowed_origins="*",
-    logger=False,
-    engineio_logger=False,
-)
+
+def create_client_manager():
+    if settings.socketio_queue_backend == "redis":
+        return socketio.AsyncRedisManager(settings.socketio_redis_url)
+    return None
+
+
+def create_socket_server() -> socketio.AsyncServer:
+    manager = create_client_manager()
+
+    return socketio.AsyncServer(
+        async_mode="asgi",
+        cors_allowed_origins="*",
+        logger=False,
+        engineio_logger=False,
+        client_manager=manager,
+    )
+
+
+sio = create_socket_server()
 
 
 async def emit_to_user(user_id: str, event: str, payload: dict[str, Any]) -> None:

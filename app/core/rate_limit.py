@@ -13,7 +13,8 @@ def build_storage(storage_uri: str):
     if storage_uri == "async+memory://":
         return storage.MemoryStorage()
     if storage_uri.startswith("async+redis://"):
-        return storage.RedisStorage(storage_uri)
+        return storage.RedisStorage(storage_uri, implementation="redispy")
+
     raise ValueError(f"Unsupported rate limit storage URI: {storage_uri}")
 
 
