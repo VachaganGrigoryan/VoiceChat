@@ -70,17 +70,6 @@ async def test_socket_connect_and_voice_delivery(live_client):
         sender_status_events.append(data)
         sender_status_event.set()
 
-    sender_connect_errors = []
-    receiver_connect_errors = []
-
-    @sender_sio.on("connect_error")
-    async def on_sender_connect_error(data):
-        sender_connect_errors.append(data)
-
-    @receiver_sio.on("connect_error")
-    async def on_receiver_connect_error(data):
-        receiver_connect_errors.append(data)
-
     try:
         await asyncio.wait_for(
             sender_sio.connect(
@@ -145,8 +134,6 @@ async def test_socket_connect_and_voice_delivery(live_client):
         assert status_payload["status"] == "delivered"
 
     finally:
-        print("sender_connect_errors:", sender_connect_errors)
-        print("receiver_connect_errors:", receiver_connect_errors)
         if sender_sio.connected:
             await asyncio.wait_for(sender_sio.disconnect(), timeout=3)
         if receiver_sio.connected:

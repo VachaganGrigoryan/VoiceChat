@@ -1,7 +1,8 @@
 import os
+from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, field_validator
 
 _ENV_FILE = os.getenv("ENV_FILE", ".env")
 
@@ -14,9 +15,13 @@ class Settings(BaseSettings):
     )
 
     app_env: str = Field(default="dev", alias="APP_ENV")
+    cors_allowed_origins: list[str] = Field(
+        default=["*"],
+        alias="CORS_ALLOWED_ORIGINS"
+    )
 
     # Mongo
-    mongo_uri: str = Field(alias="MONGO_URI")
+    mongo_uri: str = Field(default="mongodb://mongo:27017", alias="MONGO_URI")
     mongo_db: str = Field(default="voice_chat", alias="MONGO_DB")
 
     # JWT

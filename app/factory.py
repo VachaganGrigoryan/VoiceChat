@@ -4,6 +4,7 @@ import os
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -25,6 +26,14 @@ def create_app() -> FastAPI:
         title="Real-Time Voice Chat API",
         version="0.1.0",
         lifespan=lifespan,
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allowed_origins,  # List of allowed origins
+        allow_credentials=True,  # Allow cookies and authorization headers
+        allow_methods=["*"],  # Allow all methods (GET, POST, PUT, DELETE, etc.)
+        allow_headers=["*"],  # Allow all headers
     )
 
     register_middlewares(app)
