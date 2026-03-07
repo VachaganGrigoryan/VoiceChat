@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     # JWT
     jwt_secret: str = Field(default="supersecret", alias="JWT_SECRET")
     jwt_alg: str = Field(default="HS256", alias="JWT_ALG")
-    jwt_expire_minutes: int = Field(default=60, alias="JWT_EXPIRE_MINUTES")
+    access_token_expire_minutes: int = Field(default=60, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
+    refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
 
     # Uploads
     upload_dir: str = Field(default="uploads", alias="UPLOAD_DIR")

@@ -12,10 +12,14 @@ from app.modules.auth.schemas import (
     GenericEmailRequest,
     GenericCodeSentResponse,
     VerifyRequest,
-    VerifyResponse,
+    TokenPairResponse,
+    RefreshRequest,
+    MessageResponse,
+    LogoutRequest,
 )
 from app.modules.auth.repository import UsersRepository
 from app.modules.verification.repository import VerificationCodesRepository
+from app.modules.auth.refresh_repository import RefreshTokensRepository
 from app.modules.auth.service import AuthService
 
 router = APIRouter(
@@ -34,21 +38,29 @@ router = APIRouter(
 )
 async def register(request: Request, body: GenericEmailRequest):
     db = get_db()
-    service = AuthService(UsersRepository(db), VerificationCodesRepository(db))
+    service = AuthService(
+        UsersRepository(db),
+        VerificationCodesRepository(db),
+        RefreshTokensRepository(db),
+    )
     result = await service.register(email=body.email)
     return ok(request, data=GenericCodeSentResponse(**result))
 
 
 @router.post(
     "/verify",
-    response_model=SuccessResponse[VerifyResponse],
+    response_model=SuccessResponse[TokenPairResponse],
     dependencies=[Depends(rate_limit("10/15 minutes", scope="auth_verify"))],
 )
 async def verify(request: Request, body: VerifyRequest):
     db = get_db()
-    service = AuthService(UsersRepository(db), VerificationCodesRepository(db))
+    service = AuthService(
+        UsersRepository(db),
+        VerificationCodesRepository(db),
+        RefreshTokensRepository(db),
+    )
     result = await service.verify(email=body.email, code=body.code)
-    return ok(request, data=VerifyResponse(**result))
+    return ok(request, data=TokenPairResponse(**result))
 
 
 @router.post(
@@ -58,6 +70,46 @@ async def verify(request: Request, body: VerifyRequest):
 )
 async def login(request: Request, body: GenericEmailRequest):
     db = get_db()
-    service = AuthService(UsersRepository(db), VerificationCodesRepository(db))
+    service = AuthService(
+        UsersRepository(db),
+        VerificationCodesRepository(db),
+        RefreshTokensRepository(db),
+    )
     result = await service.login(email=body.email)
     return ok(request, data=GenericCodeSentResponse(**result))
+
+
+@router.post(
+    "/refresh",
+    response_model=SuccessResponse[TokenPairResponse],
+)
+async def refresh(request: Request, body: RefreshRequest):
+    db = get_db()
+    service = AuthService(
+        UsersRepository(db),
+        VerificationCodesRepository(db),
+        RefreshTokensRepository(db),
+    )
+
+    result = await service.refresh(
+        refresh_token=body.refresh_token,
+        user_agent=request.headers.get("user-agent"),
+        ip=request.client.host if request.client else None,
+    )
+    return ok(request, data=TokenPairResponse(**result))
+
+
+@router.post(
+    "/logout",
+    response_model=SuccessResponse[MessageResponse],
+)
+async def logout(request: Request, body: LogoutRequest):
+    db = get_db()
+    service = AuthService(
+        UsersRepository(db),
+        VerificationCodesRepository(db),
+        RefreshTokensRepository(db),
+    )
+
+    result = await service.logout(refresh_token=body.refresh_token)
+    return ok(request, data=MessageResponse(**result))

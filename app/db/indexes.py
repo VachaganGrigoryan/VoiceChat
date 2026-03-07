@@ -7,6 +7,7 @@ from pymongo import ASCENDING, DESCENDING
 COL_USERS = "users"
 COL_VERIFICATION = "verification_codes"
 COL_MESSAGES = "messages"
+COL_REFRESH_TOKENS = "refresh_tokens"
 
 
 async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
@@ -35,4 +36,22 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db[COL_MESSAGES].create_index(
         [("sender_id", ASCENDING), ("created_at", DESCENDING)],
         name="ix_messages_sender_createdAt_desc",
+    )
+
+    # REFRESH_TOKENS: unique token_hash
+    await db[COL_REFRESH_TOKENS].create_index(
+        [("token_hash", ASCENDING)],
+        unique=True,
+        name="ux_refresh_tokens_token_hash",
+    )
+
+    await db[COL_REFRESH_TOKENS].create_index(
+        [("user_id", ASCENDING), ("created_at", DESCENDING)],
+        name="ix_refresh_tokens_user_createdAt_desc",
+    )
+
+    await db[COL_REFRESH_TOKENS].create_index(
+        [("expires_at", ASCENDING)],
+        expireAfterSeconds=0,
+        name="ttl_refresh_tokens_expires",
     )

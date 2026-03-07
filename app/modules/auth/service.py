@@ -5,7 +5,14 @@ from datetime import datetime, timedelta
 
 from app.core.config import settings
 from app.core.exceptions import AppError
-from app.core.security import create_access_token, hash_verification_code, verify_verification_code
+from app.core.security import (
+    create_access_token,
+    generate_refresh_token,
+    hash_refresh_token,
+    hash_verification_code,
+    verify_verification_code,
+)
+from app.modules.auth.refresh_repository import RefreshTokensRepository
 from app.infra.email.jobs import SendVerificationCodeJob
 from app.infra.queue import get_job_queue
 from app.modules.auth.repository import UsersRepository
@@ -25,9 +32,15 @@ def _generate_6_digit_code() -> str:
 
 
 class AuthService:
-    def __init__(self, users: UsersRepository, codes: VerificationCodesRepository):
+    def __init__(
+        self,
+        users: UsersRepository,
+        codes: VerificationCodesRepository,
+        refresh_tokens: RefreshTokensRepository,
+    ):
         self.users = users
         self.codes = codes
+        self.refresh_tokens = refresh_tokens
         self.job_queue = get_job_queue()
 
     async def _enqueue_verification_email(self, *, email: str, code: str) -> None:
@@ -77,6 +90,55 @@ class AuthService:
 
         return generic_response
 
+    async def login(self, *, email: str) -> dict:
+        """
+        Send login code only if user exists and is verified.
+        (To avoid user enumeration, you may always return 200.)
+        """
+        generic_response = {
+            "email": email,
+            "message": "If the account exists and is verified, a login code has been sent."
+        }
+
+        user = await self.users.find_by_email(email)
+        # Anti-enumeration option: always return 200 and do nothing if user not found.
+        if not user:
+            return generic_response
+
+        if not user.get("is_verified"):
+            return generic_response
+
+        await self._create_code_and_send_verification_email(user_id=str(user["_id"]), email=email)
+
+        return generic_response
+
+    async def _issue_token_pair(
+        self,
+        *,
+        user_id: str,
+        user_agent: str | None = None,
+        ip: str | None = None,
+    ) -> dict:
+        access_token = create_access_token(subject=user_id)
+
+        refresh_token = generate_refresh_token()
+        refresh_hash = hash_refresh_token(refresh_token)
+        expires_at = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
+
+        await self.refresh_tokens.create_token(
+            user_id=user_id,
+            token_hash=refresh_hash,
+            expires_at=expires_at,
+            user_agent=user_agent,
+            ip=ip,
+        )
+
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+        }
+
     async def verify(self, *, email: str, code: str) -> dict:
         """
         Unified verify endpoint (supports 3-endpoint design):
@@ -124,27 +186,60 @@ class AuthService:
         # - delete that purpose (or all purposes if you want stricter)
         await self.codes.delete_by_user_and_purpose(user_id=user_id, purpose=code_doc["purpose"])
 
-        token = create_access_token(subject=user_id)
-        return {"access_token": token, "token_type": "bearer"}
+        return await self._issue_token_pair(user_id=user_id)
 
-    async def login(self, *, email: str) -> dict:
-        """
-        Send login code only if user exists and is verified.
-        (To avoid user enumeration, you may always return 200.)
-        """
-        generic_response = {
-            "email": email,
-            "message": "If the account exists and is verified, a login code has been sent."
+    async def refresh(
+        self,
+        *,
+        refresh_token: str,
+        user_agent: str | None = None,
+        ip: str | None = None,
+    ) -> dict:
+        token_hash = hash_refresh_token(refresh_token)
+
+        existing = await self.refresh_tokens.find_any_by_hash(token_hash=token_hash)
+        if not existing:
+            raise AppError(code="UNAUTHORIZED", message="Invalid refresh token", status_code=401)
+
+        # Reuse detection: token exists but is no longer active
+        active = await self.refresh_tokens.find_active_by_hash(token_hash=token_hash)
+        if not active:
+            user_id = str(existing["user_id"])
+            await self.refresh_tokens.revoke_all_for_user(user_id=user_id)
+            raise AppError(
+                code="UNAUTHORIZED",
+                message="Refresh token reuse detected. Please login again.",
+                status_code=401,
+            )
+
+        user_id = str(active["user_id"])
+
+        new_refresh_token = generate_refresh_token()
+        new_refresh_hash = hash_refresh_token(new_refresh_token)
+
+        await self.refresh_tokens.revoke_token(
+            token_hash=token_hash,
+            replaced_by_token_hash=new_refresh_hash,
+        )
+
+        access_token = create_access_token(subject=user_id)
+        expires_at = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
+
+        await self.refresh_tokens.create_token(
+            user_id=user_id,
+            token_hash=new_refresh_hash,
+            expires_at=expires_at,
+            user_agent=user_agent,
+            ip=ip,
+        )
+
+        return {
+            "access_token": access_token,
+            "refresh_token": new_refresh_token,
+            "token_type": "bearer",
         }
 
-        user = await self.users.find_by_email(email)
-        # Anti-enumeration option: always return 200 and do nothing if user not found.
-        if not user:
-            return generic_response
-
-        if not user.get("is_verified"):
-            return generic_response
-
-        await self._create_code_and_send_verification_email(user_id=str(user["_id"]), email=email)
-
-        return generic_response
+    async def logout(self, *, refresh_token: str) -> dict:
+        token_hash = hash_refresh_token(refresh_token)
+        await self.refresh_tokens.revoke_token(token_hash=token_hash)
+        return {"message": "Logged out successfully"}
