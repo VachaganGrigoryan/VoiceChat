@@ -23,6 +23,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.db.mongo import connect_mongo, disconnect_mongo, get_db
 from app.db.indexes import ensure_indexes
+from app.infra.queue import get_job_queue
 
 from app.modules.auth.router import router as auth_router
 from app.modules.messages.router import router as messages_router
@@ -44,6 +45,9 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     await disconnect_mongo()
+
+    # in shutdown section
+    await get_job_queue().close()
 
 
 app = FastAPI(

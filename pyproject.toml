@@ -22,6 +22,8 @@ python-dotenv = "^1.2.2"
 boto3 = "^1.42.60"
 aiosmtplib = "^5.1.0"
 uvicorn = {extras = ["standard"], version = "^0.41.0"}
+limits = "^5.8.0"
+aio-pika = "^9.6.1"
 
 
 [tool.poetry.group.dev.dependencies]

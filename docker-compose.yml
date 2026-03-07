@@ -9,11 +9,30 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - mongo
+      rabbitmq:
+        condition: service_healthy
+      mongo:
+        condition: service_started
     volumes:
       - ./:/app
       - uploads_data:/app/uploads
     command: poetry run uvicorn app.main:asgi_app --host 0.0.0.0 --port 8000 --reload
+
+  email_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: voicechat_email_worker
+    env_file:
+      - .env
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+    volumes:
+      - ./:/app
+    command: poetry run python -m app.workers.email_worker
 
   mongo:
     image: mongo:7
@@ -49,6 +68,26 @@ services:
       - "9001:9001" # MinIO console
     volumes:
       - minio_data:/data
+
+  redis:
+    image: redis:7
+    container_name: voicechat_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: voicechat_rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
 volumes:
   mongo_data:

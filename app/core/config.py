@@ -46,5 +46,15 @@ class Settings(BaseSettings):
     s3_bucket: str = Field(default="voicechat", alias="S3_BUCKET")
     s3_region: str = Field(default="us-east-1", alias="S3_REGION")
 
+    # RabbitMQ
+    rabbitmq_url: str = Field(
+        default="amqp://guest:guest@rabbitmq:5672/",
+        alias="RABBITMQ_URL",
+    )
+    email_queue_name: str = Field(
+        default="email.send",
+        alias="EMAIL_QUEUE_NAME",
+    )
+
 
 settings = Settings()
