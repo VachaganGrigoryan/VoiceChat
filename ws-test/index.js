@@ -18,3 +18,7 @@ socket.on("receive_voice_message", (message) => {
   // when user plays it (or opens chat), mark read:
   // socket.emit("voice_message_read", { message_id: message.id });
 });
+
+socket.on("presence_update", ({ user_id, online }) => {
+  console.log("presence changed", user_id, online);
+});

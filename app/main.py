@@ -27,7 +27,11 @@ from app.infra.queue import get_job_queue
 
 from app.modules.auth.router import router as auth_router
 from app.modules.messages.router import router as messages_router
-from app.modules.realtime.socket_server import sio
+from app.modules.realtime.router import router as realtime_router
+from app.modules.realtime import register_socket_events, sio
+
+# register handlers before ASGI wrapper
+register_socket_events()
 
 
 @asynccontextmanager
@@ -69,6 +73,7 @@ app.add_exception_handler(Exception, unhandled_exception_handler)
 # routers
 app.include_router(auth_router)
 app.include_router(messages_router)
+app.include_router(realtime_router)
 
 # Serve local uploads (dev/local storage mode)
 # This gives URLs like: /media/<filename>
