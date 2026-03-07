@@ -27,6 +27,7 @@ from app.infra.queue import get_job_queue
 
 from app.modules.auth.router import router as auth_router
 from app.modules.messages.router import router as messages_router
+from app.modules.realtime.presence import close_presence_backend
 from app.modules.realtime.router import router as realtime_router
 from app.modules.realtime import register_socket_events, sio
 
@@ -50,8 +51,11 @@ async def lifespan(app: FastAPI):
     # Shutdown
     await disconnect_mongo()
 
-    # in shutdown section
+    # Close job queue
     await get_job_queue().close()
+
+    # Close presence backend
+    await close_presence_backend()
 
 
 app = FastAPI(

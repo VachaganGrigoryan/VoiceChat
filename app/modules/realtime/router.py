@@ -7,7 +7,7 @@ from app.core.api_models import SuccessResponse
 from app.core.openapi import COMMON_ERROR_RESPONSES
 from app.core.responses import ok
 from app.core.security import require_verified_user
-from app.modules.realtime.presence import presence_registry
+from app.modules.realtime.presence import get_presence_backend
 
 router = APIRouter(
     prefix="/realtime",
@@ -21,7 +21,9 @@ async def online_users(
     request: Request,
     user: dict = Depends(require_verified_user),
 ):
-    return ok(request, data=presence_registry.get_online_user_ids())
+    presence = get_presence_backend()
+    users = await presence.get_online_user_ids()
+    return ok(request, data=users)
 
 
 @router.get("/presence", response_model=SuccessResponse[dict])
@@ -30,8 +32,6 @@ async def presence_status(
     user_ids: list[str] = Query(...),
     user: dict = Depends(require_verified_user),
 ):
-    data = {
-        user_id: presence_registry.is_online(user_id)
-        for user_id in user_ids
-    }
+    presence = get_presence_backend()
+    data = {user_id: await presence.is_online(user_id) for user_id in user_ids}
     return ok(request, data=data)

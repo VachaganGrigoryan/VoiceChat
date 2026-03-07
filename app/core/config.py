@@ -56,5 +56,8 @@ class Settings(BaseSettings):
         alias="EMAIL_QUEUE_NAME",
     )
 
+    redis_url: str = Field(default="redis://redis:6379/0", alias="REDIS_URL")
+    presence_backend: str = Field(default="memory", alias="PRESENCE_BACKEND")
+    presence_key_prefix: str = Field(default="presence", alias="PRESENCE_KEY_PREFIX")
 
 settings = Settings()

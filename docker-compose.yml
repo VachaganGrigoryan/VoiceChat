@@ -13,6 +13,8 @@ services:
         condition: service_healthy
       mongo:
         condition: service_started
+      redis:
+        condition: service_started
     volumes:
       - ./:/app
       - uploads_data:/app/uploads

@@ -4,7 +4,7 @@ from app.core.exceptions import AppError
 from app.db.mongo import get_db
 from app.modules.messages.repository import MessagesRepository
 from app.modules.realtime.auth import authenticate_socket, get_socket_user_id
-from app.modules.realtime.presence import presence_registry
+from app.modules.realtime.presence import get_presence_backend
 from app.modules.realtime.socket import (
     emit_message_status_to_user,
     emit_presence_update,
@@ -22,7 +22,8 @@ def register_events(sio) -> None:
         await sio.save_session(sid, {"user_id": user_id})
         await sio.enter_room(sid, f"user:{user_id}")
 
-        became_online = presence_registry.add(user_id, sid)
+        presence = get_presence_backend()
+        became_online = await presence.add_connection(user_id, sid)
         if became_online:
             await emit_presence_update(user_id, True, skip_sid=sid)
 
@@ -34,7 +35,8 @@ def register_events(sio) -> None:
         if not user_id:
             return
 
-        became_offline = presence_registry.remove(user_id, sid)
+        presence = get_presence_backend()
+        became_offline = await presence.remove_connection(user_id, sid)
         if became_offline:
             await emit_presence_update(user_id, False)
 
