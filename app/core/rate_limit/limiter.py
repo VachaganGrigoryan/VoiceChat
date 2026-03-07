@@ -30,6 +30,9 @@ class RateLimiterService:
         self.limiter = strategies.FixedWindowRateLimiter(self.storage)
 
     async def hit(self, *, key: str, rule: RateLimitRule) -> None:
+        if not settings.rate_limit_enabled:
+            return
+
         item = parse(rule.value)
         allowed = await self.limiter.hit(item, key)
 

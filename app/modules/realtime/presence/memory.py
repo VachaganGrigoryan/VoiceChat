@@ -11,7 +11,7 @@ class InMemoryPresenceBackend(PresenceBackend):
         self._user_sids: Dict[str, Set[str]] = defaultdict(set)
 
     async def add_connection(self, user_id: str, sid: str) -> bool:
-        was_online = self.is_online(user_id)
+        was_online = await self.is_online(user_id)
         self._user_sids[user_id].add(sid)
         return not was_online
 

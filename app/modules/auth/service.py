@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 from app.core.config import settings
 from app.core.errors import AppError
@@ -52,7 +52,7 @@ class AuthService:
 
     async def _create_code_and_send_verification_email(self, *, user_id: str, email: str) -> None:
         code = _generate_6_digit_code()
-        expires_at = datetime.utcnow() + timedelta(minutes=VERIFY_TTL_MINUTES)
+        expires_at = datetime.now(UTC) + timedelta(minutes=VERIFY_TTL_MINUTES)
         code_hash = hash_verification_code(email, code)
 
         await self.codes.create_code(
@@ -123,7 +123,7 @@ class AuthService:
 
         refresh_token = generate_refresh_token()
         refresh_hash = hash_refresh_token(refresh_token)
-        expires_at = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
+        expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_expire_days)
 
         await self.refresh_tokens.create_token(
             user_id=user_id,
@@ -223,7 +223,7 @@ class AuthService:
         )
 
         access_token = create_access_token(subject=user_id)
-        expires_at = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
+        expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_expire_days)
 
         await self.refresh_tokens.create_token(
             user_id=user_id,

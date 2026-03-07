@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any, Optional
 
 from bson import ObjectId
@@ -40,7 +40,7 @@ class MessagesRepository:
         sid = _oid(sender_id)
         rid = _oid(receiver_id)
         conv_id = conversation_id_for(sender_id, receiver_id)
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         doc = {
             "conversation_id": conv_id,
@@ -102,7 +102,7 @@ class MessagesRepository:
         return await self.col.find_one({"_id": _oid(message_id)})
 
     async def mark_delivered_for_receiver(self, *, message_id: str, receiver_id: str) -> dict[str, Any]:
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         res = await self.col.find_one_and_update(
             {
                 "_id": _oid(message_id),
@@ -123,7 +123,7 @@ class MessagesRepository:
         return res
 
     async def mark_read_for_receiver(self, *, message_id: str, receiver_id: str) -> dict[str, Any]:
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         res = await self.col.find_one_and_update(
             {
                 "_id": _oid(message_id),

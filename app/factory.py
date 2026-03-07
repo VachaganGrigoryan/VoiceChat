@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
@@ -31,7 +33,7 @@ def create_app() -> FastAPI:
 
     # Serve local uploads (dev/local storage mode)
     # This gives URLs like: /media/<filename>
-    app.mount("/media", StaticFiles(directory=settings.upload_dir), name="media")
+    mount_local_storage(app)
 
     return app
 
@@ -46,3 +48,11 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
+
+
+def mount_local_storage(app: FastAPI) -> None:
+    if settings.storage_provider != "local":
+        return
+
+    os.makedirs(settings.upload_dir, exist_ok=True)
+    app.mount("/media", StaticFiles(directory=settings.upload_dir), name="media")

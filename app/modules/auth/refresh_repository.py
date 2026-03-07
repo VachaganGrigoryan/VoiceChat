@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any, Optional
 
 from bson import ObjectId
@@ -30,7 +30,7 @@ class RefreshTokensRepository:
         user_agent: str | None = None,
         ip: str | None = None,
     ) -> dict[str, Any]:
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         doc = {
             "user_id": _oid(user_id),
             "token_hash": token_hash,
@@ -47,7 +47,7 @@ class RefreshTokensRepository:
         return doc
 
     async def find_active_by_hash(self, *, token_hash: str) -> Optional[dict[str, Any]]:
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         return await self.col.find_one(
             {
                 "token_hash": token_hash,
@@ -65,7 +65,7 @@ class RefreshTokensRepository:
         token_hash: str,
         replaced_by_token_hash: str | None = None,
     ) -> None:
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         await self.col.update_one(
             {"token_hash": token_hash},
             {
@@ -78,7 +78,7 @@ class RefreshTokensRepository:
         )
 
     async def revoke_all_for_user(self, *, user_id: str) -> None:
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         await self.col.update_many(
             {
                 "user_id": _oid(user_id),

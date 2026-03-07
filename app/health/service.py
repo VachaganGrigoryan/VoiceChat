@@ -22,7 +22,7 @@ class HealthService:
         try:
             redis = Redis.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
             await redis.ping()
-            await redis.close()
+            await redis.aclose()
             return {"status": "up"}
         except Exception as e:
             return {"status": "down", "error": str(e)}

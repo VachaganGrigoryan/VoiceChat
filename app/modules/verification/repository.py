@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any, Optional
 
 from bson import ObjectId
@@ -37,7 +37,7 @@ class VerificationCodesRepository:
             "code_hash": code_hash,
             "attempts": 0,
             "expires_at": expires_at,
-            "created_at": datetime.utcnow(),
+            "created_at": datetime.now(UTC),
         }
         res = await self.col.insert_one(doc)
         doc["_id"] = res.inserted_id
@@ -49,7 +49,7 @@ class VerificationCodesRepository:
             email: str,
             purposes: list[str],
     ) -> Optional[dict[str, Any]]:
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         return await self.col.find_one(
             {
                 "email": email.lower().strip(),

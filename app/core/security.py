@@ -3,7 +3,7 @@ from __future__ import annotations
 import hmac
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Any
 
 from fastapi import Depends
@@ -19,7 +19,7 @@ bearer = HTTPBearer(auto_error=False)
 
 
 def create_access_token(*, subject: str, extra: dict[str, Any] | None = None) -> str:
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     exp = now + timedelta(minutes=settings.access_token_expire_minutes)
     payload: dict[str, Any] = {
         "sub": subject,

@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     smtp_pass: str = Field(default="", alias="SMTP_PASS")
 
     # Rate Limit
+    rate_limit_enabled: bool = Field(default=True, alias="RATE_LIMIT_ENABLED")
     rate_limit_storage_uri: str = Field(default="async+memory://", alias="RATE_LIMIT_STORAGE_URI")
 
     # Storage (we saw these in your .env)
