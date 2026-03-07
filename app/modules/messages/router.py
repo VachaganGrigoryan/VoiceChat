@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from starlette.requests import Request
 
 from app.core.api_models import Meta, SuccessResponse
-from app.core.openapi import COMMON_ERROR_RESPONSES
+from app.core.openapi import build_error_responses
 from app.core.rate_limit_deps import rate_limit
 from app.core.responses import ok
 from app.core.security import require_verified_user
@@ -19,7 +19,7 @@ from app.modules.realtime import emit_voice_message_to_receiver
 router = APIRouter(
     prefix="/messages",
     tags=["messages"],
-    responses=COMMON_ERROR_RESPONSES,
+    responses=build_error_responses(400, 401, 422, 500),
 )
 
 

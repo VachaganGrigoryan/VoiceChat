@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from starlette.requests import Request
 
 from app.core.api_models import SuccessResponse
-from app.core.openapi import COMMON_ERROR_RESPONSES
+from app.core.openapi import build_error_responses
 from app.core.rate_limit_deps import rate_limit
 from app.core.responses import ok
 from app.db.mongo import get_db
@@ -25,7 +25,7 @@ from app.modules.auth.service import AuthService
 router = APIRouter(
     prefix="/auth",
     tags=["auth"],
-    responses=COMMON_ERROR_RESPONSES,
+    responses=build_error_responses(400, 422, 500),
     dependencies=[Depends(rate_limit("100/hour", scope="auth_global"))],
 )
 

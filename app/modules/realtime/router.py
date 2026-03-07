@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from starlette.requests import Request
 
 from app.core.api_models import SuccessResponse
-from app.core.openapi import COMMON_ERROR_RESPONSES
+from app.core.openapi import build_error_responses
 from app.core.responses import ok
 from app.core.security import require_verified_user
 from app.modules.realtime.presence import get_presence_backend
@@ -12,7 +12,7 @@ from app.modules.realtime.presence import get_presence_backend
 router = APIRouter(
     prefix="/realtime",
     tags=["realtime"],
-    responses=COMMON_ERROR_RESPONSES,
+    responses=build_error_responses(400, 401, 422, 500, 502),
 )
 
 
