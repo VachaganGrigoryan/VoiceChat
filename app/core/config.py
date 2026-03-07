@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     app_env: str = Field(default="dev", alias="APP_ENV")
     cors_allowed_origins: list[str] = Field(
-        default=["*"],
+        default=[],
         alias="CORS_ALLOWED_ORIGINS"
     )
 

@@ -1,6 +1,6 @@
 import { io } from "socket.io-client";
 
-const JWT_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2OWE5NDU5ZWRiYTA4YjA2MjQ4ZDMyNDciLCJpYXQiOjE3NzI4MTc1MjUsImV4cCI6MTc3MjgyMTEyNX0.8kC5HDyBEk0lh9vn_o8sq8AkPRHOMjuPByA6UGK884o';
+const JWT_TOKEN = 'Enter JWT token';
 
 const socket = io("http://localhost:8000", {
   auth: { token: JWT_TOKEN },
