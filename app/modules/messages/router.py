@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from starlette.requests import Request
 
-from app.core.http import ok, Meta, SuccessResponse
+from app.core.http import ok, PaginationMeta, SuccessResponse, PaginatedResponse, ok_paginated
 from app.core.errors.openapi import build_error_responses
 from app.core.rate_limit import rate_limit
 from app.core.security import require_verified_user
@@ -59,8 +59,8 @@ async def upload_voice(
 
 @router.get(
     "/{user_id}",
-    response_model=SuccessResponse[list[MessageDoc]],
-    dependencies=[Depends(rate_limit("30/minute", scope="voice_upload"))],
+    response_model=PaginatedResponse[list[MessageDoc]],
+    dependencies=[Depends(rate_limit("30/minute", scope="message_history"))],
 )
 async def history(
     request: Request,
@@ -79,10 +79,10 @@ async def history(
         cursor=cursor,
     )
 
-    return ok(
+    return ok_paginated(
         request,
         data=items,
-        meta=Meta(
+        meta=PaginationMeta(
             cursor=cursor,
             next_cursor=next_cursor,
             limit=limit,
