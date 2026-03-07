@@ -3,13 +3,13 @@ from __future__ import annotations
 from pydantic import BaseModel, EmailStr, Field
 
 
-class RegisterRequest(BaseModel):
+class GenericEmailRequest(BaseModel):
     email: EmailStr
 
 
-class RegisterResponse(BaseModel):
+class GenericCodeSentResponse(BaseModel):
     email: EmailStr
-    verification_sent: bool = True
+    message: str
 
 
 class VerifyRequest(BaseModel):
@@ -20,12 +20,3 @@ class VerifyRequest(BaseModel):
 class VerifyResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
-
-
-class LoginRequest(BaseModel):
-    email: EmailStr
-
-
-class LoginResponse(BaseModel):
-    email: EmailStr
-    login_code_sent: bool = True

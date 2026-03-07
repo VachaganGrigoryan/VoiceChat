@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     smtp_user: str = Field(default="", alias="SMTP_USER")
     smtp_pass: str = Field(default="", alias="SMTP_PASS")
 
+    # Rate Limit
+    rate_limit_storage_uri: str = Field(default="async+memory://", alias="RATE_LIMIT_STORAGE_URI")
+
     # Storage (we saw these in your .env)
     storage_provider: str = Field(default="local", alias="STORAGE_PROVIDER")  # local | s3
     s3_endpoint_url: str = Field(default="", alias="S3_ENDPOINT_URL")
