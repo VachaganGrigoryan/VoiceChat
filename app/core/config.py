@@ -16,9 +16,12 @@ class Settings(BaseSettings):
 
     app_env: str = Field(default="dev", alias="APP_ENV")
     cors_allowed_origins: list[str] = Field(
-        default=[],
+        default=["*"],
         alias="CORS_ALLOWED_ORIGINS"
     )
+
+    web_app_name: str = Field(default="Voice Chat", alias="WEB_APP_NAME")
+    web_app_url: str = Field(default="http://localhost:3000", alias="WEB_APP_URL")
 
     # Mongo
     mongo_uri: str = Field(default="mongodb://mongo:27017", alias="MONGO_URI")
@@ -38,6 +41,8 @@ class Settings(BaseSettings):
     email_provider: str = Field(default="mock", alias="EMAIL_PROVIDER")  # mock | smtp | providerX
     smtp_host: str = Field(default="localhost", alias="SMTP_HOST")
     smtp_port: int = Field(default=1025, alias="SMTP_PORT")
+    smtp_from_email: str = Field(default="no-reply@voicechat.local", alias="SMTP_FROM_EMAIL")
+    smtp_from_name: str = Field(default="Voice Chat", alias="SMTP_FROM_NAME")
     smtp_user: str = Field(default="", alias="SMTP_USER")
     smtp_pass: str = Field(default="", alias="SMTP_PASS")
 
