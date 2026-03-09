@@ -8,7 +8,7 @@ from app.core.errors import AppError
 from app.modules.auth.repository import UsersRepository
 from app.modules.auth.username import is_valid_username, normalize_username
 from app.modules.users.schemas import UpdateProfileRequest, UserProfileResponse
-from app.infra.storage import get_storage, MediaStorageService
+from app.infra.storage import get_storage, storage_key_builder
 
 ALLOWED_AVATAR_CONTENT_TYPES: dict[str, str] = {
     "image/jpeg": ".jpg",
@@ -91,12 +91,14 @@ class UsersService:
         content_type = (file.content_type or "").lower().strip()
         content = await self._read_avatar_bytes(file)
 
-        storage = MediaStorageService()
-        stored = await storage.save_avatar(
-            user_id=user_id,
+        storage = get_storage()
+        key_builder = storage_key_builder("avatar")
+
+        stored = await storage.save(
             filename=file.filename,
             content=content,
             mime=content_type,
+            key=key_builder(user_id, file.filename),
         )
 
         avatar = {
