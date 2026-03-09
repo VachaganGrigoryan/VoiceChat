@@ -4,76 +4,95 @@ from typing import Optional
 
 from fastapi import UploadFile
 
-from app.core.config import settings
 from app.core.errors import AppError
 from app.db.mongo import get_db
-from app.infra.storage import MediaStorageService
+from app.infra.storage import get_storage, storage_key_builder, FolderKind
 from app.modules.auth.repository import UsersRepository
 from app.modules.messages.mappers import to_message_doc
 from app.modules.messages.repository import MessagesRepository
 from app.modules.messages.schemas import ConversationItem, ConversationPeer, ConversationLastMessage
 from app.modules.realtime.presence import get_presence_backend
 
-ALLOWED_MIME = {
-    "audio/mpeg",      # mp3
+ALLOWED_AUDIO_MIME = {
+    "audio/mpeg",
     "audio/mp3",
     "audio/wav",
     "audio/x-wav",
-    "audio/mp4",       # m4a often comes as audio/mp4
+    "audio/mp4",
     "audio/aac",
     "audio/webm",
     "audio/ogg",
 }
 
+ALLOWED_IMAGE_MIME = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+}
 
-def _max_bytes() -> int:
-    return int(settings.max_file_size_mb) * 1024 * 1024
+ALLOWED_STICKER_MIME = {
+    "image/png",
+    "image/webp",
+}
+
+ALLOWED_VIDEO_MIME = {
+    "video/mp4",
+    "video/webm",
+    "video/quicktime",
+}
+
+MAX_TEXT_LENGTH = 4000
+MAX_FILE_BYTES = 10 * 1024 * 1024
+MAX_STICKER_BYTES = 2 * 1024 * 1024
+
+MEDIA_RULES: dict[str, dict] = {
+    "voice": {
+        "allowed_mime": ALLOWED_AUDIO_MIME,
+        "max_bytes": MAX_FILE_BYTES,
+        "folder": "voice",
+    },
+    "image": {
+        "allowed_mime": ALLOWED_IMAGE_MIME,
+        "max_bytes": MAX_FILE_BYTES,
+        "folder": "media",
+    },
+    "sticker": {
+        "allowed_mime": ALLOWED_STICKER_MIME,
+        "max_bytes": MAX_STICKER_BYTES,
+        "folder": "media",
+    },
+    "video": {
+        "allowed_mime": ALLOWED_VIDEO_MIME,
+        "max_bytes": MAX_FILE_BYTES,
+        "folder": "video",
+    },
+}
 
 
 class MessagesService:
     def __init__(self, repo: MessagesRepository):
         self.repo = repo
 
-    async def upload_voice_message(
-        self,
-        *,
-        sender_id: str,
-        receiver_id: str,
-        file: UploadFile,
-        duration_ms: Optional[int] = None,
-    ):
+    async def _read_upload(self, *, file: UploadFile) -> bytes:
         if not file or not file.filename:
-            raise AppError(code="FILE_REQUIRED", message="Audio file is required", status_code=400)
-
-        mime = (file.content_type or "").lower().strip()
-        if mime not in ALLOWED_MIME:
             raise AppError(
-                code="UNSUPPORTED_MEDIA_TYPE",
-                message=f"Unsupported audio type: {mime or 'unknown'}",
-                status_code=415,
-                details={"allowed": sorted(ALLOWED_MIME)},
+                code="FILE_REQUIRED",
+                message="File is required",
+                status_code=400,
             )
 
         content = await file.read()
         if not content:
-            raise AppError(code="EMPTY_FILE", message="Uploaded file is empty", status_code=400)
-
-        if len(content) > _max_bytes():
             raise AppError(
-                code="FILE_TOO_LARGE",
-                message=f"File exceeds max size {settings.max_file_size_mb}MB",
-                status_code=413,
+                code="EMPTY_FILE",
+                message="Uploaded file is empty",
+                status_code=400,
             )
 
-        storage = MediaStorageService()
-        stored = await storage.save_voice(
-            user_id=sender_id,
-            filename=file.filename,
-            content=content,
-            mime=mime,
-        )
+        return content
 
-        audio_meta = {
+    def _build_media_meta(self, *, stored, duration_ms: int | None = None) -> dict:
+        return {
             "storage": stored.storage,
             "key": stored.key,
             "url": stored.url,
@@ -82,10 +101,74 @@ class MessagesService:
             "duration_ms": duration_ms,
         }
 
-        doc = await self.repo.create_voice_message(
+    async def _store_media(
+        self,
+        *,
+        sender_id: str,
+        file: UploadFile,
+        allowed_mime: set[str],
+        max_bytes: int,
+        folder: FolderKind,
+    ):
+        mime = (file.content_type or "").lower().strip()
+        if mime not in allowed_mime:
+            raise AppError(
+                code="UNSUPPORTED_MEDIA_TYPE",
+                message=f"Unsupported file type: {mime or 'unknown'}",
+                status_code=415,
+                details={"allowed": sorted(allowed_mime)},
+            )
+
+        content = await self._read_upload(file=file)
+        if len(content) > max_bytes:
+            raise AppError(
+                code="FILE_TOO_LARGE",
+                message=f"File exceeds max size {max_bytes // (1024 * 1024)}MB",
+                status_code=413,
+            )
+
+        storage = get_storage()
+        key_builder = storage_key_builder(folder)
+
+        return await storage.save(
+            filename=file.filename,
+            content=content,
+            mime=mime,
+            key=key_builder(sender_id, file.filename),
+        )
+
+    async def upload_media_message(
+            self,
+            *,
+            sender_id: str,
+            receiver_id: str,
+            message_type: str,
+            file: UploadFile,
+            text: str | None = None,
+            duration_ms: int | None = None,
+    ):
+        rules = MEDIA_RULES.get(message_type)
+        if not rules:
+            raise AppError(
+                code="UNSUPPORTED_MESSAGE_TYPE",
+                message=f"Unsupported media message type: {message_type}",
+                status_code=400,
+            )
+
+        stored = await self._store_media(
+            sender_id=sender_id,
+            file=file,
+            allowed_mime=rules["allowed_mime"],
+            max_bytes=rules["max_bytes"],
+            folder=rules["folder"],
+        )
+
+        doc = await self.repo.create_message(
             sender_id=sender_id,
             receiver_id=receiver_id,
-            audio=audio_meta,
+            message_type=message_type,
+            text=text.strip() if text else None,
+            media=self._build_media_meta(stored=stored, duration_ms=duration_ms),
         )
 
         return to_message_doc(doc)
@@ -105,7 +188,7 @@ class MessagesService:
                 status_code=400,
             )
 
-        if len(normalized) > 4000:
+        if len(normalized) > MAX_TEXT_LENGTH:
             raise AppError(
                 code="TEXT_TOO_LONG",
                 message="Text message is too long",

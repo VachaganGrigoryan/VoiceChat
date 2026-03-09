@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from starlette.requests import Request
@@ -23,25 +23,29 @@ router = APIRouter(
 
 
 @router.post(
-    "/voice",
+    "/media",
     status_code=201,
     response_model=SuccessResponse[MessageDoc],
-    dependencies=[Depends(rate_limit("30/minute", scope="voice_upload"))],
+    dependencies=[Depends(rate_limit("30/minute", scope="media_upload"))],
 )
-async def upload_voice(
+async def upload_media(
     request: Request,
+    type: Literal["voice", "image", "sticker", "video"] = Form(...),
     receiver_id: str = Form(...),
     duration_ms: Optional[int] = Form(None),
+    text: Optional[str] = Form(None),
     file: UploadFile = File(...),
     user: dict = Depends(require_verified_user),
 ):
     db = get_db()
     service = MessagesService(MessagesRepository(db))
 
-    message = await service.upload_voice_message(
+    message = await service.upload_media_message(
         sender_id=str(user["_id"]),
         receiver_id=receiver_id,
+        message_type=type,
         file=file,
+        text=text,
         duration_ms=duration_ms,
     )
 
@@ -50,11 +54,7 @@ async def upload_voice(
         payload=message.model_dump(mode="json"),
     )
 
-    return ok(
-        request,
-        data=message,
-        status_code=201,
-    )
+    return ok(request, data=message, status_code=201)
 
 
 @router.post(
