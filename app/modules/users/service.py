@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-import os
 from typing import Any
-from uuid import uuid4
 
 from fastapi import UploadFile
 
-from app.core.config import settings
 from app.core.errors import AppError
-from app.db.mongo import get_db
-from app.infra.storage.keys import build_avatar_key
 from app.modules.auth.repository import UsersRepository
 from app.modules.auth.username import is_valid_username, normalize_username
 from app.modules.users.schemas import UpdateProfileRequest, UserProfileResponse
-from app.infra.storage import get_storage
-
+from app.infra.storage import get_storage, MediaStorageService
 
 ALLOWED_AVATAR_CONTENT_TYPES: dict[str, str] = {
     "image/jpeg": ".jpg",
@@ -97,12 +91,12 @@ class UsersService:
         content_type = (file.content_type or "").lower().strip()
         content = await self._read_avatar_bytes(file)
 
-        storage = get_storage()
-        stored = await storage.save(
+        storage = MediaStorageService()
+        stored = await storage.save_avatar(
+            user_id=user_id,
             filename=file.filename,
             content=content,
             mime=content_type,
-            key=build_avatar_key(user_id, file.filename),
         )
 
         avatar = {
