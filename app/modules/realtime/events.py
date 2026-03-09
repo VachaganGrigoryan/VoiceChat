@@ -87,10 +87,10 @@ def register_events(sio) -> None:
         )
 
     @sio.event
-    async def send_voice_message(sid, data):
+    async def send_message(sid, data):
         """
-        Socket-level event for compatibility with task wording.
-        File upload remains REST-based source of truth.
+        Socket-level compatibility / ack event.
+        REST remains the source of truth for persisted message creation.
         """
         user_id = await get_socket_user_id(sio, sid)
         if not user_id:
@@ -98,6 +98,8 @@ def register_events(sio) -> None:
 
         receiver_id = (data or {}).get("to")
         message_id = (data or {}).get("message_id")
+        message_type = (data or {}).get("type")
+
         if not receiver_id or not message_id:
             await sio.emit(
                 "error",
@@ -107,17 +109,18 @@ def register_events(sio) -> None:
             return
 
         await sio.emit(
-            "send_voice_message_ack",
+            "send_message_ack",
             {
                 "message_id": message_id,
                 "to": receiver_id,
+                "message_type": message_type,
                 "accepted": True,
             },
             to=sid,
         )
 
     @sio.event
-    async def voice_message_delivered(sid, data):
+    async def message_delivered(sid, data):
         receiver_id = await get_socket_user_id(sio, sid)
         if not receiver_id:
             return
@@ -150,18 +153,19 @@ def register_events(sio) -> None:
             {
                 "message_id": message_id,
                 "status": "delivered",
+                "message_type": msg.get("type"),
                 "delivered_at": msg.get("delivered_at"),
             },
         )
 
         await sio.emit(
-            "voice_message_ack",
+            "message_ack",
             {"message_id": message_id, "status": "delivered"},
             to=sid,
         )
 
     @sio.event
-    async def voice_message_read(sid, data):
+    async def message_read(sid, data):
         receiver_id = await get_socket_user_id(sio, sid)
         if not receiver_id:
             return
@@ -194,12 +198,26 @@ def register_events(sio) -> None:
             {
                 "message_id": message_id,
                 "status": "read",
+                "message_type": msg.get("type"),
                 "read_at": msg.get("read_at"),
             },
         )
 
         await sio.emit(
-            "voice_message_ack",
+            "message_ack",
             {"message_id": message_id, "status": "read"},
             to=sid,
         )
+
+    # Todo: Optional backward-compatible aliases. Remove later
+    @sio.event
+    async def send_voice_message(sid, data):
+        return await send_message(sid, data)
+
+    @sio.event
+    async def voice_message_delivered(sid, data):
+        return await message_delivered(sid, data)
+
+    @sio.event
+    async def voice_message_read(sid, data):
+        return await message_read(sid, data)
