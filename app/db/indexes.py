@@ -13,6 +13,16 @@ COL_REFRESH_TOKENS = "refresh_tokens"
 async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     # USERS: unique email
     await db[COL_USERS].create_index([("email", ASCENDING)], unique=True, name="ux_users_email")
+    await db[COL_USERS].create_index(
+        [("username", ASCENDING)],
+        unique=True,
+        name="ux_users_username",
+    )
+
+    await db[COL_USERS].create_index(
+        [("is_private", ASCENDING)],
+        name="ix_users_is_private",
+    )
 
     # VERIFICATION: TTL expiry + lookup indexes
     await db[COL_VERIFICATION].create_index([("expires_at", ASCENDING)], expireAfterSeconds=0, name="ttl_verification_expires")
