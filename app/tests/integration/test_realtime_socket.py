@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime, UTC
+import uuid
+from datetime import UTC, datetime
 from io import BytesIO
 
 from bson import ObjectId
@@ -22,6 +23,14 @@ async def _create_verified_user_and_tokens(email: str) -> tuple[dict, dict]:
     user = {
         "_id": ObjectId(),
         "email": email.lower(),
+        "username": f"test_{uuid.uuid4().hex[::6]}",
+        "display_name": None,
+        "bio": None,
+        "avatar": None,
+        "is_private": False,
+        "default_discovery_enabled": True,
+        "last_seen_at": None,
+        "username_updated_at": None,
         "is_verified": True,
         "created_at": datetime.now(UTC),
         "updated_at": datetime.now(UTC),
@@ -34,6 +43,76 @@ async def _create_verified_user_and_tokens(email: str) -> tuple[dict, dict]:
         "access_token": access_token,
         "token_type": "bearer",
     }
+
+
+async def _connect_socket(access_token: str) -> socketio.AsyncClient:
+    sio = socketio.AsyncClient()
+    await asyncio.wait_for(
+        sio.connect(
+            TEST_SERVER_URL,
+            socketio_path="socket.io",
+            auth={"token": access_token},
+            transports=["websocket"],
+            wait_timeout=5,
+        ),
+        timeout=8,
+    )
+    assert sio.connected is True
+    return sio
+
+
+def _media_upload(
+    *,
+    kind: str,
+    filename: str,
+    content: bytes,
+    mime: str,
+    receiver_id: str,
+    text: str | None = None,
+    duration_ms: int | None = None,
+) -> tuple[dict, dict]:
+    files = {
+        "file": (filename, BytesIO(content), mime),
+    }
+    data: dict[str, str] = {
+        "type": kind,
+        "receiver_id": receiver_id,
+    }
+    if text is not None:
+        data["text"] = text
+    if duration_ms is not None:
+        data["duration_ms"] = str(duration_ms)
+    return data, files
+
+
+async def _post_media(
+    live_client,
+    *,
+    access_token: str,
+    kind: str,
+    receiver_id: str,
+    filename: str,
+    content: bytes,
+    mime: str,
+    text: str | None = None,
+    duration_ms: int | None = None,
+):
+    data, files = _media_upload(
+        kind=kind,
+        filename=filename,
+        content=content,
+        mime=mime,
+        receiver_id=receiver_id,
+        text=text,
+        duration_ms=duration_ms,
+    )
+    headers = {"Authorization": f"Bearer {access_token}"}
+    return await live_client.post(
+        "/messages/media",
+        headers=headers,
+        files=files,
+        data=data,
+    )
 
 
 @pytest.mark.asyncio
@@ -60,13 +139,13 @@ async def test_socket_connect_and_voice_delivery(live_client):
     receiver_msg_event = asyncio.Event()
     sender_status_event = asyncio.Event()
 
-    @receiver_sio.on("receive_voice_message")
-    async def on_receive_voice_message(data):
+    @receiver_sio.on("receive_message")
+    async def on_receive_message(data):
         receiver_events.append(data)
         receiver_msg_event.set()
 
-    @sender_sio.on("voice_message_status")
-    async def on_voice_message_status(data):
+    @sender_sio.on("message_status")
+    async def on_message_status(data):
         sender_status_events.append(data)
         sender_status_event.set()
 
@@ -96,22 +175,17 @@ async def test_socket_connect_and_voice_delivery(live_client):
         assert sender_sio.connected is True
         assert receiver_sio.connected is True
 
-        files = {
-            "file": ("sample.mp3", BytesIO(b"fake-audio"), "audio/mpeg"),
-        }
-        data = {
-            "receiver_id": receiver_id,
-            "duration_ms": "1000",
-        }
-        headers = {"Authorization": f"Bearer {sender_tokens['access_token']}"}
-
-        upload_res = await live_client.post(
-            "/messages/voice",
-            headers=headers,
-            files=files,
-            data=data,
+        upload_res = await _post_media(
+            live_client,
+            access_token=sender_tokens["access_token"],
+            kind="voice",
+            receiver_id=receiver_id,
+            filename="sample.mp3",
+            content=b"fake-audio",
+            mime="audio/mpeg",
+            duration_ms=1000,
         )
-        assert upload_res.status_code == 201
+        assert upload_res.status_code == 201, upload_res.text
 
         uploaded_message = upload_res.json()["data"]
         message_id = uploaded_message["id"]
@@ -123,8 +197,11 @@ async def test_socket_connect_and_voice_delivery(live_client):
         assert message["id"] == message_id
         assert message["sender_id"] == sender_id
         assert message["receiver_id"] == receiver_id
+        assert message["type"] == "voice"
+        assert message["media"] is not None
+        assert message["media"]["mime"] == "audio/mpeg"
 
-        await receiver_sio.emit("voice_message_delivered", {"message_id": message_id})
+        await receiver_sio.emit("message_delivered", {"message_id": message_id})
 
         await asyncio.wait_for(sender_status_event.wait(), timeout=5)
 
@@ -132,6 +209,262 @@ async def test_socket_connect_and_voice_delivery(live_client):
         status_payload = sender_status_events[-1]
         assert status_payload["message_id"] == message_id
         assert status_payload["status"] == "delivered"
+        assert status_payload["message_type"] == "voice"
+
+    finally:
+        if sender_sio.connected:
+            await asyncio.wait_for(sender_sio.disconnect(), timeout=3)
+        if receiver_sio.connected:
+            await asyncio.wait_for(receiver_sio.disconnect(), timeout=3)
+        await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_socket_text_message_delivery_and_read(live_client):
+    try:
+        health = await live_client.get("/health/live")
+    except Exception:
+        pytest.skip("Live server is not running on http://api_test:8000")
+
+    assert health.status_code == 200
+
+    sender, sender_tokens = await _create_verified_user_and_tokens("sender-text@test.com")
+    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-text@test.com")
+
+    sender_id = str(sender["_id"])
+    receiver_id = str(receiver["_id"])
+
+    sender_sio = await _connect_socket(sender_tokens["access_token"])
+    receiver_sio = await _connect_socket(receiver_tokens["access_token"])
+
+    receiver_events: list[dict] = []
+    sender_status_events: list[dict] = []
+    receiver_msg_event = asyncio.Event()
+    sender_status_event = asyncio.Event()
+
+    @receiver_sio.on("receive_message")
+    async def on_receive_message(data):
+        receiver_events.append(data)
+        receiver_msg_event.set()
+
+    @sender_sio.on("message_status")
+    async def on_message_status(data):
+        sender_status_events.append(data)
+        sender_status_event.set()
+
+    try:
+        resp = await live_client.post(
+            "/messages/text",
+            headers={"Authorization": f"Bearer {sender_tokens['access_token']}"},
+            json={
+                "receiver_id": receiver_id,
+                "text": "Բարև 👋 Привет Hello",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+        body = resp.json()["data"]
+        message_id = body["id"]
+        assert body["type"] == "text"
+        assert body["text"] == "Բարև 👋 Привет Hello"
+        assert body["media"] is None
+
+        await asyncio.wait_for(receiver_msg_event.wait(), timeout=5)
+
+        message = receiver_events[-1].get("message", receiver_events[-1])
+        assert message["id"] == message_id
+        assert message["sender_id"] == sender_id
+        assert message["receiver_id"] == receiver_id
+        assert message["type"] == "text"
+        assert message["text"] == "Բարև 👋 Привет Hello"
+
+        await receiver_sio.emit("message_read", {"message_id": message_id})
+        await asyncio.wait_for(sender_status_event.wait(), timeout=5)
+
+        status_payload = sender_status_events[-1]
+        assert status_payload["message_id"] == message_id
+        assert status_payload["status"] == "read"
+        assert status_payload["message_type"] == "text"
+
+    finally:
+        if sender_sio.connected:
+            await asyncio.wait_for(sender_sio.disconnect(), timeout=3)
+        if receiver_sio.connected:
+            await asyncio.wait_for(receiver_sio.disconnect(), timeout=3)
+        await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_socket_image_message_delivery(live_client):
+    try:
+        health = await live_client.get("/health/live")
+    except Exception:
+        pytest.skip("Live server is not running on http://api_test:8000")
+
+    assert health.status_code == 200
+
+    sender, sender_tokens = await _create_verified_user_and_tokens("sender-image@test.com")
+    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-image@test.com")
+
+    receiver_id = str(receiver["_id"])
+
+    sender_sio = await _connect_socket(sender_tokens["access_token"])
+    receiver_sio = await _connect_socket(receiver_tokens["access_token"])
+
+    receiver_events: list[dict] = []
+    receiver_msg_event = asyncio.Event()
+
+    @receiver_sio.on("receive_message")
+    async def on_receive_message(data):
+        receiver_events.append(data)
+        receiver_msg_event.set()
+
+    try:
+        resp = await _post_media(
+            live_client,
+            access_token=sender_tokens["access_token"],
+            kind="image",
+            receiver_id=receiver_id,
+            filename="photo.png",
+            content=b"fake-image-bytes",
+            mime="image/png",
+            text="caption",
+        )
+        assert resp.status_code == 201, resp.text
+
+        body = resp.json()["data"]
+        assert body["type"] == "image"
+        assert body["text"] == "caption"
+        assert body["media"] is not None
+        assert body["media"]["mime"] == "image/png"
+
+        await asyncio.wait_for(receiver_msg_event.wait(), timeout=5)
+        message = receiver_events[-1].get("message", receiver_events[-1])
+
+        assert message["id"] == body["id"]
+        assert message["type"] == "image"
+        assert message["text"] == "caption"
+        assert message["media"] is not None
+        assert message["media"]["mime"] == "image/png"
+
+    finally:
+        if sender_sio.connected:
+            await asyncio.wait_for(sender_sio.disconnect(), timeout=3)
+        if receiver_sio.connected:
+            await asyncio.wait_for(receiver_sio.disconnect(), timeout=3)
+        await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_socket_sticker_message_delivery(live_client):
+    try:
+        health = await live_client.get("/health/live")
+    except Exception:
+        pytest.skip("Live server is not running on http://api_test:8000")
+
+    assert health.status_code == 200
+
+    sender, sender_tokens = await _create_verified_user_and_tokens("sender-sticker@test.com")
+    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-sticker@test.com")
+
+    receiver_id = str(receiver["_id"])
+
+    sender_sio = await _connect_socket(sender_tokens["access_token"])
+    receiver_sio = await _connect_socket(receiver_tokens["access_token"])
+
+    receiver_events: list[dict] = []
+    receiver_msg_event = asyncio.Event()
+
+    @receiver_sio.on("receive_message")
+    async def on_receive_message(data):
+        receiver_events.append(data)
+        receiver_msg_event.set()
+
+    try:
+        resp = await _post_media(
+            live_client,
+            access_token=sender_tokens["access_token"],
+            kind="sticker",
+            receiver_id=receiver_id,
+            filename="sticker.webp",
+            content=b"x" * 1024,
+            mime="image/webp",
+        )
+        assert resp.status_code == 201, resp.text
+
+        body = resp.json()["data"]
+        assert body["type"] == "sticker"
+        assert body["media"] is not None
+        assert body["media"]["mime"] == "image/webp"
+
+        await asyncio.wait_for(receiver_msg_event.wait(), timeout=5)
+        message = receiver_events[-1].get("message", receiver_events[-1])
+
+        assert message["id"] == body["id"]
+        assert message["type"] == "sticker"
+        assert message["media"] is not None
+        assert message["media"]["mime"] == "image/webp"
+
+    finally:
+        if sender_sio.connected:
+            await asyncio.wait_for(sender_sio.disconnect(), timeout=3)
+        if receiver_sio.connected:
+            await asyncio.wait_for(receiver_sio.disconnect(), timeout=3)
+        await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_socket_video_message_delivery(live_client):
+    try:
+        health = await live_client.get("/health/live")
+    except Exception:
+        pytest.skip("Live server is not running on http://api_test:8000")
+
+    assert health.status_code == 200
+
+    sender, sender_tokens = await _create_verified_user_and_tokens("sender-video@test.com")
+    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-video@test.com")
+
+    receiver_id = str(receiver["_id"])
+
+    sender_sio = await _connect_socket(sender_tokens["access_token"])
+    receiver_sio = await _connect_socket(receiver_tokens["access_token"])
+
+    receiver_events: list[dict] = []
+    receiver_msg_event = asyncio.Event()
+
+    @receiver_sio.on("receive_message")
+    async def on_receive_message(data):
+        receiver_events.append(data)
+        receiver_msg_event.set()
+
+    try:
+        resp = await _post_media(
+            live_client,
+            access_token=sender_tokens["access_token"],
+            kind="video",
+            receiver_id=receiver_id,
+            filename="clip.mp4",
+            content=b"fake-video-bytes",
+            mime="video/mp4",
+            text="video caption",
+        )
+        assert resp.status_code == 201, resp.text
+
+        body = resp.json()["data"]
+        assert body["type"] == "video"
+        assert body["text"] == "video caption"
+        assert body["media"] is not None
+        assert body["media"]["mime"] == "video/mp4"
+
+        await asyncio.wait_for(receiver_msg_event.wait(), timeout=5)
+        message = receiver_events[-1].get("message", receiver_events[-1])
+
+        assert message["id"] == body["id"]
+        assert message["type"] == "video"
+        assert message["text"] == "video caption"
+        assert message["media"] is not None
+        assert message["media"]["mime"] == "video/mp4"
 
     finally:
         if sender_sio.connected:

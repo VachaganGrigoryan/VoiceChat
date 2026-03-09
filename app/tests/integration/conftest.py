@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import os
 
+from motor.motor_asyncio import AsyncIOMotorClient
+
 from app.asgi import app
-from app.db.mongo import get_db, connect_mongo, disconnect_mongo
+from app.core.config import settings
+from app.db.mongo import connect_mongo, disconnect_mongo
 
 os.environ["ENV_FILE"] = ".env.test"
 
 import pytest_asyncio
+from asgi_lifespan import LifespanManager
 from httpx import AsyncClient, ASGITransport
 from redis.asyncio import Redis
 
@@ -33,21 +37,40 @@ async def clean_redis():
     await redis.aclose()
 
 
-@pytest_asyncio.fixture(scope="function", autouse=True)
+TEST_COLLECTIONS = [
+    "users",
+    "messages",
+    "refresh_tokens",
+    "verification_codes",
+]
+
+
+@pytest_asyncio.fixture(autouse=True)
 async def clean_db():
-    db = get_db()
-    for name in ["users", "verification_codes", "messages", "refresh_tokens"]:
+    client = AsyncIOMotorClient(settings.mongo_uri)
+    db = client[settings.mongo_db]
+
+    for name in TEST_COLLECTIONS:
         await db[name].delete_many({})
+
     yield
-    for name in ["users", "verification_codes", "messages", "refresh_tokens"]:
+
+    for name in TEST_COLLECTIONS:
         await db[name].delete_many({})
 
+    client.close()
 
-@pytest_asyncio.fixture(scope="function", autouse=True)
+
+@pytest_asyncio.fixture(scope="function")
 async def inprocess_client():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://testserver", timeout=10) as ac:
-        yield ac
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            timeout=10,
+        ) as ac:
+            yield ac
 
 
 @pytest_asyncio.fixture
