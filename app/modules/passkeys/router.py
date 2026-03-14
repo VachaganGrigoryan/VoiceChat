@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request, status
-
+from fastapi import APIRouter, Depends, status
+from app.core.security import get_current_user
 from app.modules.passkeys.schemas import (
     LoginPasskeyFinishRequest,
     LoginPasskeyStartRequest,
@@ -14,17 +14,10 @@ from app.modules.passkeys.schemas import (
     RegisterPasskeyStartRequest,
 )
 from app.modules.passkeys.service import PasskeyService
-from app.core.security import get_current_user
+from app.modules.passkeys.dependencies import get_passkey_service
 
 
 router = APIRouter(prefix="/auth/passkeys", tags=["passkeys"])
-
-
-def get_passkey_service(request: Request) -> PasskeyService:
-    service = getattr(request.app.state, "passkey_service", None)
-    if not isinstance(service, PasskeyService):
-        raise RuntimeError("app.state.passkey_service is not configured")
-    return service
 
 
 @router.post("/register/start")
