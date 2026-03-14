@@ -11,6 +11,7 @@ COL_REFRESH_TOKENS = "refresh_tokens"
 COL_PASSKEYS = "passkeys"
 COL_PASSKEY_CHALLENGES = "passkey_challenges"
 COL_PINGS = "pings"
+COL_DISCOVERY_TOKENS = "discovery_tokens"
 
 
 async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
@@ -103,3 +104,15 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db[COL_PINGS].create_index("to_user_id", name="idx_pings_to_user_id")
     await db[COL_PINGS].create_index("status", name="idx_pings_status")
     await db[COL_PINGS].create_index("updated_at", name="idx_pings_updated_at")
+
+    # COL_DISCOVERY_TOKENS
+    await db[COL_DISCOVERY_TOKENS].create_index("user_id", name="idx_discovery_user_id")
+    await db[COL_DISCOVERY_TOKENS].create_index("type", name="idx_discovery_type")
+    await db[COL_DISCOVERY_TOKENS].create_index("expires_at", name="idx_discovery_expires_at")
+    await db[COL_DISCOVERY_TOKENS].create_index("is_active", name="idx_discovery_is_active")
+
+    await db[COL_DISCOVERY_TOKENS].create_index(
+        [("user_id", 1), ("type", 1), ("is_active", 1)],
+        partialFilterExpression={"type": "code", "is_active": True},
+        name="uniq_active_code_per_user",
+    )

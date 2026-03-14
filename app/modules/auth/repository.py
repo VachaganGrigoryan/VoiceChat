@@ -103,6 +103,20 @@ class UsersRepository:
     async def find_by_username(self, username: str) -> Optional[dict[str, Any]]:
         return await self.col.find_one({"username": normalize_username(username)})
 
+    async def find_by_username_prefix(self, q: str, limit: int) -> list[dict[str, Any]]:
+        cursor = self.col.find(
+            {"username": {"$regex": f"^{q}", "$options": "i"}},
+            {
+                "_id": 1,
+                "username": 1,
+                "display_name": 1,
+                "avatar": 1,
+                "is_private": 1,
+                "default_discovery_enabled": 1,
+            },
+        ).limit(limit)
+        return await cursor.to_list(length=limit)
+
     async def set_verified(self, user_id: str) -> None:
         res = await self.col.update_one(
             {"_id": _oid(user_id)},
