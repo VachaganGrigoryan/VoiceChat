@@ -5,7 +5,7 @@ from app.db.mongo import get_db
 from app.modules.messages.repository import MessagesRepository
 from app.modules.realtime.auth import authenticate_socket, get_socket_user_id
 from app.modules.realtime.presence import get_presence_backend
-from app.modules.realtime.socket import (
+from app.modules.realtime.emits import (
     emit_message_status_to_user,
     emit_presence_update,
 )
