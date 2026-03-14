@@ -49,6 +49,8 @@ class UsersRepository:
             "default_discovery_enabled": True,
             "last_seen_at": None,
             "username_updated_at": None,
+            "has_passkey": False,
+            "passkey_login_enabled": True,
             "created_at": now,
             "updated_at": now,
         }
@@ -205,3 +207,29 @@ class UsersRepository:
             raise AppError(code="USER_NOT_FOUND", message="User not found", status_code=404)
 
         return user
+
+    async def set_has_passkey(self, *, user_id: str, value: bool) -> None:
+        res = await self.col.update_one(
+            {"_id": _oid(user_id)},
+            {
+                "$set": {
+                    "has_passkey": value,
+                    "updated_at": datetime.now(UTC),
+                }
+            },
+        )
+        if res.matched_count == 0:
+            raise AppError(code="USER_NOT_FOUND", message="User not found", status_code=404)
+
+    async def set_passkey_login_enabled(self, *, user_id: str, value: bool) -> None:
+        res = await self.col.update_one(
+            {"_id": _oid(user_id)},
+            {
+                "$set": {
+                    "passkey_login_enabled": value,
+                    "updated_at": datetime.now(UTC),
+                }
+            },
+        )
+        if res.matched_count == 0:
+            raise AppError(code="USER_NOT_FOUND", message="User not found", status_code=404)

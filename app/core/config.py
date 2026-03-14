@@ -33,6 +33,15 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = Field(default=60, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
 
+    # Passkey
+    passkey_rp_id: str = Field(default="localhost", alias="PASSKEY_RP_ID")
+    passkey_rp_name: str = Field(default="Voice Chat", alias="PASSKEY_RP_NAME")
+    passkey_origin: str = Field(default="http://localhost:5173", alias="PASSKEY_ORIGIN")
+    passkey_challenge_ttl_seconds: int = Field(
+        default=300,
+        alias="PASSKEY_CHALLENGE_TTL_SECONDS",
+    )
+
     # Uploads
     upload_dir: str = Field(default="uploads", alias="UPLOAD_DIR")
     max_file_size_mb: int = Field(default=10, alias="MAX_FILE_SIZE_MB")

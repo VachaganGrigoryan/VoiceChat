@@ -8,6 +8,8 @@ COL_USERS = "users"
 COL_VERIFICATION = "verification_codes"
 COL_MESSAGES = "messages"
 COL_REFRESH_TOKENS = "refresh_tokens"
+COL_PASSKEYS = "passkeys"
+COL_PASSKEY_CHALLENGES = "passkey_challenges"
 
 
 async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
@@ -64,4 +66,32 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
         [("expires_at", ASCENDING)],
         expireAfterSeconds=0,
         name="ttl_refresh_tokens_expires",
+    )
+
+    # COL_PASSKEY and CHALLENGES
+    await db[COL_PASSKEYS].create_index(
+        [("credential_id", ASCENDING)],
+        unique=True,
+        name="uniq_passkeys_credential_id",
+    )
+
+    await db[COL_PASSKEYS].create_index(
+        [("user_id", ASCENDING)],
+        name="idx_passkeys_user_id",
+    )
+
+    await db[COL_PASSKEY_CHALLENGES].create_index(
+        [("challenge", ASCENDING)],
+        name="idx_passkey_challenges_challenge",
+    )
+
+    await db[COL_PASSKEY_CHALLENGES].create_index(
+        [("expires_at", ASCENDING)],
+        name="idx_passkey_challenges_expires_at",
+        expireAfterSeconds=0,
+    )
+
+    await db[COL_PASSKEY_CHALLENGES].create_index(
+        [("flow", ASCENDING), ("user_id", ASCENDING), ("email", ASCENDING)],
+        name="idx_passkey_challenges_flow_user_email",
     )
