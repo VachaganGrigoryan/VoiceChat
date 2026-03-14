@@ -9,25 +9,54 @@ from app.infra.storage.base import Storage, StoredFile
 
 
 class LocalStorage(Storage):
-    async def save(self, *, filename: str, content: bytes, mime: str) -> StoredFile:
-        # Keep extension if present
-        ext = Path(filename).suffix.lower() or ".bin"
-        file_id = uuid.uuid4().hex
-        stored_name = f"{file_id}{ext}"
 
-        os.makedirs(settings.upload_dir, exist_ok=True)
-        full_path = os.path.join(settings.upload_dir, stored_name)
+    def _normalize_key(self, key: str) -> str:
+        normalized = key.replace("\\", "/").lstrip("/")
+        if normalized.startswith("../") or "/../" in f"/{normalized}":
+            raise ValueError("invalid storage key")
+        return normalized
+
+    def _full_path(self, key: str) -> str:
+        normalized = self._normalize_key(key)
+        return os.path.join(settings.upload_dir, normalized)
+
+    async def save(
+            self,
+            *,
+            filename: str,
+            content: bytes,
+            mime: str,
+            key: str | None = None,
+    ) -> StoredFile:
+        ext = Path(filename).suffix.lower() or ".bin"
+
+        if key is None:
+            key = f"{uuid.uuid4().hex}{ext}"
+        else:
+            key = self._normalize_key(key)
+            if not Path(key).suffix:
+                key = f"{key}{ext}"
+
+        full_path = self._full_path(key)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
         with open(full_path, "wb") as f:
             f.write(content)
 
         return StoredFile(
             storage="local",
-            key=full_path,
-            url=self.get_file_url(stored_name),
+            key=key,
+            url=self.get_file_url(key),
             size_bytes=len(content),
             mime=mime,
         )
 
+    async def delete(self, key: str) -> None:
+        full_path = self._full_path(key)
+        try:
+            os.remove(full_path)
+        except FileNotFoundError:
+            return
+
     def get_file_url(self, key: str) -> str:
-        return f"/media/{key}"
+        return f"/media/{self._normalize_key(key)}"

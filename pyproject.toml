@@ -25,6 +25,7 @@ uvicorn = {extras = ["standard"], version = "^0.41.0"}
 limits = "^5.8.0"
 aio-pika = "^9.6.1"
 redis = "^7.3.0"
+webauthn = "^2.7.1"
 
 
 [tool.poetry.group.dev.dependencies]
@@ -36,6 +37,7 @@ ruff = "^0.15.4"
 mypy = "^1.19.1"
 python-socketio = {extras = ["client"], version = "^5.16.1"}
 aiohttp = "^3.13.3"
+asgi-lifespan = "^2.1.0"
 
 [build-system]
 requires = ["poetry-core"]

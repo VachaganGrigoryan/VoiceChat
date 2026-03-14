@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import uuid
 from pathlib import Path
 
 import boto3
+from botocore.exceptions import ClientError
 
 from app.core.config import settings
 from app.infra.storage.base import Storage, StoredFile
@@ -20,9 +20,22 @@ class S3Storage(Storage):
         )
         self.bucket = settings.s3_bucket
 
-    async def save(self, *, filename: str, content: bytes, mime: str) -> StoredFile:
+    def _normalize_key(self, key: str) -> str:
+        return key.replace("\\", "/").lstrip("/")
+
+    async def save(
+            self,
+            *,
+            filename: str,
+            content: bytes,
+            mime: str,
+            key: str | None = None,
+    ) -> StoredFile:
         ext = Path(filename).suffix.lower() or ".bin"
-        key = f"voice/{uuid.uuid4().hex}{ext}"
+
+        key = self._normalize_key(key)
+        if not Path(key).suffix:
+            key = f"{key}{ext}"
 
         self.client.put_object(
             Bucket=self.bucket,
@@ -31,29 +44,33 @@ class S3Storage(Storage):
             ContentType=mime,
         )
 
-        # For MinIO in docker, endpoint is often http://minio:9000 internally,
-        # but clients need a public URL. For now return endpoint_url + bucket + key.
-        # base = settings.s3_endpoint_url.rstrip("/")
-        # url = f"{base}/{self.bucket}/{key}"
-        url = self.get_presigned_url(key)
-
         return StoredFile(
             storage="s3",
             key=key,
-            url=url,
+            url=self.get_presigned_url(key),
             size_bytes=len(content),
             mime=mime,
         )
 
+    async def delete(self, key: str) -> None:
+        try:
+            self.client.delete_object(
+                Bucket=self.bucket,
+                Key=self._normalize_key(key),
+            )
+        except ClientError:
+            return
+
     def get_file_url(self, key: str) -> str:
-        return self.get_presigned_url(key)
+        return self.get_presigned_url(self._normalize_key(key))
 
     def get_presigned_url(self, key: str, expires_in: int = 3600) -> str:
+        normalized = self._normalize_key(key)
         return self.client.generate_presigned_url(
             "get_object",
             Params={
                 "Bucket": self.bucket,
-                "Key": key,
+                "Key": normalized,
             },
             ExpiresIn=expires_in,
         )

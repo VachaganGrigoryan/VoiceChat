@@ -37,12 +37,12 @@ async def emit_to_user(user_id: str, event: str, payload: dict[str, Any]) -> Non
     )
 
 
-async def emit_voice_message_to_receiver(receiver_id: str, payload: dict[str, Any]) -> None:
-    await emit_to_user(receiver_id, "receive_voice_message", payload)
+async def emit_message_to_receiver(receiver_id: str, payload: dict[str, Any]) -> None:
+    await emit_to_user(receiver_id, "receive_message", payload)
 
 
 async def emit_message_status_to_user(user_id: str, payload: dict[str, Any]) -> None:
-    await emit_to_user(user_id, "voice_message_status", payload)
+    await emit_to_user(user_id, "message_status", payload)
 
 
 async def emit_presence_update(user_id: str, online: bool, skip_sid: str | None = None) -> None:

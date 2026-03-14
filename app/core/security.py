@@ -73,6 +73,10 @@ async def get_current_user(
     return user
 
 
+async def get_current_user_id(user: dict[str, Any] = Depends(get_current_user)) -> str:
+    return str(user["_id"])
+
+
 async def require_verified_user(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
     if not user.get("is_verified"):
         raise AppError(code="EMAIL_NOT_VERIFIED", message="Email is not verified", status_code=403)

@@ -3,7 +3,7 @@ import pytest
 from app.modules.auth import service as auth_service
 
 
-@pytest.mark.skip(reason="Run Single")
+@pytest.mark.asyncio
 async def test_refresh_token_rotation(inprocess_client, monkeypatch):
     email = "rotate@test.com"
     fixed_code = "123456"

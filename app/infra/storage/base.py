@@ -12,10 +12,20 @@ class StoredFile:
     size_bytes: int
     mime: str
 
-
 class Storage(ABC):
     @abstractmethod
-    async def save(self, *, filename: str, content: bytes, mime: str) -> StoredFile:
+    async def save(
+        self,
+        *,
+        filename: str,
+        content: bytes,
+        mime: str,
+        key: str | None = None,
+    ) -> StoredFile:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete(self, key: str) -> None:
         raise NotImplementedError
 
     @abstractmethod
