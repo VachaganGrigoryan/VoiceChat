@@ -9,8 +9,7 @@ from pymongo import DESCENDING
 from pymongo.errors import DuplicateKeyError
 
 from app.core.errors import AppError
-
-COL_PINGS = "pings"
+from app.db.indexes import COL_PINGS
 
 
 def _oid(value: str) -> ObjectId:

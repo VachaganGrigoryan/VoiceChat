@@ -42,7 +42,8 @@ class PingsService:
             if existing["status"] == "accepted":
                 raise HTTPException(status_code=409, detail="Chat permission already granted")
             if existing["status"] == "pending":
-                raise HTTPException(status_code=409, detail="Ping already pending")
+                return self._to_ping_response(existing)
+                # raise HTTPException(status_code=409, detail="Ping already pending")
 
         doc = await self.pings_repo.create_ping(from_user_id=from_user_id, to_user_id=to_user_id)
         return self._to_ping_response(doc)
@@ -122,3 +123,27 @@ class PingsService:
             ping=self._to_ping_response(doc),
             peer=peer_summary,
         )
+
+    async def to_realtime_payload(self, doc: dict[str, Any], *, incoming_for: str) -> dict[str, Any]:
+        peer_id = doc["from_user_id"] if doc["to_user_id"] == incoming_for else doc["to_user_id"]
+        peer = await self.users_repo.find_by_id(peer_id)
+        is_online = await self.presence_service.is_online(peer_id) if self.presence_service else False
+
+        return {
+            "ping": {
+                "id": str(doc["_id"]),
+                "from_user_id": doc["from_user_id"],
+                "to_user_id": doc["to_user_id"],
+                "status": doc["status"],
+                "created_at": doc["created_at"].isoformat(),
+                "updated_at": doc["updated_at"].isoformat(),
+                "responded_at": doc["responded_at"].isoformat() if doc.get("responded_at") else None,
+            },
+            "peer": {
+                "id": peer_id,
+                "username": peer.get("username", "") if peer else "",
+                "display_name": peer.get("display_name") if peer else None,
+                "avatar": peer.get("avatar") if peer else None,
+                "is_online": is_online,
+            },
+        }
