@@ -10,6 +10,7 @@ from app.core.errors.openapi import build_error_responses
 from app.core.rate_limit import rate_limit
 from app.core.security import require_verified_user
 from app.db.mongo import get_db
+from app.modules.messages.dependencies import get_messages_service
 from app.modules.messages.repository import MessagesRepository
 from app.modules.messages.schemas import MessageDoc, SendTextMessageRequest, ConversationItem
 from app.modules.messages.service import MessagesService
@@ -36,10 +37,8 @@ async def upload_media(
     text: Optional[str] = Form(None),
     file: UploadFile = File(...),
     user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
-    db = get_db()
-    service = MessagesService(MessagesRepository(db))
-
     message = await service.upload_media_message(
         sender_id=str(user["_id"]),
         receiver_id=receiver_id,
@@ -67,10 +66,8 @@ async def send_text(
     request: Request,
     body: SendTextMessageRequest,
     user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
-    db = get_db()
-    service = MessagesService(MessagesRepository(db))
-
     message = await service.send_text_message(
         sender_id=str(user["_id"]),
         receiver_id=body.receiver_id,

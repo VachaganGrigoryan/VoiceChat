@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Protocol
 
 from fastapi import UploadFile
 
@@ -69,9 +69,15 @@ MEDIA_RULES: dict[str, dict] = {
 }
 
 
+class PingsServiceProto(Protocol):
+    async def ensure_can_message(self, *, sender_id: str, receiver_id: str) -> None: ...
+
+
+
 class MessagesService:
-    def __init__(self, repo: MessagesRepository):
+    def __init__(self, repo: MessagesRepository, pings_service: PingsServiceProto | None = None):
         self.repo = repo
+        self.pings_service = pings_service
 
     async def _read_upload(self, *, file: UploadFile) -> bytes:
         if not file or not file.filename:
@@ -147,6 +153,12 @@ class MessagesService:
             text: str | None = None,
             duration_ms: int | None = None,
     ):
+        if self.pings_service is not None:
+            await self.pings_service.ensure_can_message(
+                sender_id=sender_id,
+                receiver_id=receiver_id,
+            )
+
         rules = MEDIA_RULES.get(message_type)
         if not rules:
             raise AppError(
@@ -180,6 +192,12 @@ class MessagesService:
         receiver_id: str,
         text: str,
     ):
+        if self.pings_service is not None:
+            await self.pings_service.ensure_can_message(
+                sender_id=sender_id,
+                receiver_id=receiver_id,
+            )
+
         normalized = text.strip()
         if not normalized:
             raise AppError(

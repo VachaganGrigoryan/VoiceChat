@@ -10,6 +10,7 @@ COL_MESSAGES = "messages"
 COL_REFRESH_TOKENS = "refresh_tokens"
 COL_PASSKEYS = "passkeys"
 COL_PASSKEY_CHALLENGES = "passkey_challenges"
+COL_PINGS = "pings"
 
 
 async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
@@ -95,3 +96,10 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
         [("flow", ASCENDING), ("user_id", ASCENDING), ("email", ASCENDING)],
         name="idx_passkey_challenges_flow_user_email",
     )
+
+    # COL_PINGS
+    await db[COL_PINGS].create_index("pair_id", unique=True, name="uniq_pings_pair_id")
+    await db[COL_PINGS].create_index("from_user_id", name="idx_pings_from_user_id")
+    await db[COL_PINGS].create_index("to_user_id", name="idx_pings_to_user_id")
+    await db[COL_PINGS].create_index("status", name="idx_pings_status")
+    await db[COL_PINGS].create_index("updated_at", name="idx_pings_updated_at")
