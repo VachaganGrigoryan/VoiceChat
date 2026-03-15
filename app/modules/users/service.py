@@ -8,7 +8,7 @@ from app.core.errors import AppError
 from app.modules.auth.repository import UsersRepository
 from app.modules.auth.username import is_valid_username, normalize_username
 from app.modules.users.schemas import UpdateProfileRequest, UserProfileResponse
-from app.infra.storage import get_storage, storage_key_builder
+from app.infra.storage import get_storage, storage_key_builder, build_storage_url
 
 ALLOWED_AVATAR_CONTENT_TYPES: dict[str, str] = {
     "image/jpeg": ".jpg",
@@ -143,6 +143,10 @@ class UsersService:
         return self._to_profile_response(updated)
 
     def _to_profile_response(self, user: dict[str, Any]) -> UserProfileResponse:
+        avatar = user.get("avatar")
+        if avatar is not None:
+            avatar["url"] = build_storage_url(avatar["storage"], avatar["key"])
+
         return UserProfileResponse(
             id=str(user["_id"]),
             email=user["email"],
@@ -150,7 +154,7 @@ class UsersService:
             username=user.get("username", ""),
             display_name=user.get("display_name"),
             bio=user.get("bio"),
-            avatar=user.get("avatar"),
+            avatar=avatar,
             is_private=bool(user.get("is_private", False)),
             default_discovery_enabled=bool(user.get("default_discovery_enabled", True)),
             last_seen_at=user.get("last_seen_at"),

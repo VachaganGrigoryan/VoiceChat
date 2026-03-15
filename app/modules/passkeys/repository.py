@@ -6,10 +6,12 @@ from typing import Any, Literal
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
+from app.db.indexes import COL_PASSKEYS, COL_PASSKEY_CHALLENGES
+
 
 class PasskeysRepository:
     def __init__(self, db: AsyncIOMotorDatabase) -> None:
-        self.collection = db["passkeys"]
+        self.collection = db[COL_PASSKEYS]
 
     async def create_passkey(self, doc: dict[str, Any]) -> dict[str, Any]:
         result = await self.collection.insert_one(doc)
@@ -39,7 +41,7 @@ class PasskeysRepository:
 
 class PasskeyChallengesRepository:
     def __init__(self, db: AsyncIOMotorDatabase) -> None:
-        self.collection = db["passkey_challenges"]
+        self.collection = db[COL_PASSKEY_CHALLENGES]
 
     async def create_challenge(
         self,

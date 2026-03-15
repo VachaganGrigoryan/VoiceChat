@@ -10,6 +10,8 @@ COL_MESSAGES = "messages"
 COL_REFRESH_TOKENS = "refresh_tokens"
 COL_PASSKEYS = "passkeys"
 COL_PASSKEY_CHALLENGES = "passkey_challenges"
+COL_PINGS = "pings"
+COL_DISCOVERY_TOKENS = "discovery_tokens"
 
 
 async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
@@ -94,4 +96,32 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db[COL_PASSKEY_CHALLENGES].create_index(
         [("flow", ASCENDING), ("user_id", ASCENDING), ("email", ASCENDING)],
         name="idx_passkey_challenges_flow_user_email",
+    )
+
+    # COL_PINGS
+    await db[COL_PINGS].create_index("pair_id", unique=True, name="uniq_pings_pair_id")
+    await db[COL_PINGS].create_index("from_user_id", name="idx_pings_from_user_id")
+    await db[COL_PINGS].create_index("to_user_id", name="idx_pings_to_user_id")
+    await db[COL_PINGS].create_index("status", name="idx_pings_status")
+    await db[COL_PINGS].create_index("updated_at", name="idx_pings_updated_at")
+    await db[COL_PINGS].create_index(
+        [("to_user_id", 1), ("created_at", -1), ("_id", -1)],
+        name="idx_pings_incoming_cursor",
+    )
+
+    await db[COL_PINGS].create_index(
+        [("from_user_id", 1), ("created_at", -1), ("_id", -1)],
+        name="idx_pings_outgoing_cursor",
+    )
+
+    # COL_DISCOVERY_TOKENS
+    await db[COL_DISCOVERY_TOKENS].create_index("user_id", name="idx_discovery_user_id")
+    await db[COL_DISCOVERY_TOKENS].create_index("type", name="idx_discovery_type")
+    await db[COL_DISCOVERY_TOKENS].create_index("expires_at", name="idx_discovery_expires_at")
+    await db[COL_DISCOVERY_TOKENS].create_index("is_active", name="idx_discovery_is_active")
+
+    await db[COL_DISCOVERY_TOKENS].create_index(
+        [("user_id", 1), ("type", 1), ("is_active", 1)],
+        partialFilterExpression={"type": "code", "is_active": True},
+        name="uniq_active_code_per_user",
     )

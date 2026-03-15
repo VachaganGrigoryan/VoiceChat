@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-from typing import Optional, Literal
+from typing import Optional, Literal, Annotated
 
+import socketio
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from starlette.requests import Request
 
+from app.core.deps import get_sio
 from app.core.http import ok, PaginationMeta, SuccessResponse, PaginatedResponse, ok_paginated
 from app.core.errors.openapi import build_error_responses
 from app.core.rate_limit import rate_limit
 from app.core.security import require_verified_user
 from app.db.mongo import get_db
+from app.modules.messages.dependencies import get_messages_service
 from app.modules.messages.repository import MessagesRepository
 from app.modules.messages.schemas import MessageDoc, SendTextMessageRequest, ConversationItem
 from app.modules.messages.service import MessagesService
@@ -30,16 +33,15 @@ router = APIRouter(
 )
 async def upload_media(
     request: Request,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
     type: Literal["voice", "image", "sticker", "video"] = Form(...),
     receiver_id: str = Form(...),
     duration_ms: Optional[int] = Form(None),
     text: Optional[str] = Form(None),
     file: UploadFile = File(...),
     user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
-    db = get_db()
-    service = MessagesService(MessagesRepository(db))
-
     message = await service.upload_media_message(
         sender_id=str(user["_id"]),
         receiver_id=receiver_id,
@@ -50,6 +52,7 @@ async def upload_media(
     )
 
     await emit_message_to_receiver(
+        sio,
         receiver_id=receiver_id,
         payload=message.model_dump(mode="json"),
     )
@@ -65,12 +68,11 @@ async def upload_media(
 )
 async def send_text(
     request: Request,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
     body: SendTextMessageRequest,
     user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
-    db = get_db()
-    service = MessagesService(MessagesRepository(db))
-
     message = await service.send_text_message(
         sender_id=str(user["_id"]),
         receiver_id=body.receiver_id,
@@ -78,6 +80,7 @@ async def send_text(
     )
 
     await emit_message_to_receiver(
+        sio,
         receiver_id=body.receiver_id,
         payload=message.model_dump(mode="json"),
     )
@@ -132,10 +135,8 @@ async def conversations(
     limit: int = Query(50, ge=1, le=100),
     cursor: Optional[str] = Query(None),
     user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
-    db = get_db()
-    service = MessagesService(MessagesRepository(db))
-
     items, next_cursor = await service.list_conversations(
         user_id=str(user["_id"]),
         limit=limit,

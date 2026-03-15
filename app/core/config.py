@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     web_app_name: str = Field(default="Voice Chat", alias="WEB_APP_NAME")
     web_app_url: str = Field(default="http://localhost:3000", alias="WEB_APP_URL")
 
+    # Discovery
+    discovery_code_ttl_seconds: int = Field(default=60 * 60, alias="DISCOVERY_CODE_TTL_SECONDS")
+    discovery_link_ttl_seconds: int = Field(default=60 * 60 * 24, alias="DISCOVERY_LINK_TTL_SECONDS")
+
     # Mongo
     mongo_uri: str = Field(default="mongodb://mongo:27017", alias="MONGO_URI")
     mongo_db: str = Field(default="voice_chat", alias="MONGO_DB")

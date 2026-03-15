@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Protocol, Any
 
 from fastapi import UploadFile
 
@@ -69,9 +69,19 @@ MEDIA_RULES: dict[str, dict] = {
 }
 
 
+class PingsServiceProto(Protocol):
+    async def ensure_can_message(self, *, sender_id: str, receiver_id: str) -> None: ...
+    async def get_contact_state(self, *, viewer_user_id: str, peer_user_id: str) -> Any: ...
+
+
 class MessagesService:
-    def __init__(self, repo: MessagesRepository):
+    def __init__(
+        self,
+        repo: MessagesRepository,
+        pings_service: PingsServiceProto | None = None,
+    ):
         self.repo = repo
+        self.pings_service = pings_service
 
     async def _read_upload(self, *, file: UploadFile) -> bytes:
         if not file or not file.filename:
@@ -147,6 +157,12 @@ class MessagesService:
             text: str | None = None,
             duration_ms: int | None = None,
     ):
+        if self.pings_service is not None:
+            await self.pings_service.ensure_can_message(
+                sender_id=sender_id,
+                receiver_id=receiver_id,
+            )
+
         rules = MEDIA_RULES.get(message_type)
         if not rules:
             raise AppError(
@@ -180,6 +196,12 @@ class MessagesService:
         receiver_id: str,
         text: str,
     ):
+        if self.pings_service is not None:
+            await self.pings_service.ensure_can_message(
+                sender_id=sender_id,
+                receiver_id=receiver_id,
+            )
+
         normalized = text.strip()
         if not normalized:
             raise AppError(
@@ -250,6 +272,11 @@ class MessagesService:
             peer = await users_repo.find_by_id(peer_user_id)
             is_online = await presence.is_online(peer_user_id)
 
+            contact_state = await self.pings_service.get_contact_state(
+                viewer_user_id=user_id,
+                peer_user_id=peer_user_id,
+            )
+
             media = msg.get("media")
             if media is None and msg.get("audio") is not None:
                 media = msg.get("audio")
@@ -266,6 +293,9 @@ class MessagesService:
                         display_name=peer.get("display_name") if peer else None,
                         avatar=peer.get("avatar") if peer else None,
                         is_online=is_online,
+                        can_ping=contact_state.can_ping,
+                        chat_allowed=contact_state.chat_allowed,
+                        ping_status=contact_state.ping_status,
                     ),
                     last_message=ConversationLastMessage(
                         id=str(msg["_id"]),
