@@ -25,7 +25,7 @@ def register_events(sio) -> None:
         presence = get_presence_backend()
         became_online = await presence.add_connection(user_id, sid)
         if became_online:
-            await emit_presence_update(user_id, True, skip_sid=sid)
+            await emit_presence_update(sio, user_id, True, skip_sid=sid)
 
         return True
 
@@ -38,7 +38,7 @@ def register_events(sio) -> None:
         presence = get_presence_backend()
         became_offline = await presence.remove_connection(user_id, sid)
         if became_offline:
-            await emit_presence_update(user_id, False)
+            await emit_presence_update(sio, user_id, False)
 
     @sio.event
     async def ping(sid, data):
@@ -149,6 +149,7 @@ def register_events(sio) -> None:
         sender_id = str(msg["sender_id"])
 
         await emit_message_status_to_user(
+            sio,
             sender_id,
             {
                 "message_id": message_id,
@@ -194,6 +195,7 @@ def register_events(sio) -> None:
         sender_id = str(msg["sender_id"])
 
         await emit_message_status_to_user(
+            sio,
             sender_id,
             {
                 "message_id": message_id,
