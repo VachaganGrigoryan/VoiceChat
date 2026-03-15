@@ -6,7 +6,7 @@ from fastapi import HTTPException
 
 from app.core.errors import AppError
 from app.modules.pings.repository import PingsRepository, pair_id_for
-from app.modules.pings.schemas import PingListItem, PingListResponse, PingResponse, PeerUserSummary
+from app.modules.pings.schemas import PingListItem, PingResponse, PeerUserSummary, ContactState
 
 
 class UsersRepositoryProto(Protocol):
@@ -74,15 +74,35 @@ class PingsService:
         assert updated is not None
         return self._to_ping_response(updated)
 
-    async def list_incoming(self, *, user_id: str, limit: int = 20) -> PingListResponse:
-        docs = await self.pings_repo.list_incoming(user_id=user_id, limit=limit)
+    async def list_incoming(
+            self,
+            *,
+            user_id: str,
+            limit: int = 20,
+            cursor: str | None = None,
+    ) -> tuple[list[PingListItem], str | None]:
+        docs, next_cursor = await self.pings_repo.list_incoming(
+            user_id=user_id,
+            limit=limit,
+            cursor=cursor,
+        )
         items = [await self._to_list_item(doc, user_id=user_id, incoming=True) for doc in docs]
-        return PingListResponse(items=items, next_cursor=None)
+        return items, next_cursor
 
-    async def list_outgoing(self, *, user_id: str, limit: int = 20) -> PingListResponse:
-        docs = await self.pings_repo.list_outgoing(user_id=user_id, limit=limit)
+    async def list_outgoing(
+            self,
+            *,
+            user_id: str,
+            limit: int = 20,
+            cursor: str | None = None,
+    ) -> tuple[list[PingListItem], str | None]:
+        docs, next_cursor = await self.pings_repo.list_outgoing(
+            user_id=user_id,
+            limit=limit,
+            cursor=cursor,
+        )
         items = [await self._to_list_item(doc, user_id=user_id, incoming=False) for doc in docs]
-        return PingListResponse(items=items, next_cursor=None)
+        return items, next_cursor
 
     async def has_chat_permission(self, *, user_a: str, user_b: str) -> bool:
         return await self.pings_repo.has_accepted_permission(user_a=user_a, user_b=user_b)
@@ -147,3 +167,54 @@ class PingsService:
                 "is_online": is_online,
             },
         }
+
+    async def get_contact_state(self, *, viewer_user_id: str, peer_user_id: str) -> ContactState:
+        if viewer_user_id == peer_user_id:
+            return ContactState(
+                can_ping=False,
+                chat_allowed=False,
+                ping_status="none",
+            )
+
+        doc = await self.pings_repo.get_pair_state(user_a=viewer_user_id, user_b=peer_user_id)
+        if not doc:
+            return ContactState(
+                can_ping=True,
+                chat_allowed=False,
+                ping_status="none",
+            )
+
+        status = doc["status"]
+
+        if status == "accepted":
+            return ContactState(
+                can_ping=False,
+                chat_allowed=True,
+                ping_status="accepted",
+            )
+
+        if status == "pending":
+            if doc["to_user_id"] == viewer_user_id:
+                return ContactState(
+                    can_ping=False,
+                    chat_allowed=False,
+                    ping_status="incoming_pending",
+                )
+            return ContactState(
+                can_ping=False,
+                chat_allowed=False,
+                ping_status="outgoing_pending",
+            )
+
+        if status == "declined":
+            return ContactState(
+                can_ping=True,
+                chat_allowed=False,
+                ping_status="declined",
+            )
+
+        return ContactState(
+            can_ping=True,
+            chat_allowed=False,
+            ping_status="none",
+        )

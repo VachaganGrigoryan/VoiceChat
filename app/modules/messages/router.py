@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Optional, Literal
+from typing import Optional, Literal, Annotated
 
+import socketio
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from starlette.requests import Request
 
+from app.core.deps import get_sio
 from app.core.http import ok, PaginationMeta, SuccessResponse, PaginatedResponse, ok_paginated
 from app.core.errors.openapi import build_error_responses
 from app.core.rate_limit import rate_limit
@@ -31,6 +33,7 @@ router = APIRouter(
 )
 async def upload_media(
     request: Request,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
     type: Literal["voice", "image", "sticker", "video"] = Form(...),
     receiver_id: str = Form(...),
     duration_ms: Optional[int] = Form(None),
@@ -49,6 +52,7 @@ async def upload_media(
     )
 
     await emit_message_to_receiver(
+        sio,
         receiver_id=receiver_id,
         payload=message.model_dump(mode="json"),
     )
@@ -64,6 +68,7 @@ async def upload_media(
 )
 async def send_text(
     request: Request,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
     body: SendTextMessageRequest,
     user: dict = Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
@@ -75,6 +80,7 @@ async def send_text(
     )
 
     await emit_message_to_receiver(
+        sio,
         receiver_id=body.receiver_id,
         payload=message.model_dump(mode="json"),
     )
@@ -129,10 +135,8 @@ async def conversations(
     limit: int = Query(50, ge=1, le=100),
     cursor: Optional[str] = Query(None),
     user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
-    db = get_db()
-    service = MessagesService(MessagesRepository(db))
-
     items, next_cursor = await service.list_conversations(
         user_id=str(user["_id"]),
         limit=limit,

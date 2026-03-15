@@ -9,6 +9,7 @@ from pymongo import DESCENDING
 from pymongo.errors import DuplicateKeyError
 
 from app.core.errors import AppError
+from app.core.pagination.cursor import decode_cursor, encode_cursor
 from app.db.indexes import COL_PINGS
 
 
@@ -53,6 +54,9 @@ class PingsRepository:
     async def find_by_pair_id(self, pair_id: str) -> dict[str, Any] | None:
         return await self.col.find_one({"pair_id": pair_id})
 
+    async def get_pair_state(self, *, user_a: str, user_b: str) -> dict[str, Any] | None:
+        return await self.col.find_one({"pair_id": pair_id_for(user_a, user_b)})
+
     async def update_status(self, *, ping_id: str, status: str) -> dict[str, Any] | None:
         now = datetime.now(UTC)
         responded_at = now if status in {"accepted", "declined", "cancelled", "expired", "blocked"} else None
@@ -69,21 +73,79 @@ class PingsRepository:
         )
         return await self.find_by_id(ping_id)
 
-    async def list_incoming(self, *, user_id: str, limit: int = 20) -> list[dict[str, Any]]:
-        cursor = (
-            self.col.find({"to_user_id": user_id})
-            .sort("updated_at", DESCENDING)
-            .limit(limit)
-        )
-        return await cursor.to_list(length=limit)
+    async def list_incoming(
+            self,
+            *,
+            user_id: str,
+            limit: int = 20,
+            cursor: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        query: dict[str, Any] = {"to_user_id": user_id}
 
-    async def list_outgoing(self, *, user_id: str, limit: int = 20) -> list[dict[str, Any]]:
-        cursor = (
-            self.col.find({"from_user_id": user_id})
-            .sort("updated_at", DESCENDING)
-            .limit(limit)
+        if cursor:
+            payload = decode_cursor(cursor, required_fields={"created_at", "id"})
+            created_at = payload["created_at"]
+            oid = _oid(payload["id"])
+
+            query["$or"] = [
+                {"created_at": {"$lt": created_at}},
+                {"created_at": created_at, "_id": {"$lt": oid}},
+            ]
+
+        docs = await (
+            self.col.find(query)
+            .sort([("created_at", DESCENDING), ("_id", DESCENDING)])
+            .limit(limit + 1)
+            .to_list(length=limit + 1)
         )
-        return await cursor.to_list(length=limit)
+
+        next_cursor: str | None = None
+        if len(docs) > limit:
+            last = docs[limit - 1]
+            next_cursor = encode_cursor(
+                created_at=last["created_at"],
+                id=str(last["_id"]),
+            )
+            docs = docs[:limit]
+
+        return docs, next_cursor
+
+    async def list_outgoing(
+            self,
+            *,
+            user_id: str,
+            limit: int = 20,
+            cursor: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        query: dict[str, Any] = {"from_user_id": user_id}
+
+        if cursor:
+            payload = decode_cursor(cursor, required_fields={"created_at", "id"})
+            created_at = payload["created_at"]
+            oid = _oid(payload["id"])
+
+            query["$or"] = [
+                {"created_at": {"$lt": created_at}},
+                {"created_at": created_at, "_id": {"$lt": oid}},
+            ]
+
+        docs = await (
+            self.col.find(query)
+            .sort([("created_at", DESCENDING), ("_id", DESCENDING)])
+            .limit(limit + 1)
+            .to_list(length=limit + 1)
+        )
+
+        next_cursor: str | None = None
+        if len(docs) > limit:
+            last = docs[limit - 1]
+            next_cursor = encode_cursor(
+                created_at=last["created_at"],
+                id=str(last["_id"]),
+            )
+            docs = docs[:limit]
+
+        return docs, next_cursor
 
     async def has_accepted_permission(self, *, user_a: str, user_b: str) -> bool:
         doc = await self.col.find_one(

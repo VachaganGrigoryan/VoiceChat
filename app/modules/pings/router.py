@@ -4,11 +4,13 @@ from typing import Annotated
 
 import socketio
 from fastapi import APIRouter, Depends, Query
+from starlette.requests import Request
 
 from app.core.deps import get_sio
+from app.core.http import PaginatedResponse, ok_paginated, PaginationMeta
 from app.core.security import get_current_user_id
 from app.modules.pings.dependencies import get_pings_service
-from app.modules.pings.schemas import PingListResponse, PingResponse, SendPingRequest
+from app.modules.pings.schemas import PingResponse, SendPingRequest, PingListItem
 from app.modules.realtime import emit_ping_received, emit_ping_accepted, emit_chat_permission_updated, \
     emit_ping_declined
 
@@ -36,22 +38,53 @@ async def send_ping(
     return ping
 
 
-@router.get("/incoming", response_model=PingListResponse)
+@router.get("/incoming", response_model=PaginatedResponse[list[PingListItem]])
 async def list_incoming(
+    request: Request,
     user_id=Depends(get_current_user_id),
     limit: int = Query(default=20, ge=1, le=100),
+    cursor: str | None = Query(default=None),
     service=Depends(get_pings_service),
 ):
-    return await service.list_incoming(user_id=user_id, limit=limit)
+    items, next_cursor = await service.list_incoming(
+        user_id=user_id,
+        limit=limit,
+        cursor=cursor,
+    )
+    return ok_paginated(
+        request,
+        data=items,
+        meta=PaginationMeta(
+            cursor=cursor,
+            next_cursor=next_cursor,
+            limit=limit,
+        ),
+    )
 
 
-@router.get("/outgoing", response_model=PingListResponse)
+@router.get("/outgoing", response_model=PaginatedResponse[list[PingListItem]])
 async def list_outgoing(
+    request: Request,
     user_id=Depends(get_current_user_id),
     limit: int = Query(default=20, ge=1, le=100),
+    cursor: str | None = Query(default=None),
     service=Depends(get_pings_service),
 ):
-    return await service.list_outgoing(user_id=user_id, limit=limit)
+    items, next_cursor = await service.list_outgoing(
+        user_id=user_id,
+        limit=limit,
+        cursor=cursor,
+    )
+    return ok_paginated(
+        request,
+        data=items,
+        meta=PaginationMeta(
+            cursor=cursor,
+            next_cursor=next_cursor,
+            limit=limit,
+        ),
+    )
+
 
 
 @router.post("/{ping_id}/accept", response_model=PingResponse)

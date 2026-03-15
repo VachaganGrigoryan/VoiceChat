@@ -104,6 +104,15 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db[COL_PINGS].create_index("to_user_id", name="idx_pings_to_user_id")
     await db[COL_PINGS].create_index("status", name="idx_pings_status")
     await db[COL_PINGS].create_index("updated_at", name="idx_pings_updated_at")
+    await db[COL_PINGS].create_index(
+        [("to_user_id", 1), ("created_at", -1), ("_id", -1)],
+        name="idx_pings_incoming_cursor",
+    )
+
+    await db[COL_PINGS].create_index(
+        [("from_user_id", 1), ("created_at", -1), ("_id", -1)],
+        name="idx_pings_outgoing_cursor",
+    )
 
     # COL_DISCOVERY_TOKENS
     await db[COL_DISCOVERY_TOKENS].create_index("user_id", name="idx_discovery_user_id")

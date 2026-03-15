@@ -62,4 +62,4 @@ async def search_users(
     user_id=Depends(get_current_user_id),
     service: DiscoveryService = Depends(get_discovery_service),
 ):
-    return await service.search_users(q=q, limit=limit)
+    return await service.search_users(q=q, requester_user_id=user_id, limit=limit)

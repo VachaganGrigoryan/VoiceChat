@@ -30,6 +30,10 @@ class PresenceServiceProto(Protocol):
     async def is_online(self, user_id: str) -> bool: ...
 
 
+class PingsServiceProto(Protocol):
+    async def get_contact_state(self, *, viewer_user_id: str, peer_user_id: str) -> Any: ...
+
+
 @dataclass(slots=True)
 class DiscoveryConfig:
     invite_base_url: str
@@ -50,11 +54,13 @@ class DiscoveryService:
         repo: DiscoveryTokensRepository,
         users_repo: UsersRepositoryProto,
         presence_service: PresenceServiceProto | None = None,
+        pings_service: PingsServiceProto | None = None,
         config: DiscoveryConfig,
     ) -> None:
         self.repo = repo
         self.users_repo = users_repo
         self.presence_service = presence_service
+        self.pings_service = pings_service
         self.config = config
 
     async def regenerate_code(self, *, user_id: str) -> RegenerateCodeResponse:
@@ -143,7 +149,7 @@ class DiscoveryService:
             requester_user_id=requester_user_id,
         )
 
-    async def search_users(self, *, q: str, limit: int = 20) -> list[DiscoveryUserSummary]:
+    async def search_users(self, *, q: str, requester_user_id: str, limit: int = 20) -> list[DiscoveryUserSummary]:
         query = q.strip().lower()
         if not query:
             return []
@@ -158,7 +164,7 @@ class DiscoveryService:
                 continue
 
             result.append(
-                await self._to_summary(user, discovered_via="username")
+                await self._to_summary(user, discovered_via="username", requester_user_id=requester_user_id)
             )
 
         return result
@@ -203,7 +209,7 @@ class DiscoveryService:
         user: dict[str, Any],
         *,
         discovered_via: str,
-        requester_user_id: str | None = None,
+        requester_user_id: str,
     ) -> DiscoveryUserSummary:
         user_id = str(user["_id"])
         online = await self.presence_service.is_online(user_id) if self.presence_service else False
@@ -211,12 +217,19 @@ class DiscoveryService:
         if avatar is not None:
             avatar["url"] = build_storage_url(avatar["storage"], avatar["key"])
 
+        contact_state = await self.pings_service.get_contact_state(
+            viewer_user_id=requester_user_id,
+            peer_user_id=user_id,
+        )
+
         return DiscoveryUserSummary(
             id=user_id,
             username=user.get("username", ""),
             display_name=user.get("display_name"),
             avatar=avatar,
             is_online=online,
-            can_ping=requester_user_id != user_id,
+            can_ping=contact_state.can_ping,
+            chat_allowed=contact_state.chat_allowed,
+            ping_status=contact_state.ping_status,
             discovered_via=discovered_via,
         )

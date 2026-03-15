@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 PingStatus = Literal["pending", "accepted", "declined", "cancelled", "expired", "blocked"]
+PingStatusView = Literal["none", "incoming_pending", "outgoing_pending", "accepted", "declined"]
 
 
 class SendPingRequest(BaseModel):
@@ -35,6 +36,7 @@ class PingListItem(BaseModel):
     peer: PeerUserSummary
 
 
-class PingListResponse(BaseModel):
-    items: list[PingListItem]
-    next_cursor: str | None = None
+class ContactState(BaseModel):
+    can_ping: bool
+    chat_allowed: bool
+    ping_status: PingStatusView

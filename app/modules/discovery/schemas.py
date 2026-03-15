@@ -15,7 +15,9 @@ class DiscoveryUserSummary(BaseModel):
     display_name: str | None = None
     avatar: dict | None = None
     is_online: bool = False
-    can_ping: bool = True
+    can_ping: bool = False
+    chat_allowed: bool = False
+    ping_status: str = "none"
     discovered_via: Literal["username", "code", "link"] | None = None
 
 
