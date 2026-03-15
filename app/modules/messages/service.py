@@ -6,7 +6,7 @@ from fastapi import UploadFile
 
 from app.core.errors import AppError
 from app.db.mongo import get_db
-from app.infra.storage import get_storage, storage_key_builder, FolderKind
+from app.infra.storage import get_storage, storage_key_builder, FolderKind, build_storage_url
 from app.modules.auth.repository import UsersRepository
 from app.modules.messages.mappers import to_message_doc
 from app.modules.messages.repository import MessagesRepository
@@ -281,6 +281,10 @@ class MessagesService:
             if media is None and msg.get("audio") is not None:
                 media = msg.get("audio")
 
+            avatar = peer.get("avatar") if peer else None
+            if avatar is not None:
+                avatar["url"] = build_storage_url(avatar["storage"], avatar["key"])
+
             text = msg.get("text")
             msg_type = msg.get("type") or msg.get("message_type") or "voice"
 
@@ -291,7 +295,7 @@ class MessagesService:
                         id=peer_user_id,
                         username=peer.get("username") if peer else None,
                         display_name=peer.get("display_name") if peer else None,
-                        avatar=peer.get("avatar") if peer else None,
+                        avatar=avatar,
                         is_online=is_online,
                         can_ping=contact_state.can_ping,
                         chat_allowed=contact_state.chat_allowed,
@@ -306,6 +310,7 @@ class MessagesService:
                         created_at=msg["created_at"],
                     ),
                     last_message_at=msg["created_at"],
+                    unread_count=row.get("unread_count", 0),
                 )
             )
 

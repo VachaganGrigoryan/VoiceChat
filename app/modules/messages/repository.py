@@ -137,11 +137,11 @@ class MessagesRepository:
         return items, next_cursor
 
     async def list_conversations_for_user(
-        self,
-        *,
-        user_id: str,
-        limit: int = 50,
-        cursor: str | None = None,
+            self,
+            *,
+            user_id: str,
+            limit: int = 50,
+            cursor: str | None = None,
     ) -> tuple[list[dict[str, Any]], str | None]:
         if limit < 1 or limit > 100:
             raise AppError(code="INVALID_LIMIT", message="limit must be between 1 and 100", status_code=400)
@@ -162,6 +162,20 @@ class MessagesRepository:
                 "$group": {
                     "_id": "$conversation_id",
                     "last_message": {"$first": "$$ROOT"},
+                    "unread_count": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$and": [
+                                        {"$eq": ["$receiver_id", uid]},
+                                        {"$ne": ["$status", "read"]},
+                                    ]
+                                },
+                                1,
+                                0,
+                            ]
+                        }
+                    },
                 }
             },
         ]

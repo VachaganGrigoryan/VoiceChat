@@ -68,3 +68,4 @@ class ConversationItem(BaseModel):
     peer_user: ConversationPeer
     last_message: ConversationLastMessage
     last_message_at: datetime
+    unread_count: int = 0
