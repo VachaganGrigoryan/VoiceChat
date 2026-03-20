@@ -112,6 +112,19 @@ class AuthService:
 
         return generic_response
 
+    async def issue_token_pair_for_user(
+        self,
+        *,
+        user_id: str,
+        user_agent: str | None = None,
+        ip: str | None = None,
+    ) -> dict:
+        return await self._issue_token_pair(
+            user_id=user_id,
+            user_agent=user_agent,
+            ip=ip,
+        )
+
     async def _issue_token_pair(
         self,
         *,

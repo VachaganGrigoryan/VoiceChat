@@ -3,7 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: voicechat_api
+      target: development
+    container_name: voice-chat-api
     env_file:
       - .env
     ports:
@@ -20,11 +21,12 @@ services:
       - uploads_data:/app/uploads
     command: poetry run uvicorn app.main:asgi_app --host 0.0.0.0 --port 8000 --reload
 
-  email_worker:
+  worker:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: voicechat_email_worker
+      target: development
+    container_name: voice-chat-worker
     env_file:
       - .env
     depends_on:

@@ -16,9 +16,16 @@ class Settings(BaseSettings):
 
     app_env: str = Field(default="dev", alias="APP_ENV")
     cors_allowed_origins: list[str] = Field(
-        default=[],
+        default=["*"],
         alias="CORS_ALLOWED_ORIGINS"
     )
+
+    web_app_name: str = Field(default="Voice Chat", alias="WEB_APP_NAME")
+    web_app_url: str = Field(default="http://localhost:3000", alias="WEB_APP_URL")
+
+    # Discovery
+    discovery_code_ttl_seconds: int = Field(default=60 * 60, alias="DISCOVERY_CODE_TTL_SECONDS")
+    discovery_link_ttl_seconds: int = Field(default=60 * 60 * 24, alias="DISCOVERY_LINK_TTL_SECONDS")
 
     # Mongo
     mongo_uri: str = Field(default="mongodb://mongo:27017", alias="MONGO_URI")
@@ -30,6 +37,15 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = Field(default=60, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
 
+    # Passkey
+    passkey_rp_id: str = Field(default="localhost", alias="PASSKEY_RP_ID")
+    passkey_rp_name: str = Field(default="Voice Chat", alias="PASSKEY_RP_NAME")
+    passkey_origin: str = Field(default="http://localhost:5173", alias="PASSKEY_ORIGIN")
+    passkey_challenge_ttl_seconds: int = Field(
+        default=300,
+        alias="PASSKEY_CHALLENGE_TTL_SECONDS",
+    )
+
     # Uploads
     upload_dir: str = Field(default="uploads", alias="UPLOAD_DIR")
     max_file_size_mb: int = Field(default=10, alias="MAX_FILE_SIZE_MB")
@@ -38,6 +54,8 @@ class Settings(BaseSettings):
     email_provider: str = Field(default="mock", alias="EMAIL_PROVIDER")  # mock | smtp | providerX
     smtp_host: str = Field(default="localhost", alias="SMTP_HOST")
     smtp_port: int = Field(default=1025, alias="SMTP_PORT")
+    smtp_from_email: str = Field(default="no-reply@voicechat.local", alias="SMTP_FROM_EMAIL")
+    smtp_from_name: str = Field(default="Voice Chat", alias="SMTP_FROM_NAME")
     smtp_user: str = Field(default="", alias="SMTP_USER")
     smtp_pass: str = Field(default="", alias="SMTP_PASS")
 

@@ -33,7 +33,7 @@ router = APIRouter(
     "/register",
     response_model=SuccessResponse[GenericCodeSentResponse],
     status_code=201,
-    dependencies=[Depends(rate_limit("5/15 minutes", scope="auth_register"))],
+    dependencies=[Depends(rate_limit("10/15 minutes", scope="auth_register"))],
 )
 async def register(request: Request, body: GenericEmailRequest):
     db = get_db()

@@ -4,8 +4,12 @@ from fastapi import FastAPI
 
 from app.health.router import router as health_router
 from app.modules.auth.router import router as auth_router
+from app.modules.users.router import router as users_router
 from app.modules.messages.router import router as messages_router
 from app.modules.realtime.router import router as realtime_router
+from app.modules.passkeys.router import router as passkeys_router
+from app.modules.pings.router import router as pings_router
+from app.modules.discovery.router import router as discovery_router
 
 
 def register_routers(app: FastAPI) -> None:
@@ -13,5 +17,9 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(health_router)
 
     app.include_router(auth_router)
+    app.include_router(passkeys_router)
+    app.include_router(users_router)
+    app.include_router(pings_router)
+    app.include_router(discovery_router)
     app.include_router(messages_router)
     app.include_router(realtime_router)
