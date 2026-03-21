@@ -7,7 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.errors import AppError
-from app.modules.pings.schemas import PingListResponse, PingResponse
+from app.modules.pings.schemas import PingResponse
 from app.modules.pings.service import PingsService
 
 
@@ -16,6 +16,7 @@ def service():
     pings_repo = AsyncMock()
     users_repo = AsyncMock()
     presence_service = AsyncMock()
+    pings_repo.is_blocked.return_value = False
 
     svc = PingsService(
         pings_repo=pings_repo,
@@ -99,22 +100,19 @@ async def test_send_ping_rejects_when_already_accepted(service):
 
 
 @pytest.mark.asyncio
-async def test_send_ping_rejects_when_already_pending(service):
+async def test_send_ping_returns_existing_when_already_pending(service, pending_ping_doc):
     svc, pings_repo, users_repo, _ = service
 
     users_repo.find_by_id.return_value = {"_id": "u2", "username": "target"}
-    pings_repo.find_by_pair_id.return_value = {
-        "_id": "ping1",
-        "from_user_id": "u1",
-        "to_user_id": "u2",
-        "status": "pending",
-    }
+    existing_ping = pending_ping_doc
+    pings_repo.find_by_pair_id.return_value = existing_ping
 
-    with pytest.raises(HTTPException) as exc:
-        await svc.send_ping(from_user_id="u1", to_user_id="u2")
+    result = await svc.send_ping(from_user_id="u1", to_user_id="u2")
 
-    assert exc.value.status_code == 409
-    assert exc.value.detail == "Ping already pending"
+    assert isinstance(result, PingResponse)
+    assert result.id == "ping1"
+    assert result.status == "pending"
+    pings_repo.create_ping.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -240,7 +238,7 @@ async def test_decline_ping_success(service, pending_ping_doc, fixed_now):
 async def test_list_incoming_returns_items_with_peer_and_presence(service, pending_ping_doc):
     svc, pings_repo, users_repo, presence_service = service
 
-    pings_repo.list_incoming.return_value = [pending_ping_doc]
+    pings_repo.list_incoming.return_value = ([pending_ping_doc], None)
     users_repo.find_by_id.return_value = {
         "_id": "u1",
         "username": "alice",
@@ -249,21 +247,21 @@ async def test_list_incoming_returns_items_with_peer_and_presence(service, pendi
     }
     presence_service.is_online.return_value = True
 
-    result = await svc.list_incoming(user_id="u2", limit=20)
+    items, next_cursor = await svc.list_incoming(user_id="u2", limit=20)
 
-    assert isinstance(result, PingListResponse)
-    assert len(result.items) == 1
-    assert result.items[0].ping.id == "ping1"
-    assert result.items[0].peer.id == "u1"
-    assert result.items[0].peer.username == "alice"
-    assert result.items[0].peer.is_online is True
+    assert next_cursor is None
+    assert len(items) == 1
+    assert items[0].ping.id == "ping1"
+    assert items[0].peer.id == "u1"
+    assert items[0].peer.username == "alice"
+    assert items[0].peer.is_online is True
 
 
 @pytest.mark.asyncio
 async def test_list_outgoing_returns_items_with_peer_and_presence(service, pending_ping_doc):
     svc, pings_repo, users_repo, presence_service = service
 
-    pings_repo.list_outgoing.return_value = [pending_ping_doc]
+    pings_repo.list_outgoing.return_value = ([pending_ping_doc], None)
     users_repo.find_by_id.return_value = {
         "_id": "u2",
         "username": "bob",
@@ -272,37 +270,38 @@ async def test_list_outgoing_returns_items_with_peer_and_presence(service, pendi
     }
     presence_service.is_online.return_value = False
 
-    result = await svc.list_outgoing(user_id="u1", limit=20)
+    items, next_cursor = await svc.list_outgoing(user_id="u1", limit=20)
 
-    assert isinstance(result, PingListResponse)
-    assert len(result.items) == 1
-    assert result.items[0].peer.id == "u2"
-    assert result.items[0].peer.username == "bob"
-    assert result.items[0].peer.is_online is False
+    assert next_cursor is None
+    assert len(items) == 1
+    assert items[0].peer.id == "u2"
+    assert items[0].peer.username == "bob"
+    assert items[0].peer.is_online is False
 
 
 @pytest.mark.asyncio
 async def test_list_incoming_handles_missing_peer(service, pending_ping_doc):
     svc, pings_repo, users_repo, presence_service = service
 
-    pings_repo.list_incoming.return_value = [pending_ping_doc]
+    pings_repo.list_incoming.return_value = ([pending_ping_doc], None)
     users_repo.find_by_id.return_value = None
     presence_service.is_online.return_value = False
 
-    result = await svc.list_incoming(user_id="u2", limit=20)
+    items, _ = await svc.list_incoming(user_id="u2", limit=20)
 
-    assert len(result.items) == 1
-    assert result.items[0].peer.id == "u1"
-    assert result.items[0].peer.username == ""
-    assert result.items[0].peer.display_name is None
-    assert result.items[0].peer.avatar is None
-    assert result.items[0].peer.is_online is False
+    assert len(items) == 1
+    assert items[0].peer.id == "u1"
+    assert items[0].peer.username == ""
+    assert items[0].peer.display_name is None
+    assert items[0].peer.avatar is None
+    assert items[0].peer.is_online is False
 
 
 @pytest.mark.asyncio
 async def test_list_outgoing_without_presence_service_defaults_false(pending_ping_doc):
     pings_repo = AsyncMock()
     users_repo = AsyncMock()
+    pings_repo.is_blocked.return_value = False
 
     svc = PingsService(
         pings_repo=pings_repo,
@@ -310,7 +309,7 @@ async def test_list_outgoing_without_presence_service_defaults_false(pending_pin
         presence_service=None,
     )
 
-    pings_repo.list_outgoing.return_value = [pending_ping_doc]
+    pings_repo.list_outgoing.return_value = ([pending_ping_doc], None)
     users_repo.find_by_id.return_value = {
         "_id": "u2",
         "username": "bob",
@@ -318,10 +317,10 @@ async def test_list_outgoing_without_presence_service_defaults_false(pending_pin
         "avatar": None,
     }
 
-    result = await svc.list_outgoing(user_id="u1", limit=20)
+    items, _ = await svc.list_outgoing(user_id="u1", limit=20)
 
-    assert len(result.items) == 1
-    assert result.items[0].peer.is_online is False
+    assert len(items) == 1
+    assert items[0].peer.is_online is False
 
 
 @pytest.mark.asyncio
@@ -348,22 +347,37 @@ async def test_has_chat_permission_false(service):
 @pytest.mark.asyncio
 async def test_ensure_can_message_allows_when_permission_exists(service):
     svc, pings_repo, _, _ = service
+    pings_repo.is_blocked.return_value = False
     pings_repo.has_accepted_permission.return_value = True
 
     await svc.ensure_can_message(sender_id="u1", receiver_id="u2")
 
+    pings_repo.is_blocked.assert_awaited_once_with(user_a="u1", user_b="u2")
     pings_repo.has_accepted_permission.assert_awaited_once_with(user_a="u1", user_b="u2")
 
 
 @pytest.mark.asyncio
 async def test_ensure_can_message_raises_when_permission_missing(service):
     svc, pings_repo, _, _ = service
+    pings_repo.is_blocked.return_value = False
     pings_repo.has_accepted_permission.return_value = False
 
     with pytest.raises(AppError) as exc:
         await svc.ensure_can_message(sender_id="u1", receiver_id="u2")
 
     assert exc.value.code == "CHAT_PERMISSION_REQUIRED"
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_ensure_can_message_raises_when_blocked(service):
+    svc, pings_repo, _, _ = service
+    pings_repo.is_blocked.return_value = True
+
+    with pytest.raises(AppError) as exc:
+        await svc.ensure_can_message(sender_id="u1", receiver_id="u2")
+
+    assert exc.value.code == "CHAT_BLOCKED"
     assert exc.value.status_code == 403
 
 

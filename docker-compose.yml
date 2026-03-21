@@ -120,6 +120,7 @@ services:
     profiles: ["test"]
     volumes:
       - ./:/app
+      - uploads_data:/app/uploads_test
     ports:
       - "8001:8000"
     command: poetry run uvicorn app.main:asgi_app --host 0.0.0.0 --port 8000
@@ -147,6 +148,7 @@ services:
         condition: service_healthy
     volumes:
       - ./:/app
+      - uploads_data:/app/uploads_test
     profiles: [ "test" ]
     command: poetry run pytest -v app/tests
 

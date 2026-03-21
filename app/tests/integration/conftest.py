@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import os
 
+os.environ["ENV_FILE"] = ".env.test"
+
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from app.asgi import app
 from app.core.config import settings
 from app.db.mongo import connect_mongo, disconnect_mongo
-
-os.environ["ENV_FILE"] = ".env.test"
+from app.factory import create_app
+from app.socket import create_socket_server, register_socket_events
 
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
@@ -63,6 +64,11 @@ async def clean_db():
 
 @pytest_asyncio.fixture(scope="function")
 async def inprocess_client():
+    app = create_app()
+    sio = create_socket_server()
+    register_socket_events(sio)
+    app.state.sio = sio
+
     async with LifespanManager(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(
@@ -71,6 +77,10 @@ async def inprocess_client():
             timeout=10,
         ) as ac:
             yield ac
+
+    redis_client = getattr(getattr(sio, "manager", None), "redis", None)
+    if redis_client is not None:
+        await redis_client.aclose()
 
 
 @pytest_asyncio.fixture
