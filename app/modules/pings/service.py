@@ -108,6 +108,13 @@ class PingsService:
         return await self.pings_repo.has_accepted_permission(user_a=user_a, user_b=user_b)
 
     async def ensure_can_message(self, *, sender_id: str, receiver_id: str) -> None:
+        if await self.pings_repo.is_blocked(user_a=sender_id, user_b=receiver_id):
+            raise AppError(
+                code="CHAT_BLOCKED",
+                message="Messaging is blocked for this user pair",
+                status_code=403,
+            )
+
         allowed = await self.has_chat_permission(user_a=sender_id, user_b=receiver_id)
         if not allowed:
             raise AppError(
@@ -115,6 +122,40 @@ class PingsService:
                 message="Accepted ping required before messaging",
                 status_code=403,
             )
+
+    async def cancel_ping(self, *, user_id: str, ping_id: str):
+        """User can cancel only owned pings"""
+        ping = await self.pings_repo.find_by_id(ping_id)
+        if not ping:
+            raise HTTPException(status_code=404, detail="Ping not found")
+        if ping["from_user_id"] != user_id:
+            raise HTTPException(status_code=403, detail="Not allowed to cancel this ping")
+        if ping["status"] != "pending":
+            raise HTTPException(status_code=409, detail="Ping is not pending")
+
+        updated = await self.pings_repo.update_status(ping_id=ping_id, status="cancelled")
+        assert updated is not None
+        return self._to_ping_response(updated)
+
+    async def block_user(self, *, user_id: str, peer_user_id: str):
+        doc = await self.pings_repo.block_pair(
+            user_a=user_id,
+            user_b=peer_user_id,
+            by_user_id=user_id,
+        )
+        return self._to_ping_response(doc)
+
+    async def unblock_user(self, *, user_id: str, peer_user_id: str):
+        doc = await self.pings_repo.unblock_pair(
+            user_a=user_id,
+            user_b=peer_user_id,
+            by_user_id=user_id,
+        )
+        return self._to_ping_response(doc)
+
+    async def list_blocked(self, *, user_id: str):
+        docs = await self.pings_repo.list_blocked(user_id=user_id)
+        return [self._to_ping_response(doc) for doc in docs]
 
     def _to_ping_response(self, doc: dict[str, Any]) -> PingResponse:
         return PingResponse(

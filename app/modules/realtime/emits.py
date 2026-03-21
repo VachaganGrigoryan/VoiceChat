@@ -64,6 +64,15 @@ async def emit_ping_declined(sio: socketio.AsyncServer, *, to_user_id: str, payl
     await sio.emit("ping_declined", payload, room=user_room(to_user_id))
 
 
+async def emit_ping_cancelled(sio: socketio.AsyncServer, *, to_user_id: str, payload: dict) -> None:
+    await sio.emit("ping_cancelled", payload, room=user_room(to_user_id))
+
+
+async def emit_user_blocked(sio: socketio.AsyncServer, *, user_a: str, user_b: str) -> None:
+    await sio.emit("user_blocked", {"peer_user_id": user_b}, room=user_room(user_a))
+    await sio.emit("user_blocked", {"peer_user_id": user_a}, room=user_room(user_b))
+
+
 async def emit_chat_permission_updated(
     sio: socketio.AsyncServer,
     *,
