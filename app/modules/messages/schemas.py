@@ -5,7 +5,6 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-
 MessageType = Literal["voice", "text", "image", "emoji", "sticker", "video"]
 MessageStatus = Literal["sent", "delivered", "read"]
 StorageProvider = Literal["local", "s3"]
@@ -34,6 +33,11 @@ class MessageDoc(BaseModel):
     edited_at: Optional[datetime] = None
     delivered_at: Optional[datetime] = None
     read_at: Optional[datetime] = None
+
+    is_deleted: bool = False
+    deleted_at: Optional[datetime] = None
+    deleted_for_everyone: bool = False
+
     created_at: datetime
     updated_at: datetime
 
@@ -41,6 +45,19 @@ class MessageDoc(BaseModel):
 class SendTextMessageRequest(BaseModel):
     receiver_id: str
     text: str = Field(min_length=1, max_length=4000)
+
+
+class EditMessageRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class UpdateMessageStatusRequest(BaseModel):
+    # useful if later you want one REST endpoint instead of two
+    status: Literal["delivered", "read"]
+
+
+class MarkConversationReadRequest(BaseModel):
+    peer_user_id: str
 
 
 class ConversationPeer(BaseModel):

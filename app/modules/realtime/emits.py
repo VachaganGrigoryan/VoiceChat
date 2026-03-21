@@ -11,11 +11,7 @@ def user_room(user_id: str) -> str:
 
 
 async def emit_to_user(sio: socketio.AsyncServer, user_id: str, event: str, payload: dict[str, Any]) -> None:
-    await sio.emit(
-        event,
-        jsonable_encoder(payload),
-        room=user_room(user_id),
-    )
+    await sio.emit(event, jsonable_encoder(payload), room=user_room(user_id))
 
 
 async def emit_message_to_receiver(sio: socketio.AsyncServer, receiver_id: str, payload: dict[str, Any]) -> None:
@@ -24,6 +20,28 @@ async def emit_message_to_receiver(sio: socketio.AsyncServer, receiver_id: str, 
 
 async def emit_message_status_to_user(sio: socketio.AsyncServer, user_id: str, payload: dict[str, Any]) -> None:
     await emit_to_user(sio, user_id, "message_status", payload)
+
+
+async def emit_message_edited(
+        sio: socketio.AsyncServer,
+        *,
+        sender_id: str,
+        receiver_id: str,
+        payload: dict[str, Any],
+) -> None:
+    await emit_to_user(sio, sender_id, "message_edited", payload)
+    await emit_to_user(sio, receiver_id, "message_edited", payload)
+
+
+async def emit_message_deleted(
+        sio: socketio.AsyncServer,
+        *,
+        sender_id: str,
+        receiver_id: str,
+        payload: dict[str, Any],
+) -> None:
+    await emit_to_user(sio, sender_id, "message_deleted", payload)
+    await emit_to_user(sio, receiver_id, "message_deleted", payload)
 
 
 async def emit_presence_update(sio: socketio.AsyncServer, user_id: str, online: bool, skip_sid: str | None = None) -> None:

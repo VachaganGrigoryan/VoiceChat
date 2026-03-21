@@ -266,3 +266,95 @@ class MessagesRepository:
         if not res:
             raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
         return res
+
+    async def mark_conversation_read_for_receiver(
+            self,
+            *,
+            receiver_id: str,
+            peer_user_id: str,
+    ) -> int:
+        now = datetime.now(UTC)
+        conversation_id = conversation_id_for(receiver_id, peer_user_id)
+        result = await self.col.update_many(
+            {
+                "conversation_id": conversation_id,
+                "receiver_id": _oid(receiver_id),
+                "status": {"$ne": "read"},
+            },
+            {
+                "$set": {
+                    "status": "read",
+                    "read_at": now,
+                    "updated_at": now,
+                }
+            },
+        )
+        # ensure delivered_at exists on newly-read messages
+        await self.col.update_many(
+            {
+                "conversation_id": conversation_id,
+                "receiver_id": _oid(receiver_id),
+                "delivered_at": None,
+                "read_at": {"$ne": None},
+            },
+            {"$set": {"delivered_at": now}},
+        )
+        return result.modified_count
+
+    async def edit_text_message(
+            self,
+            *,
+            message_id: str,
+            sender_id: str,
+            text: str,
+    ) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        res = await self.col.find_one_and_update(
+            {
+                "_id": _oid(message_id),
+                "sender_id": _oid(sender_id),
+                "type": "text",
+                "is_deleted": {"$ne": True},
+            },
+            {
+                "$set": {
+                    "text": text,
+                    "edited_at": now,
+                    "updated_at": now,
+                }
+            },
+            return_document=True,
+        )
+        if not res:
+            raise AppError(code="MESSAGE_NOT_EDITABLE", message="Message cannot be edited", status_code=400)
+        return res
+
+    # TODO: This Should Be decided again, maybe we should make to have soft and hard delete
+    async def soft_delete_message_for_everyone(
+            self,
+            *,
+            message_id: str,
+            sender_id: str,
+    ) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        res = await self.col.find_one_and_update(
+            {
+                "_id": _oid(message_id),
+                "sender_id": _oid(sender_id),
+                "is_deleted": {"$ne": True},
+            },
+            {
+                "$set": {
+                    "is_deleted": True,
+                    "deleted_for_everyone": True,
+                    "deleted_at": now,
+                    "updated_at": now,
+                    "text": None,
+                    "media": None,
+                }
+            },
+            return_document=True,
+        )
+        if not res:
+            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+        return res

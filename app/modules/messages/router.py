@@ -7,16 +7,17 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from starlette.requests import Request
 
 from app.core.deps import get_sio
-from app.core.http import ok, PaginationMeta, SuccessResponse, PaginatedResponse, ok_paginated
 from app.core.errors.openapi import build_error_responses
+from app.core.http import ok, PaginationMeta, SuccessResponse, PaginatedResponse, ok_paginated
 from app.core.rate_limit import rate_limit
 from app.core.security import require_verified_user
 from app.db.mongo import get_db
 from app.modules.messages.dependencies import get_messages_service
 from app.modules.messages.repository import MessagesRepository
-from app.modules.messages.schemas import MessageDoc, SendTextMessageRequest, ConversationItem
+from app.modules.messages.schemas import MessageDoc, SendTextMessageRequest, ConversationItem, EditMessageRequest
 from app.modules.messages.service import MessagesService
-from app.modules.realtime import emit_message_to_receiver
+from app.modules.realtime import emit_message_to_receiver, emit_message_status_to_user, emit_message_edited, \
+    emit_message_deleted
 
 router = APIRouter(
     prefix="/messages",
@@ -152,3 +153,127 @@ async def conversations(
             limit=limit,
         ),
     )
+
+
+@router.post(
+    "/{message_id}/delivered",
+    response_model=SuccessResponse[MessageDoc],
+)
+async def mark_delivered(
+        request: Request,
+        message_id: str,
+        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+        user: dict = Depends(require_verified_user),
+        service: MessagesService = Depends(get_messages_service),
+):
+    message = await service.mark_delivered(
+        message_id=message_id,
+        receiver_id=str(user["_id"]),
+    )
+    await emit_message_status_to_user(
+        sio,
+        user_id=message.sender_id,
+        payload={
+            "message_id": message.id,
+            "status": "delivered",
+            "receiver_id": message.receiver_id,
+            "delivered_at": message.delivered_at,
+        },
+    )
+    return ok(request, data=message)
+
+
+@router.post(
+    "/{message_id}/read",
+    response_model=SuccessResponse[MessageDoc],
+)
+async def mark_read(
+        request: Request,
+        message_id: str,
+        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+        user: dict = Depends(require_verified_user),
+        service: MessagesService = Depends(get_messages_service),
+):
+    message = await service.mark_read(
+        message_id=message_id,
+        receiver_id=str(user["_id"]),
+    )
+    await emit_message_status_to_user(
+        sio,
+        user_id=message.sender_id,
+        payload={
+            "message_id": message.id,
+            "status": "read",
+            "receiver_id": message.receiver_id,
+            "read_at": message.read_at,
+            "delivered_at": message.delivered_at,
+        },
+    )
+    return ok(request, data=message)
+
+
+@router.post(
+    "/conversations/{user_id}/read",
+    response_model=SuccessResponse[dict],
+)
+async def mark_conversation_read(
+        request: Request,
+        user_id: str,
+        user: dict = Depends(require_verified_user),
+        service: MessagesService = Depends(get_messages_service),
+):
+    updated = await service.mark_conversation_read(
+        receiver_id=str(user["_id"]),
+        peer_user_id=user_id,
+    )
+    return ok(request, data={"updated_count": updated})
+
+
+@router.patch(
+    "/{message_id}",
+    response_model=SuccessResponse[MessageDoc],
+)
+async def edit_message(
+        request: Request,
+        message_id: str,
+        body: EditMessageRequest,
+        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+        user: dict = Depends(require_verified_user),
+        service: MessagesService = Depends(get_messages_service),
+):
+    message = await service.edit_text_message(
+        message_id=message_id,
+        sender_id=str(user["_id"]),
+        text=body.text,
+    )
+    await emit_message_edited(
+        sio,
+        sender_id=message.sender_id,
+        receiver_id=message.receiver_id,
+        payload=message.model_dump(mode="json"),
+    )
+    return ok(request, data=message)
+
+
+@router.delete(
+    "/{message_id}",
+    response_model=SuccessResponse[MessageDoc],
+)
+async def delete_message(
+        request: Request,
+        message_id: str,
+        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+        user: dict = Depends(require_verified_user),
+        service: MessagesService = Depends(get_messages_service),
+):
+    message = await service.delete_message_for_everyone(
+        message_id=message_id,
+        sender_id=str(user["_id"]),
+    )
+    await emit_message_deleted(
+        sio,
+        sender_id=message.sender_id,
+        receiver_id=message.receiver_id,
+        payload=message.model_dump(mode="json"),
+    )
+    return ok(request, data=message)

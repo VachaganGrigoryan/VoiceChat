@@ -4,11 +4,11 @@ from app.core.errors import AppError
 from app.db.mongo import get_db
 from app.modules.messages.repository import MessagesRepository
 from app.modules.realtime.auth import authenticate_socket, get_socket_user_id
-from app.modules.realtime.presence import get_presence_backend
 from app.modules.realtime.emits import (
     emit_message_status_to_user,
     emit_presence_update,
 )
+from app.modules.realtime.presence import get_presence_backend
 
 
 def register_events(sio) -> None:
@@ -211,15 +211,31 @@ def register_events(sio) -> None:
             to=sid,
         )
 
-    # Todo: Optional backward-compatible aliases. Remove later
     @sio.event
-    async def send_voice_message(sid, data):
-        return await send_message(sid, data)
+    async def conversation_read(sid, data):
+        receiver_id = await get_socket_user_id(sio, sid)
+        if not receiver_id:
+            return
 
-    @sio.event
-    async def voice_message_delivered(sid, data):
-        return await message_delivered(sid, data)
+        peer_user_id = (data or {}).get("peer_user_id")
+        if not peer_user_id:
+            await sio.emit(
+                "error",
+                {"code": "INVALID_PAYLOAD", "message": "peer_user_id required"},
+                to=sid,
+            )
+            return
 
-    @sio.event
-    async def voice_message_read(sid, data):
-        return await message_read(sid, data)
+        db = get_db()
+        repo = MessagesRepository(db)
+
+        updated_count = await repo.mark_conversation_read_for_receiver(
+            receiver_id=receiver_id,
+            peer_user_id=peer_user_id,
+        )
+
+        await sio.emit(
+            "conversation_read_ack",
+            {"peer_user_id": peer_user_id, "updated_count": updated_count},
+            to=sid,
+        )

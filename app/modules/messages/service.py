@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, UTC, timedelta
 from typing import Optional, Protocol, Any
 
 from fastapi import UploadFile
@@ -41,6 +42,7 @@ ALLOWED_VIDEO_MIME = {
     "video/quicktime",
 }
 
+EDIT_WINDOW_MINUTES = 15
 MAX_TEXT_LENGTH = 4000
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_STICKER_BYTES = 2 * 1024 * 1024
@@ -189,6 +191,14 @@ class MessagesService:
 
         return to_message_doc(doc)
 
+    def _normalize_text(self, text: Optional[str] = None) -> str:
+        normalized = (text or "").strip()
+        if not normalized:
+            raise AppError(code="TEXT_REQUIRED", message="Text message cannot be empty", status_code=400)
+        if len(normalized) > MAX_TEXT_LENGTH:
+            raise AppError(code="TEXT_TOO_LONG", message="Text message is too long", status_code=400)
+        return normalized
+
     async def send_text_message(
         self,
         *,
@@ -202,28 +212,58 @@ class MessagesService:
                 receiver_id=receiver_id,
             )
 
-        normalized = text.strip()
-        if not normalized:
-            raise AppError(
-                code="TEXT_REQUIRED",
-                message="Text message cannot be empty",
-                status_code=400,
-            )
-
-        if len(normalized) > MAX_TEXT_LENGTH:
-            raise AppError(
-                code="TEXT_TOO_LONG",
-                message="Text message is too long",
-                status_code=400,
-            )
-
         doc = await self.repo.create_message(
             sender_id=sender_id,
             receiver_id=receiver_id,
             message_type="text",
-            text=normalized,
+            text=self._normalize_text(text),
+        )
+        return to_message_doc(doc)
+
+    async def mark_delivered(self, *, message_id: str, receiver_id: str):
+        doc = await self.repo.mark_delivered_for_receiver(
+            message_id=message_id,
+            receiver_id=receiver_id,
+        )
+        return to_message_doc(doc)
+
+    async def mark_read(self, *, message_id: str, receiver_id: str):
+        doc = await self.repo.mark_read_for_receiver(
+            message_id=message_id,
+            receiver_id=receiver_id,
+        )
+        return to_message_doc(doc)
+
+    async def mark_conversation_read(self, *, receiver_id: str, peer_user_id: str) -> int:
+        return await self.repo.mark_conversation_read_for_receiver(
+            receiver_id=receiver_id,
+            peer_user_id=peer_user_id,
         )
 
+    async def edit_text_message(self, *, message_id: str, sender_id: str, text: str):
+        existing = await self.repo.get_by_id(message_id=message_id)
+        if not existing:
+            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+
+        created_at = existing["created_at"]
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+
+        if datetime.now(UTC) - created_at > timedelta(minutes=EDIT_WINDOW_MINUTES):
+            raise AppError(code="EDIT_WINDOW_EXPIRED", message="Edit window expired", status_code=400)
+
+        doc = await self.repo.edit_text_message(
+            message_id=message_id,
+            sender_id=sender_id,
+            text=self._normalize_text(text),
+        )
+        return to_message_doc(doc)
+
+    async def delete_message_for_everyone(self, *, message_id: str, sender_id: str):
+        doc = await self.repo.soft_delete_message_for_everyone(
+            message_id=message_id,
+            sender_id=sender_id,
+        )
         return to_message_doc(doc)
 
     async def get_history(
