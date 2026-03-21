@@ -13,6 +13,7 @@ import socketio
 
 from app.core.security import create_access_token
 from app.db.mongo import get_db
+from app.modules.pings.repository import pair_id_for
 
 TEST_SERVER_URL = os.getenv("TEST_SERVER_URL", "http://api_test:8000")
 
@@ -43,6 +44,22 @@ async def _create_verified_user_and_tokens(email: str) -> tuple[dict, dict]:
         "access_token": access_token,
         "token_type": "bearer",
     }
+
+
+async def _grant_chat_permission(user_a_id: str, user_b_id: str) -> None:
+    db = get_db()
+    now = datetime.now(UTC)
+    await db["pings"].insert_one(
+        {
+            "pair_id": pair_id_for(user_a_id, user_b_id),
+            "from_user_id": user_a_id,
+            "to_user_id": user_b_id,
+            "status": "accepted",
+            "created_at": now,
+            "updated_at": now,
+            "responded_at": now,
+        }
+    )
 
 
 async def _connect_socket(access_token: str) -> socketio.AsyncClient:
@@ -129,6 +146,7 @@ async def test_socket_connect_and_voice_delivery(live_client):
 
     sender_id = str(sender["_id"])
     receiver_id = str(receiver["_id"])
+    await _grant_chat_permission(sender_id, receiver_id)
 
     sender_sio = socketio.AsyncClient()
     receiver_sio = socketio.AsyncClient()
@@ -233,6 +251,7 @@ async def test_socket_text_message_delivery_and_read(live_client):
 
     sender_id = str(sender["_id"])
     receiver_id = str(receiver["_id"])
+    await _grant_chat_permission(sender_id, receiver_id)
 
     sender_sio = await _connect_socket(sender_tokens["access_token"])
     receiver_sio = await _connect_socket(receiver_tokens["access_token"])
@@ -307,6 +326,7 @@ async def test_socket_image_message_delivery(live_client):
     receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-image@test.com")
 
     receiver_id = str(receiver["_id"])
+    await _grant_chat_permission(str(sender["_id"]), receiver_id)
 
     sender_sio = await _connect_socket(sender_tokens["access_token"])
     receiver_sio = await _connect_socket(receiver_tokens["access_token"])
@@ -368,6 +388,7 @@ async def test_socket_sticker_message_delivery(live_client):
     receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-sticker@test.com")
 
     receiver_id = str(receiver["_id"])
+    await _grant_chat_permission(str(sender["_id"]), receiver_id)
 
     sender_sio = await _connect_socket(sender_tokens["access_token"])
     receiver_sio = await _connect_socket(receiver_tokens["access_token"])
@@ -426,6 +447,7 @@ async def test_socket_video_message_delivery(live_client):
     receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-video@test.com")
 
     receiver_id = str(receiver["_id"])
+    await _grant_chat_permission(str(sender["_id"]), receiver_id)
 
     sender_sio = await _connect_socket(sender_tokens["access_token"])
     receiver_sio = await _connect_socket(receiver_tokens["access_token"])
@@ -471,6 +493,47 @@ async def test_socket_video_message_delivery(live_client):
             await asyncio.wait_for(sender_sio.disconnect(), timeout=3)
         if receiver_sio.connected:
             await asyncio.wait_for(receiver_sio.disconnect(), timeout=3)
+        await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_socket_typing_and_send_message_require_chat_permission(live_client):
+    try:
+        health = await live_client.get("/health/live")
+    except Exception:
+        pytest.skip("Live server is not running on http://api_test:8000")
+
+    assert health.status_code == 200
+
+    sender, sender_tokens = await _create_verified_user_and_tokens("sender-no-chat@test.com")
+    receiver, _ = await _create_verified_user_and_tokens("receiver-no-chat@test.com")
+
+    sender_sio = await _connect_socket(sender_tokens["access_token"])
+    receiver_id = str(receiver["_id"])
+    error_event = asyncio.Event()
+    errors: list[dict] = []
+
+    @sender_sio.on("error")
+    async def on_error(data):
+        errors.append(data)
+        error_event.set()
+
+    try:
+        await sender_sio.emit("typing_start", {"to": receiver_id})
+        await asyncio.wait_for(error_event.wait(), timeout=5)
+        assert errors[-1]["code"] == "CHAT_PERMISSION_REQUIRED"
+
+        error_event.clear()
+
+        await sender_sio.emit(
+            "send_message",
+            {"to": receiver_id, "message_id": str(ObjectId()), "type": "text"},
+        )
+        await asyncio.wait_for(error_event.wait(), timeout=5)
+        assert errors[-1]["code"] == "CHAT_PERMISSION_REQUIRED"
+    finally:
+        if sender_sio.connected:
+            await asyncio.wait_for(sender_sio.disconnect(), timeout=3)
         await asyncio.sleep(0.1)
 
 
