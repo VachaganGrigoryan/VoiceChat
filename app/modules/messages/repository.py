@@ -52,6 +52,7 @@ class MessagesRepository:
             "type": message_type,
             "text": text,
             "media": media, # {storage,key,url,mime,size_bytes,duration_ms?}
+            "hidden_for_user_ids": [],
             "status": "sent",
             "edited_at": None,
             "delivered_at": None,
@@ -99,7 +100,10 @@ class MessagesRepository:
             )
 
         conv_id = conversation_id_for(user_id, peer_user_id)
-        q: dict[str, Any] = {"conversation_id": conv_id}
+        q: dict[str, Any] = {
+            "conversation_id": conv_id,
+            "hidden_for_user_ids": {"$ne": user_id},
+        }
 
         if cursor:
             cursor_data = decode_cursor(
@@ -151,6 +155,7 @@ class MessagesRepository:
         pipeline: list[dict[str, Any]] = [
             {
                 "$match": {
+                    "hidden_for_user_ids": {"$ne": user_id},
                     "$or": [
                         {"sender_id": uid},
                         {"receiver_id": uid},
@@ -227,12 +232,21 @@ class MessagesRepository:
         return await self.col.find_one({"_id": _oid(message_id)})
 
     async def mark_delivered_for_receiver(self, *, message_id: str, receiver_id: str) -> dict[str, Any]:
+        receiver_oid = _oid(receiver_id)
+        query = {
+            "_id": _oid(message_id),
+            "receiver_id": receiver_oid,
+            "hidden_for_user_ids": {"$ne": receiver_id},
+        }
+        existing = await self.col.find_one(query)
+        if not existing:
+            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+        if existing.get("status") in {"delivered", "read"}:
+            return existing
+
         now = datetime.now(UTC)
         res = await self.col.find_one_and_update(
-            {
-                "_id": _oid(message_id),
-                "receiver_id": _oid(receiver_id),
-            },
+            query,
             {
                 "$set": {
                     "status": "delivered",
@@ -243,21 +257,30 @@ class MessagesRepository:
             return_document=True,  # motor accepts True for ReturnDocument.AFTER in newer versions
         )
         if not res:
-            # Either message not found, or receiver mismatch
             raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
         return res
 
     async def mark_read_for_receiver(self, *, message_id: str, receiver_id: str) -> dict[str, Any]:
+        receiver_oid = _oid(receiver_id)
+        query = {
+            "_id": _oid(message_id),
+            "receiver_id": receiver_oid,
+            "hidden_for_user_ids": {"$ne": receiver_id},
+        }
+        existing = await self.col.find_one(query)
+        if not existing:
+            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+        if existing.get("status") == "read":
+            return existing
+
         now = datetime.now(UTC)
         res = await self.col.find_one_and_update(
-            {
-                "_id": _oid(message_id),
-                "receiver_id": _oid(receiver_id),
-            },
+            query,
             {
                 "$set": {
                     "status": "read",
                     "read_at": now,
+                    "delivered_at": existing.get("delivered_at") or now,
                     "updated_at": now,
                 }
             },
@@ -279,6 +302,7 @@ class MessagesRepository:
             {
                 "conversation_id": conversation_id,
                 "receiver_id": _oid(receiver_id),
+                "hidden_for_user_ids": {"$ne": receiver_id},
                 "status": {"$ne": "read"},
             },
             {
@@ -294,6 +318,7 @@ class MessagesRepository:
             {
                 "conversation_id": conversation_id,
                 "receiver_id": _oid(receiver_id),
+                "hidden_for_user_ids": {"$ne": receiver_id},
                 "delivered_at": None,
                 "read_at": {"$ne": None},
             },
@@ -314,7 +339,6 @@ class MessagesRepository:
                 "_id": _oid(message_id),
                 "sender_id": _oid(sender_id),
                 "type": "text",
-                "is_deleted": {"$ne": True},
             },
             {
                 "$set": {
@@ -329,29 +353,40 @@ class MessagesRepository:
             raise AppError(code="MESSAGE_NOT_EDITABLE", message="Message cannot be edited", status_code=400)
         return res
 
-    # TODO: This Should Be decided again, maybe we should make to have soft and hard delete
-    async def soft_delete_message_for_everyone(
+    async def hard_delete_owned_message(
             self,
             *,
             message_id: str,
             sender_id: str,
     ) -> dict[str, Any]:
+        res = await self.col.find_one_and_delete(
+            {
+                "_id": _oid(message_id),
+                "sender_id": _oid(sender_id),
+            }
+        )
+        if not res:
+            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+        return res
+
+    async def hide_message_for_user(
+            self,
+            *,
+            message_id: str,
+            user_id: str,
+    ) -> dict[str, Any]:
         now = datetime.now(UTC)
         res = await self.col.find_one_and_update(
             {
                 "_id": _oid(message_id),
-                "sender_id": _oid(sender_id),
-                "is_deleted": {"$ne": True},
+                "$or": [
+                    {"sender_id": _oid(user_id)},
+                    {"receiver_id": _oid(user_id)},
+                ],
             },
             {
-                "$set": {
-                    "is_deleted": True,
-                    "deleted_for_everyone": True,
-                    "deleted_at": now,
-                    "updated_at": now,
-                    "text": None,
-                    "media": None,
-                }
+                "$addToSet": {"hidden_for_user_ids": user_id},
+                "$set": {"updated_at": now},
             },
             return_document=True,
         )

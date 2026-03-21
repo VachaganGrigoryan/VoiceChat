@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.core.errors import AppError
 from app.db.mongo import get_db
+from app.modules.messages.dependencies import get_messages_service
 from app.modules.messages.repository import MessagesRepository
 from app.modules.realtime.auth import authenticate_socket, get_socket_user_id
 from app.modules.realtime.emits import (
@@ -12,6 +13,15 @@ from app.modules.realtime.presence import get_presence_backend
 
 
 def register_events(sio) -> None:
+    async def ensure_chat_allowed(*, sender_id: str, receiver_id: str) -> None:
+        service = get_messages_service()
+        if service.pings_service is None:
+            return
+        await service.pings_service.ensure_can_message(
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+        )
+
     @sio.event
     async def connect(sid, environ, auth):
         try:
@@ -59,6 +69,12 @@ def register_events(sio) -> None:
             )
             return
 
+        try:
+            await ensure_chat_allowed(sender_id=user_id, receiver_id=peer_user_id)
+        except AppError as e:
+            await sio.emit("error", {"code": e.code, "message": e.message}, to=sid)
+            return
+
         await sio.emit(
             "typing_start",
             {"from": user_id},
@@ -78,6 +94,12 @@ def register_events(sio) -> None:
                 {"code": "INVALID_PAYLOAD", "message": "`to` is required"},
                 to=sid,
             )
+            return
+
+        try:
+            await ensure_chat_allowed(sender_id=user_id, receiver_id=peer_user_id)
+        except AppError as e:
+            await sio.emit("error", {"code": e.code, "message": e.message}, to=sid)
             return
 
         await sio.emit(
@@ -106,6 +128,12 @@ def register_events(sio) -> None:
                 {"code": "INVALID_PAYLOAD", "message": "`to` and `message_id` are required"},
                 to=sid,
             )
+            return
+
+        try:
+            await ensure_chat_allowed(sender_id=user_id, receiver_id=receiver_id)
+        except AppError as e:
+            await sio.emit("error", {"code": e.code, "message": e.message}, to=sid)
             return
 
         await sio.emit(

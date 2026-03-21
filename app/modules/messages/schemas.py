@@ -42,6 +42,21 @@ class MessageDoc(BaseModel):
     updated_at: datetime
 
 
+class DeleteMessageResponse(BaseModel):
+    message_id: str
+    conversation_id: str
+    actor_user_id: str
+    deleted_for_everyone: bool = False
+    hidden_for_me: bool = False
+    deleted_media: bool = False
+
+
+class MessageDeleteOutcome(BaseModel):
+    response: DeleteMessageResponse
+    sender_id: str
+    receiver_id: str
+
+
 class SendTextMessageRequest(BaseModel):
     receiver_id: str
     text: str = Field(min_length=1, max_length=4000)

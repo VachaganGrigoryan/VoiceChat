@@ -218,6 +218,27 @@ class PingsService:
             )
 
         doc = await self.pings_repo.get_pair_state(user_a=viewer_user_id, user_b=peer_user_id)
+        return self._contact_state_from_doc(viewer_user_id=viewer_user_id, doc=doc)
+
+    async def get_contact_states(self, *, viewer_user_id: str, peer_user_ids: list[str]) -> dict[str, ContactState]:
+        if not peer_user_ids:
+            return {}
+
+        unique_peer_ids = list(dict.fromkeys(peer_user_ids))
+        docs_by_pair_id = await self.pings_repo.get_pair_states(
+            user_id=viewer_user_id,
+            peer_user_ids=unique_peer_ids,
+        )
+
+        return {
+            peer_user_id: self._contact_state_from_doc(
+                viewer_user_id=viewer_user_id,
+                doc=docs_by_pair_id.get(pair_id_for(viewer_user_id, peer_user_id)),
+            )
+            for peer_user_id in unique_peer_ids
+        }
+
+    def _contact_state_from_doc(self, *, viewer_user_id: str, doc: dict[str, Any] | None) -> ContactState:
         if not doc:
             return ContactState(
                 can_ping=True,

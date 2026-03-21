@@ -11,12 +11,11 @@ from app.core.errors.openapi import build_error_responses
 from app.core.http import ok, PaginationMeta, SuccessResponse, PaginatedResponse, ok_paginated
 from app.core.rate_limit import rate_limit
 from app.core.security import require_verified_user
-from app.db.mongo import get_db
 from app.modules.messages.dependencies import get_messages_service
-from app.modules.messages.repository import MessagesRepository
-from app.modules.messages.schemas import MessageDoc, SendTextMessageRequest, ConversationItem, EditMessageRequest
+from app.modules.messages.schemas import MessageDoc, SendTextMessageRequest, ConversationItem, EditMessageRequest, \
+    DeleteMessageResponse
 from app.modules.messages.service import MessagesService
-from app.modules.realtime import emit_message_to_receiver, emit_message_status_to_user, emit_message_edited, \
+from app.modules.realtime import emit_to_user, emit_message_to_receiver, emit_message_status_to_user, emit_message_edited, \
     emit_message_deleted
 
 router = APIRouter(
@@ -104,10 +103,8 @@ async def history(
     limit: int = Query(20, ge=1, le=100),
     cursor: Optional[str] = Query(None),
     user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
-    db = get_db()
-    service = MessagesService(MessagesRepository(db))
-
     items, next_cursor = await service.get_history(
         user_id=str(user["_id"]),
         peer_user_id=user_id,
@@ -257,7 +254,7 @@ async def edit_message(
 
 @router.delete(
     "/{message_id}",
-    response_model=SuccessResponse[MessageDoc],
+    response_model=SuccessResponse[DeleteMessageResponse],
 )
 async def delete_message(
         request: Request,
@@ -266,14 +263,25 @@ async def delete_message(
         user: dict = Depends(require_verified_user),
         service: MessagesService = Depends(get_messages_service),
 ):
-    message = await service.delete_message_for_everyone(
+    outcome = await service.delete_message(
         message_id=message_id,
-        sender_id=str(user["_id"]),
+        actor_user_id=str(user["_id"]),
     )
-    await emit_message_deleted(
-        sio,
-        sender_id=message.sender_id,
-        receiver_id=message.receiver_id,
-        payload=message.model_dump(mode="json"),
-    )
-    return ok(request, data=message)
+
+    payload = outcome.response.model_dump(mode="json")
+    if outcome.response.deleted_for_everyone:
+        await emit_message_deleted(
+            sio,
+            sender_id=outcome.sender_id,
+            receiver_id=outcome.receiver_id,
+            payload=payload,
+        )
+    else:
+        await emit_to_user(
+            sio,
+            user_id=str(user["_id"]),
+            event="message_deleted",
+            payload=payload,
+        )
+
+    return ok(request, data=outcome.response)

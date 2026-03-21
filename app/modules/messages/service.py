@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass
 from datetime import datetime, UTC, timedelta
 from typing import Optional, Protocol, Any
 
@@ -11,7 +13,9 @@ from app.infra.storage import get_storage, storage_key_builder, FolderKind, buil
 from app.modules.auth.repository import UsersRepository
 from app.modules.messages.mappers import to_message_doc
 from app.modules.messages.repository import MessagesRepository
-from app.modules.messages.schemas import ConversationItem, ConversationPeer, ConversationLastMessage
+from app.modules.messages.schemas import ConversationItem, ConversationPeer, ConversationLastMessage, \
+    DeleteMessageResponse, MessageDeleteOutcome
+from app.modules.pings.schemas import ContactState
 from app.modules.realtime.presence import get_presence_backend
 
 ALLOWED_AUDIO_MIME = {
@@ -74,6 +78,7 @@ MEDIA_RULES: dict[str, dict] = {
 class PingsServiceProto(Protocol):
     async def ensure_can_message(self, *, sender_id: str, receiver_id: str) -> None: ...
     async def get_contact_state(self, *, viewer_user_id: str, peer_user_id: str) -> Any: ...
+    async def get_contact_states(self, *, viewer_user_id: str, peer_user_ids: list[str]) -> dict[str, Any]: ...
 
 
 class MessagesService:
@@ -112,6 +117,25 @@ class MessagesService:
             "size_bytes": stored.size_bytes,
             "duration_ms": duration_ms,
         }
+
+    def _normalize_optional_text(self, text: Optional[str] = None) -> Optional[str]:
+        normalized = (text or "").strip()
+        if not normalized:
+            return None
+        if len(normalized) > MAX_TEXT_LENGTH:
+            raise AppError(code="TEXT_TOO_LONG", message="Text message is too long", status_code=400)
+        return normalized
+
+    def _normalize_duration_ms(self, duration_ms: int | None) -> int | None:
+        if duration_ms is None:
+            return None
+        if duration_ms < 0:
+            raise AppError(
+                code="INVALID_DURATION_MS",
+                message="duration_ms must be greater than or equal to 0",
+                status_code=400,
+            )
+        return duration_ms
 
     async def _store_media(
         self,
@@ -185,8 +209,11 @@ class MessagesService:
             sender_id=sender_id,
             receiver_id=receiver_id,
             message_type=message_type,
-            text=text.strip() if text else None,
-            media=self._build_media_meta(stored=stored, duration_ms=duration_ms),
+            text=self._normalize_optional_text(text),
+            media=self._build_media_meta(
+                stored=stored,
+                duration_ms=self._normalize_duration_ms(duration_ms),
+            ),
         )
 
         return to_message_doc(doc)
@@ -259,12 +286,57 @@ class MessagesService:
         )
         return to_message_doc(doc)
 
-    async def delete_message_for_everyone(self, *, message_id: str, sender_id: str):
-        doc = await self.repo.soft_delete_message_for_everyone(
+    async def delete_message(self, *, message_id: str, actor_user_id: str):
+        existing = await self.repo.get_by_id(message_id=message_id)
+        if not existing:
+            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+
+        owner_user_id = str(existing["sender_id"])
+        receiver_user_id = str(existing["receiver_id"])
+        if actor_user_id not in {owner_user_id, receiver_user_id}:
+            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+
+        if actor_user_id == owner_user_id:
+            deleted = await self.repo.hard_delete_owned_message(
+                message_id=message_id,
+                sender_id=actor_user_id,
+            )
+
+            media = deleted.get("media")
+            deleted_media = False
+            if media and media.get("key") and media.get("storage"):
+                await get_storage(media["storage"]).delete(media["key"])
+                deleted_media = True
+
+            return MessageDeleteOutcome(
+                response=DeleteMessageResponse(
+                    message_id=message_id,
+                    conversation_id=deleted["conversation_id"],
+                    actor_user_id=actor_user_id,
+                    deleted_for_everyone=True,
+                    hidden_for_me=False,
+                    deleted_media=deleted_media,
+                ),
+                sender_id=owner_user_id,
+                receiver_id=receiver_user_id,
+            )
+
+        hidden = await self.repo.hide_message_for_user(
             message_id=message_id,
-            sender_id=sender_id,
+            user_id=actor_user_id,
         )
-        return to_message_doc(doc)
+        return MessageDeleteOutcome(
+            response=DeleteMessageResponse(
+                message_id=message_id,
+                conversation_id=hidden["conversation_id"],
+                actor_user_id=actor_user_id,
+                deleted_for_everyone=False,
+                hidden_for_me=True,
+                deleted_media=False,
+            ),
+            sender_id=owner_user_id,
+            receiver_id=receiver_user_id,
+        )
 
     async def get_history(
             self,
@@ -301,6 +373,22 @@ class MessagesService:
         presence = get_presence_backend()
 
         items: list[ConversationItem] = []
+        peer_user_ids = list(
+            dict.fromkeys(
+                str(row["last_message"]["receiver_id"]) if str(row["last_message"]["sender_id"]) == user_id
+                else str(row["last_message"]["sender_id"])
+                for row in rows
+            )
+        )
+
+        users_task = asyncio.create_task(users_repo.find_by_ids(peer_user_ids))
+        presence_task = asyncio.create_task(self._get_presence_map(presence=presence, user_ids=peer_user_ids))
+        contact_states_task = asyncio.create_task(self._get_contact_states(user_id=user_id, peer_user_ids=peer_user_ids))
+        users_by_id, online_by_id, contact_states = await asyncio.gather(
+            users_task,
+            presence_task,
+            contact_states_task,
+        )
 
         for row in rows:
             msg = row["last_message"]
@@ -309,12 +397,11 @@ class MessagesService:
             receiver_id = str(msg["receiver_id"])
             peer_user_id = receiver_id if sender_id == user_id else sender_id
 
-            peer = await users_repo.find_by_id(peer_user_id)
-            is_online = await presence.is_online(peer_user_id)
-
-            contact_state = await self.pings_service.get_contact_state(
-                viewer_user_id=user_id,
-                peer_user_id=peer_user_id,
+            peer = users_by_id.get(peer_user_id)
+            is_online = online_by_id.get(peer_user_id, False)
+            contact_state = contact_states.get(
+                peer_user_id,
+                ContactState(can_ping=True, chat_allowed=False, ping_status="none"),
             )
 
             media = msg.get("media")
@@ -323,7 +410,10 @@ class MessagesService:
 
             avatar = peer.get("avatar") if peer else None
             if avatar is not None:
-                avatar["url"] = build_storage_url(avatar["storage"], avatar["key"])
+                avatar = {
+                    **avatar,
+                    "url": build_storage_url(avatar["storage"], avatar["key"]),
+                }
 
             text = msg.get("text")
             msg_type = msg.get("type") or msg.get("message_type") or "voice"
@@ -355,3 +445,18 @@ class MessagesService:
             )
 
         return items, next_cursor
+
+    async def _get_presence_map(self, *, presence, user_ids: list[str]) -> dict[str, bool]:
+        if not user_ids:
+            return {}
+
+        statuses = await asyncio.gather(*(presence.is_online(user_id) for user_id in user_ids))
+        return dict(zip(user_ids, statuses))
+
+    async def _get_contact_states(self, *, user_id: str, peer_user_ids: list[str]) -> dict[str, ContactState]:
+        if self.pings_service is None or not peer_user_ids:
+            return {}
+        return await self.pings_service.get_contact_states(
+            viewer_user_id=user_id,
+            peer_user_ids=peer_user_ids,
+        )

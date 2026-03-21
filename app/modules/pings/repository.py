@@ -57,6 +57,14 @@ class PingsRepository:
     async def get_pair_state(self, *, user_a: str, user_b: str) -> dict[str, Any] | None:
         return await self.col.find_one({"pair_id": pair_id_for(user_a, user_b)})
 
+    async def get_pair_states(self, *, user_id: str, peer_user_ids: list[str]) -> dict[str, dict[str, Any]]:
+        if not peer_user_ids:
+            return {}
+
+        pair_ids = [pair_id_for(user_id, peer_user_id) for peer_user_id in dict.fromkeys(peer_user_ids)]
+        docs = await self.col.find({"pair_id": {"$in": pair_ids}}).to_list(length=len(pair_ids))
+        return {doc["pair_id"]: doc for doc in docs}
+
     async def update_status(self, *, ping_id: str, status: str) -> dict[str, Any] | None:
         now = datetime.now(UTC)
         responded_at = now if status in {"accepted", "declined", "cancelled", "expired", "blocked"} else None

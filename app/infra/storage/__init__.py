@@ -6,8 +6,9 @@ from app.infra.storage.local import LocalStorage
 from app.infra.storage.s3 import S3Storage
 from app.infra.storage.keys import storage_key_builder, FolderKind
 
-def get_storage() -> Storage:
-    if settings.storage_provider == "s3":
+def get_storage(provider: str | None = None) -> Storage:
+    storage_provider = provider or settings.storage_provider
+    if storage_provider == "s3":
         return S3Storage()
     return LocalStorage()
 
