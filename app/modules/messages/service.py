@@ -11,10 +11,10 @@ from app.core.errors import AppError
 from app.db.mongo import get_db
 from app.infra.storage import get_storage, storage_key_builder, FolderKind, build_storage_url
 from app.modules.auth.repository import UsersRepository
-from app.modules.messages.mappers import to_message_doc
+from app.modules.messages.mappers import to_message_doc, to_thread_summary
 from app.modules.messages.repository import MessagesRepository
 from app.modules.messages.schemas import ConversationItem, ConversationPeer, ConversationLastMessage, \
-    DeleteMessageResponse, MessageDeleteOutcome
+    DeleteMessageResponse, MessageDeleteOutcome, MessageDoc, ThreadSummary, ReplyMode
 from app.modules.pings.schemas import ContactState
 from app.modules.realtime.presence import get_presence_backend
 
@@ -73,6 +73,12 @@ MEDIA_RULES: dict[str, dict] = {
         "folder": "video",
     },
 }
+
+
+@dataclass
+class SendMessageResult:
+    message: MessageDoc
+    thread_summary: ThreadSummary | None = None
 
 
 class PingsServiceProto(Protocol):
@@ -137,6 +143,29 @@ class MessagesService:
             )
         return duration_ms
 
+    def _normalize_reply_fields(
+            self,
+            *,
+            reply_mode: ReplyMode | None = None,
+            reply_to_message_id: str | None = None,
+    ) -> tuple[ReplyMode | None, str | None]:
+        normalized_reply_to_message_id = (reply_to_message_id or "").strip() or None
+        if reply_mode is None and normalized_reply_to_message_id is None:
+            return None, None
+        if reply_mode is None or normalized_reply_to_message_id is None:
+            raise AppError(
+                code="INVALID_REPLY_FIELDS",
+                message="reply_mode and reply_to_message_id must be provided together",
+                status_code=400,
+            )
+        return reply_mode, normalized_reply_to_message_id
+
+    def _normalize_emoji(self, emoji: str) -> str:
+        normalized = (emoji or "").strip()
+        if not normalized:
+            raise AppError(code="INVALID_EMOJI", message="emoji is required", status_code=400)
+        return normalized
+
     async def _store_media(
         self,
         *,
@@ -182,7 +211,9 @@ class MessagesService:
             file: UploadFile,
             text: str | None = None,
             duration_ms: int | None = None,
-    ):
+            reply_mode: ReplyMode | None = None,
+            reply_to_message_id: str | None = None,
+    ) -> SendMessageResult:
         if self.pings_service is not None:
             await self.pings_service.ensure_can_message(
                 sender_id=sender_id,
@@ -205,18 +236,28 @@ class MessagesService:
             folder=rules["folder"],
         )
 
-        doc = await self.repo.create_message(
-            sender_id=sender_id,
-            receiver_id=receiver_id,
-            message_type=message_type,
-            text=self._normalize_optional_text(text),
-            media=self._build_media_meta(
-                stored=stored,
-                duration_ms=self._normalize_duration_ms(duration_ms),
-            ),
+        normalized_reply_mode, normalized_reply_to_message_id = self._normalize_reply_fields(
+            reply_mode=reply_mode,
+            reply_to_message_id=reply_to_message_id,
         )
 
-        return to_message_doc(doc)
+        try:
+            result = await self._create_outgoing_message(
+                sender_id=sender_id,
+                receiver_id=receiver_id,
+                message_type=message_type,
+                text=self._normalize_optional_text(text),
+                media=self._build_media_meta(
+                    stored=stored,
+                    duration_ms=self._normalize_duration_ms(duration_ms),
+                ),
+                reply_mode=normalized_reply_mode,
+                reply_to_message_id=normalized_reply_to_message_id,
+            )
+        except Exception:
+            await get_storage(stored.storage).delete(stored.key)
+            raise
+        return result
 
     def _normalize_text(self, text: Optional[str] = None) -> str:
         normalized = (text or "").strip()
@@ -232,20 +273,77 @@ class MessagesService:
         sender_id: str,
         receiver_id: str,
         text: str,
-    ):
+            reply_mode: ReplyMode | None = None,
+            reply_to_message_id: str | None = None,
+    ) -> SendMessageResult:
         if self.pings_service is not None:
             await self.pings_service.ensure_can_message(
                 sender_id=sender_id,
                 receiver_id=receiver_id,
             )
 
-        doc = await self.repo.create_message(
+        normalized_reply_mode, normalized_reply_to_message_id = self._normalize_reply_fields(
+            reply_mode=reply_mode,
+            reply_to_message_id=reply_to_message_id,
+        )
+
+        return await self._create_outgoing_message(
             sender_id=sender_id,
             receiver_id=receiver_id,
             message_type="text",
             text=self._normalize_text(text),
+            reply_mode=normalized_reply_mode,
+            reply_to_message_id=normalized_reply_to_message_id,
         )
-        return to_message_doc(doc)
+
+    async def _create_outgoing_message(
+            self,
+            *,
+            sender_id: str,
+            receiver_id: str,
+            message_type: str,
+            text: str | None = None,
+            media: dict[str, Any] | None = None,
+            reply_mode: ReplyMode | None = None,
+            reply_to_message_id: str | None = None,
+    ) -> SendMessageResult:
+        if reply_mode == "quote":
+            doc = await self.repo.create_quote_reply(
+                sender_id=sender_id,
+                receiver_id=receiver_id,
+                message_type=message_type,
+                text=text,
+                media=media,
+                reply_to_message_id=reply_to_message_id,
+            )
+            return SendMessageResult(message=to_message_doc(doc))
+
+        if reply_mode == "thread":
+            doc = await self.repo.create_thread_reply(
+                sender_id=sender_id,
+                receiver_id=receiver_id,
+                message_type=message_type,
+                text=text,
+                media=media,
+                reply_to_message_id=reply_to_message_id,
+            )
+            summary_doc = await self.repo.load_thread_summary(
+                message_id=doc["thread_root_id"],
+                user_id=sender_id,
+            )
+            return SendMessageResult(
+                message=to_message_doc(doc),
+                thread_summary=to_thread_summary(summary_doc),
+            )
+
+        doc = await self.repo.create_message(
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+            message_type=message_type,
+            text=text,
+            media=media,
+        )
+        return SendMessageResult(message=to_message_doc(doc))
 
     async def mark_delivered(self, *, message_id: str, receiver_id: str):
         doc = await self.repo.mark_delivered_for_receiver(
@@ -354,6 +452,58 @@ class MessagesService:
         )
         items = [to_message_doc(d) for d in docs]
         return items, next_cursor
+
+    async def get_thread(
+            self,
+            *,
+            message_id: str,
+            user_id: str,
+    ) -> list[MessageDoc]:
+        docs = await self.repo.load_thread_messages(
+            message_id=message_id,
+            user_id=user_id,
+        )
+        return [to_message_doc(doc) for doc in docs]
+
+    async def get_thread_summary(
+            self,
+            *,
+            message_id: str,
+            user_id: str,
+    ) -> ThreadSummary:
+        doc = await self.repo.load_thread_summary(
+            message_id=message_id,
+            user_id=user_id,
+        )
+        return to_thread_summary(doc)
+
+    async def add_reaction(
+            self,
+            *,
+            message_id: str,
+            user_id: str,
+            emoji: str,
+    ) -> MessageDoc:
+        doc = await self.repo.add_or_toggle_grouped_reaction(
+            message_id=message_id,
+            user_id=user_id,
+            emoji=self._normalize_emoji(emoji),
+        )
+        return to_message_doc(doc)
+
+    async def remove_reaction(
+            self,
+            *,
+            message_id: str,
+            user_id: str,
+            emoji: str,
+    ) -> MessageDoc:
+        doc = await self.repo.remove_grouped_reaction(
+            message_id=message_id,
+            user_id=user_id,
+            emoji=self._normalize_emoji(emoji),
+        )
+        return to_message_doc(doc)
 
     async def list_conversations(
         self,

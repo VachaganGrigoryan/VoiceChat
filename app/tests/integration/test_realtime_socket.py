@@ -6,10 +6,9 @@ import uuid
 from datetime import UTC, datetime
 from io import BytesIO
 
-from bson import ObjectId
-
 import pytest
 import socketio
+from bson import ObjectId
 
 from app.core.security import create_access_token
 from app.db.mongo import get_db
@@ -425,6 +424,129 @@ async def test_socket_sticker_message_delivery(live_client):
         assert message["type"] == "sticker"
         assert message["media"] is not None
         assert message["media"]["mime"] == "image/webp"
+
+    finally:
+        if sender_sio.connected:
+            await asyncio.wait_for(sender_sio.disconnect(), timeout=3)
+        if receiver_sio.connected:
+            await asyncio.wait_for(receiver_sio.disconnect(), timeout=3)
+        await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_socket_thread_and_reaction_events_are_emitted_to_both_users(live_client):
+    try:
+        health = await live_client.get("/health/live")
+    except Exception:
+        pytest.skip("Live server is not running on http://api_test:8000")
+
+    assert health.status_code == 200
+
+    sender, sender_tokens = await _create_verified_user_and_tokens("sender-thread-events@test.com")
+    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-thread-events@test.com")
+
+    sender_id = str(sender["_id"])
+    receiver_id = str(receiver["_id"])
+    await _grant_chat_permission(sender_id, receiver_id)
+
+    sender_sio = await _connect_socket(sender_tokens["access_token"])
+    receiver_sio = await _connect_socket(receiver_tokens["access_token"])
+
+    sender_thread_events: list[dict] = []
+    receiver_thread_events: list[dict] = []
+    sender_summary_events: list[dict] = []
+    receiver_summary_events: list[dict] = []
+    sender_reaction_events: list[dict] = []
+    receiver_reaction_events: list[dict] = []
+
+    sender_thread_event = asyncio.Event()
+    receiver_thread_event = asyncio.Event()
+    sender_summary_event = asyncio.Event()
+    receiver_summary_event = asyncio.Event()
+    sender_reaction_event = asyncio.Event()
+    receiver_reaction_event = asyncio.Event()
+
+    @sender_sio.on("thread_reply_created")
+    async def on_sender_thread_reply_created(data):
+        sender_thread_events.append(data)
+        sender_thread_event.set()
+
+    @receiver_sio.on("thread_reply_created")
+    async def on_receiver_thread_reply_created(data):
+        receiver_thread_events.append(data)
+        receiver_thread_event.set()
+
+    @sender_sio.on("thread_summary_updated")
+    async def on_sender_thread_summary_updated(data):
+        sender_summary_events.append(data)
+        sender_summary_event.set()
+
+    @receiver_sio.on("thread_summary_updated")
+    async def on_receiver_thread_summary_updated(data):
+        receiver_summary_events.append(data)
+        receiver_summary_event.set()
+
+    @sender_sio.on("message_reacted")
+    async def on_sender_message_reacted(data):
+        sender_reaction_events.append(data)
+        sender_reaction_event.set()
+
+    @receiver_sio.on("message_reacted")
+    async def on_receiver_message_reacted(data):
+        receiver_reaction_events.append(data)
+        receiver_reaction_event.set()
+
+    try:
+        root_resp = await live_client.post(
+            "/messages/text",
+            headers={"Authorization": f"Bearer {sender_tokens['access_token']}"},
+            json={
+                "receiver_id": receiver_id,
+                "text": "root for realtime thread",
+            },
+        )
+        assert root_resp.status_code == 201, root_resp.text
+        root_message = root_resp.json()["data"]
+
+        thread_resp = await live_client.post(
+            "/messages/text",
+            headers={"Authorization": f"Bearer {receiver_tokens['access_token']}"},
+            json={
+                "receiver_id": sender_id,
+                "text": "thread event payload",
+                "reply_mode": "thread",
+                "reply_to_message_id": root_message["id"],
+            },
+        )
+        assert thread_resp.status_code == 201, thread_resp.text
+        thread_message = thread_resp.json()["data"]
+
+        await asyncio.wait_for(sender_thread_event.wait(), timeout=5)
+        await asyncio.wait_for(receiver_thread_event.wait(), timeout=5)
+        await asyncio.wait_for(sender_summary_event.wait(), timeout=5)
+        await asyncio.wait_for(receiver_summary_event.wait(), timeout=5)
+
+        assert sender_thread_events[-1]["id"] == thread_message["id"]
+        assert receiver_thread_events[-1]["id"] == thread_message["id"]
+        assert sender_summary_events[-1]["thread_root_id"] == root_message["id"]
+        assert receiver_summary_events[-1]["thread_root_id"] == root_message["id"]
+        assert sender_summary_events[-1]["thread_reply_count"] == 1
+        assert receiver_summary_events[-1]["thread_reply_count"] == 1
+
+        react_resp = await live_client.post(
+            f"/messages/{root_message['id']}/reactions",
+            headers={"Authorization": f"Bearer {sender_tokens['access_token']}"},
+            json={"emoji": "🔥"},
+        )
+        assert react_resp.status_code == 200, react_resp.text
+
+        await asyncio.wait_for(sender_reaction_event.wait(), timeout=5)
+        await asyncio.wait_for(receiver_reaction_event.wait(), timeout=5)
+
+        assert sender_reaction_events[-1]["message_id"] == root_message["id"]
+        assert receiver_reaction_events[-1]["message_id"] == root_message["id"]
+        assert sender_reaction_events[-1]["reactions"][0]["count"] == 1
+        assert receiver_reaction_events[-1]["reactions"][0]["emoji"] == "🔥"
 
     finally:
         if sender_sio.connected:

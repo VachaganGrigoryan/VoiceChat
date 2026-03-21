@@ -44,6 +44,39 @@ async def emit_message_deleted(
     await emit_to_user(sio, receiver_id, "message_deleted", payload)
 
 
+async def emit_message_reacted(
+        sio: socketio.AsyncServer,
+        *,
+        sender_id: str,
+        receiver_id: str,
+        payload: dict[str, Any],
+) -> None:
+    await emit_to_user(sio, sender_id, "message_reacted", payload)
+    await emit_to_user(sio, receiver_id, "message_reacted", payload)
+
+
+async def emit_thread_reply_created(
+        sio: socketio.AsyncServer,
+        *,
+        sender_id: str,
+        receiver_id: str,
+        payload: dict[str, Any],
+) -> None:
+    await emit_to_user(sio, sender_id, "thread_reply_created", payload)
+    await emit_to_user(sio, receiver_id, "thread_reply_created", payload)
+
+
+async def emit_thread_summary_updated(
+        sio: socketio.AsyncServer,
+        *,
+        sender_id: str,
+        receiver_id: str,
+        payload: dict[str, Any],
+) -> None:
+    await emit_to_user(sio, sender_id, "thread_summary_updated", payload)
+    await emit_to_user(sio, receiver_id, "thread_summary_updated", payload)
+
+
 async def emit_presence_update(sio: socketio.AsyncServer, user_id: str, online: bool, skip_sid: str | None = None) -> None:
     await sio.emit(
         "presence_update",

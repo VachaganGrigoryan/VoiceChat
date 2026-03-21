@@ -3,7 +3,8 @@ import os
 import pytest
 
 from app.core.config import settings
-from app.tests.integration.test_realtime_socket import _create_verified_user_and_tokens, _grant_chat_permission, _post_media
+from app.tests.integration.test_realtime_socket import _create_verified_user_and_tokens, _grant_chat_permission, \
+    _post_media
 
 
 def _auth_headers(access_token: str) -> dict[str, str]:
@@ -399,3 +400,155 @@ async def test_edit_deleted_message_returns_not_found(live_client):
     )
     assert edit_resp.status_code == 404, edit_resp.text
     assert edit_resp.json()["error"]["code"] == "MESSAGE_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_quote_replies_stay_in_history_and_thread_replies_use_thread_endpoints(inprocess_client):
+    sender, sender_tokens = await _create_verified_user_and_tokens("sender-threads@test.com")
+    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-threads@test.com")
+    sender_id = str(sender["_id"])
+    receiver_id = str(receiver["_id"])
+    await _grant_chat_permission(sender_id, receiver_id)
+
+    root_resp = await inprocess_client.post(
+        "/messages/text",
+        headers=_auth_headers(sender_tokens["access_token"]),
+        json={
+            "receiver_id": receiver_id,
+            "text": "root message",
+        },
+    )
+    assert root_resp.status_code == 201, root_resp.text
+    root_message = root_resp.json()["data"]
+
+    quote_resp = await inprocess_client.post(
+        "/messages/text",
+        headers=_auth_headers(sender_tokens["access_token"]),
+        json={
+            "receiver_id": receiver_id,
+            "text": "quoted in main chat",
+            "reply_mode": "quote",
+            "reply_to_message_id": root_message["id"],
+        },
+    )
+    assert quote_resp.status_code == 201, quote_resp.text
+    quote_message = quote_resp.json()["data"]
+    assert quote_message["reply_mode"] == "quote"
+    assert quote_message["thread_root_id"] is None
+    assert quote_message["reply_preview"]["message_id"] == root_message["id"]
+    assert quote_message["reply_preview"]["text"] == "root message"
+
+    thread_resp = await inprocess_client.post(
+        "/messages/text",
+        headers=_auth_headers(receiver_tokens["access_token"]),
+        json={
+            "receiver_id": sender_id,
+            "text": "reply in thread",
+            "reply_mode": "thread",
+            "reply_to_message_id": root_message["id"],
+        },
+    )
+    assert thread_resp.status_code == 201, thread_resp.text
+    thread_message = thread_resp.json()["data"]
+    assert thread_message["reply_mode"] == "thread"
+    assert thread_message["thread_root_id"] == root_message["id"]
+    assert thread_message["reply_preview"]["message_id"] == root_message["id"]
+
+    history_resp = await inprocess_client.get(
+        f"/messages/conversations/{receiver_id}",
+        headers=_auth_headers(sender_tokens["access_token"]),
+    )
+    assert history_resp.status_code == 200, history_resp.text
+    history_items = history_resp.json()["data"]
+    history_ids = [item["id"] for item in history_items]
+    assert root_message["id"] in history_ids
+    assert quote_message["id"] in history_ids
+    assert thread_message["id"] not in history_ids
+
+    thread_list_resp = await inprocess_client.get(
+        f"/messages/{root_message['id']}/thread",
+        headers=_auth_headers(sender_tokens["access_token"]),
+    )
+    assert thread_list_resp.status_code == 200, thread_list_resp.text
+    thread_items = thread_list_resp.json()["data"]
+    assert len(thread_items) == 1
+    assert thread_items[0]["id"] == thread_message["id"]
+
+    summary_resp = await inprocess_client.get(
+        f"/messages/{root_message['id']}/thread-summary",
+        headers=_auth_headers(sender_tokens["access_token"]),
+    )
+    assert summary_resp.status_code == 200, summary_resp.text
+    summary = summary_resp.json()["data"]
+    assert summary["thread_root_id"] == root_message["id"]
+    assert summary["thread_reply_count"] == 1
+    assert summary["is_thread_root"] is True
+    assert summary["last_thread_reply_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_reactions_are_grouped_and_returned_in_history(inprocess_client):
+    sender, sender_tokens = await _create_verified_user_and_tokens("sender-reactions@test.com")
+    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-reactions@test.com")
+    sender_id = str(sender["_id"])
+    receiver_id = str(receiver["_id"])
+    await _grant_chat_permission(sender_id, receiver_id)
+
+    create_resp = await inprocess_client.post(
+        "/messages/text",
+        headers=_auth_headers(sender_tokens["access_token"]),
+        json={
+            "receiver_id": receiver_id,
+            "text": "react here",
+        },
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    message = create_resp.json()["data"]
+
+    sender_fire = await inprocess_client.post(
+        f"/messages/{message['id']}/reactions",
+        headers=_auth_headers(sender_tokens["access_token"]),
+        json={"emoji": "🔥"},
+    )
+    assert sender_fire.status_code == 200, sender_fire.text
+    assert sender_fire.json()["data"]["reactions"][0]["count"] == 1
+
+    receiver_fire = await inprocess_client.post(
+        f"/messages/{message['id']}/reactions",
+        headers=_auth_headers(receiver_tokens["access_token"]),
+        json={"emoji": "🔥"},
+    )
+    assert receiver_fire.status_code == 200, receiver_fire.text
+    fire_group = receiver_fire.json()["data"]["reactions"][0]
+    assert fire_group["emoji"] == "🔥"
+    assert fire_group["count"] == 2
+    assert set(fire_group["user_ids"]) == {sender_id, receiver_id}
+
+    sender_heart = await inprocess_client.post(
+        f"/messages/{message['id']}/reactions",
+        headers=_auth_headers(sender_tokens["access_token"]),
+        json={"emoji": "❤️"},
+    )
+    assert sender_heart.status_code == 200, sender_heart.text
+    assert len(sender_heart.json()["data"]["reactions"]) == 2
+
+    remove_sender_fire = await inprocess_client.delete(
+        f"/messages/{message['id']}/reactions/%F0%9F%94%A5/me",
+        headers=_auth_headers(sender_tokens["access_token"]),
+    )
+    assert remove_sender_fire.status_code == 200, remove_sender_fire.text
+    reactions = remove_sender_fire.json()["data"]["reactions"]
+    assert len(reactions) == 2
+
+    remaining_fire = next(reaction for reaction in reactions if reaction["emoji"] == "🔥")
+    assert remaining_fire["count"] == 1
+    assert remaining_fire["user_ids"] == [receiver_id]
+
+    history_resp = await inprocess_client.get(
+        f"/messages/conversations/{receiver_id}",
+        headers=_auth_headers(sender_tokens["access_token"]),
+    )
+    assert history_resp.status_code == 200, history_resp.text
+    history_message = history_resp.json()["data"][0]
+    assert len(history_message["reactions"]) == 2
+    assert next(reaction for reaction in history_message["reactions"] if reaction["emoji"] == "🔥")["count"] == 1

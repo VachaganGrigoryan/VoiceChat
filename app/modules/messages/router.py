@@ -13,10 +13,11 @@ from app.core.rate_limit import rate_limit
 from app.core.security import require_verified_user
 from app.modules.messages.dependencies import get_messages_service
 from app.modules.messages.schemas import MessageDoc, SendTextMessageRequest, ConversationItem, EditMessageRequest, \
-    DeleteMessageResponse
+    DeleteMessageResponse, AddReactionRequest, ThreadSummary
 from app.modules.messages.service import MessagesService
-from app.modules.realtime import emit_to_user, emit_message_to_receiver, emit_message_status_to_user, emit_message_edited, \
-    emit_message_deleted
+from app.modules.realtime import emit_to_user, emit_message_to_receiver, emit_message_status_to_user, \
+    emit_message_edited, \
+    emit_message_deleted, emit_message_reacted, emit_thread_reply_created, emit_thread_summary_updated
 
 router = APIRouter(
     prefix="/messages",
@@ -38,26 +39,48 @@ async def upload_media(
     receiver_id: str = Form(...),
     duration_ms: Optional[int] = Form(None),
     text: Optional[str] = Form(None),
+        reply_mode: Optional[Literal["quote", "thread"]] = Form(None),
+        reply_to_message_id: Optional[str] = Form(None),
     file: UploadFile = File(...),
     user: dict = Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
-    message = await service.upload_media_message(
+    result = await service.upload_media_message(
         sender_id=str(user["_id"]),
         receiver_id=receiver_id,
         message_type=type,
         file=file,
         text=text,
         duration_ms=duration_ms,
+        reply_mode=reply_mode,
+        reply_to_message_id=reply_to_message_id,
     )
 
-    await emit_message_to_receiver(
-        sio,
-        receiver_id=receiver_id,
-        payload=message.model_dump(mode="json"),
-    )
+    if result.thread_summary is not None:
+        await emit_thread_reply_created(
+            sio,
+            sender_id=result.message.sender_id,
+            receiver_id=result.message.receiver_id,
+            payload=result.message.model_dump(mode="json"),
+        )
+        await emit_thread_summary_updated(
+            sio,
+            sender_id=result.message.sender_id,
+            receiver_id=result.message.receiver_id,
+            payload={
+                "thread_root_id": result.thread_summary.thread_root_id,
+                "thread_reply_count": result.thread_summary.thread_reply_count,
+                "last_thread_reply_at": result.thread_summary.last_thread_reply_at,
+            },
+        )
+    else:
+        await emit_message_to_receiver(
+            sio,
+            receiver_id=receiver_id,
+            payload=result.message.model_dump(mode="json"),
+        )
 
-    return ok(request, data=message, status_code=201)
+    return ok(request, data=result.message, status_code=201)
 
 
 @router.post(
@@ -73,21 +96,41 @@ async def send_text(
     user: dict = Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
-    message = await service.send_text_message(
+    result = await service.send_text_message(
         sender_id=str(user["_id"]),
         receiver_id=body.receiver_id,
         text=body.text,
+        reply_mode=body.reply_mode,
+        reply_to_message_id=body.reply_to_message_id,
     )
 
-    await emit_message_to_receiver(
-        sio,
-        receiver_id=body.receiver_id,
-        payload=message.model_dump(mode="json"),
-    )
+    if result.thread_summary is not None:
+        await emit_thread_reply_created(
+            sio,
+            sender_id=result.message.sender_id,
+            receiver_id=result.message.receiver_id,
+            payload=result.message.model_dump(mode="json"),
+        )
+        await emit_thread_summary_updated(
+            sio,
+            sender_id=result.message.sender_id,
+            receiver_id=result.message.receiver_id,
+            payload={
+                "thread_root_id": result.thread_summary.thread_root_id,
+                "thread_reply_count": result.thread_summary.thread_reply_count,
+                "last_thread_reply_at": result.thread_summary.last_thread_reply_at,
+            },
+        )
+    else:
+        await emit_message_to_receiver(
+            sio,
+            receiver_id=body.receiver_id,
+            payload=result.message.model_dump(mode="json"),
+        )
 
     return ok(
         request,
-        data=message,
+        data=result.message,
         status_code=201,
     )
 
@@ -153,6 +196,119 @@ async def conversations(
 
 
 @router.post(
+    "/conversations/{user_id}/read",
+    response_model=SuccessResponse[dict],
+)
+async def mark_conversation_read(
+        request: Request,
+        user_id: str,
+        user: dict = Depends(require_verified_user),
+        service: MessagesService = Depends(get_messages_service),
+):
+    updated = await service.mark_conversation_read(
+        receiver_id=str(user["_id"]),
+        peer_user_id=user_id,
+    )
+    return ok(request, data={"updated_count": updated})
+
+
+@router.get(
+    "/{message_id}/thread",
+    response_model=SuccessResponse[list[MessageDoc]],
+)
+async def get_thread(
+        request: Request,
+        message_id: str,
+        user: dict = Depends(require_verified_user),
+        service: MessagesService = Depends(get_messages_service),
+):
+    items = await service.get_thread(
+        message_id=message_id,
+        user_id=str(user["_id"]),
+    )
+    return ok(request, data=items)
+
+
+@router.get(
+    "/{message_id}/thread-summary",
+    response_model=SuccessResponse[ThreadSummary],
+)
+async def get_thread_summary(
+        request: Request,
+        message_id: str,
+        user: dict = Depends(require_verified_user),
+        service: MessagesService = Depends(get_messages_service),
+):
+    summary = await service.get_thread_summary(
+        message_id=message_id,
+        user_id=str(user["_id"]),
+    )
+    return ok(request, data=summary)
+
+
+@router.post(
+    "/{message_id}/reactions",
+    response_model=SuccessResponse[MessageDoc],
+)
+async def add_reaction(
+        request: Request,
+        message_id: str,
+        body: AddReactionRequest,
+        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+        user: dict = Depends(require_verified_user),
+        service: MessagesService = Depends(get_messages_service),
+):
+    message = await service.add_reaction(
+        message_id=message_id,
+        user_id=str(user["_id"]),
+        emoji=body.emoji,
+    )
+    await emit_message_reacted(
+        sio,
+        sender_id=message.sender_id,
+        receiver_id=message.receiver_id,
+        payload={
+            "message_id": message.id,
+            "conversation_id": message.conversation_id,
+            "reactions": [reaction.model_dump(mode="json") for reaction in message.reactions],
+            "updated_at": message.updated_at,
+        },
+    )
+    return ok(request, data=message)
+
+
+@router.delete(
+    "/{message_id}/reactions/{emoji}/me",
+    response_model=SuccessResponse[MessageDoc],
+)
+async def remove_reaction(
+        request: Request,
+        message_id: str,
+        emoji: str,
+        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+        user: dict = Depends(require_verified_user),
+        service: MessagesService = Depends(get_messages_service),
+):
+    message = await service.remove_reaction(
+        message_id=message_id,
+        user_id=str(user["_id"]),
+        emoji=emoji,
+    )
+    await emit_message_reacted(
+        sio,
+        sender_id=message.sender_id,
+        receiver_id=message.receiver_id,
+        payload={
+            "message_id": message.id,
+            "conversation_id": message.conversation_id,
+            "reactions": [reaction.model_dump(mode="json") for reaction in message.reactions],
+            "updated_at": message.updated_at,
+        },
+    )
+    return ok(request, data=message)
+
+
+@router.post(
     "/{message_id}/delivered",
     response_model=SuccessResponse[MessageDoc],
 )
@@ -207,23 +363,6 @@ async def mark_read(
         },
     )
     return ok(request, data=message)
-
-
-@router.post(
-    "/conversations/{user_id}/read",
-    response_model=SuccessResponse[dict],
-)
-async def mark_conversation_read(
-        request: Request,
-        user_id: str,
-        user: dict = Depends(require_verified_user),
-        service: MessagesService = Depends(get_messages_service),
-):
-    updated = await service.mark_conversation_read(
-        receiver_id=str(user["_id"]),
-        peer_user_id=user_id,
-    )
-    return ok(request, data={"updated_count": updated})
 
 
 @router.patch(
