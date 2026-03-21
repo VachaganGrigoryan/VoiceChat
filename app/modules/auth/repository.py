@@ -97,6 +97,15 @@ class UsersRepository:
     async def find_by_id(self, user_id: str) -> Optional[dict[str, Any]]:
         return await self.col.find_one({"_id": _oid(user_id)})
 
+    async def find_by_ids(self, user_ids: list[str]) -> dict[str, dict[str, Any]]:
+        if not user_ids:
+            return {}
+
+        unique_ids = list(dict.fromkeys(user_ids))
+        object_ids = [_oid(user_id) for user_id in unique_ids]
+        docs = await self.col.find({"_id": {"$in": object_ids}}).to_list(length=len(object_ids))
+        return {str(doc["_id"]): doc for doc in docs}
+
     async def find_by_email(self, email: str) -> Optional[dict[str, Any]]:
         return await self.col.find_one({"email": email.lower().strip()})
 

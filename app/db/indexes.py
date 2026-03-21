@@ -3,7 +3,6 @@ from __future__ import annotations
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ASCENDING, DESCENDING
 
-
 COL_USERS = "users"
 COL_VERIFICATION = "verification_codes"
 COL_MESSAGES = "messages"
@@ -41,6 +40,21 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
         name="ix_messages_conversation_createdAt_desc",
     )
 
+    await db[COL_MESSAGES].create_index(
+        [("conversation_id", ASCENDING), ("thread_root_id", ASCENDING), ("created_at", DESCENDING)],
+        name="ix_messages_conversation_threadRoot_createdAt_desc",
+    )
+
+    await db[COL_MESSAGES].create_index(
+        [("thread_root_id", ASCENDING), ("created_at", ASCENDING)],
+        name="ix_messages_threadRoot_createdAt_asc",
+    )
+
+    await db[COL_MESSAGES].create_index(
+        [("reply_to_message_id", ASCENDING)],
+        name="ix_messages_replyToMessageId",
+    )
+
     # Optional but useful for inbox-like queries later:
     await db[COL_MESSAGES].create_index(
         [("receiver_id", ASCENDING), ("created_at", DESCENDING)],
@@ -50,6 +64,11 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db[COL_MESSAGES].create_index(
         [("sender_id", ASCENDING), ("created_at", DESCENDING)],
         name="ix_messages_sender_createdAt_desc",
+    )
+
+    await db[COL_MESSAGES].create_index(
+        [("conversation_id", ASCENDING), ("receiver_id", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)],
+        name="ix_messages_conversation_receiver_status_createdAt_desc",
     )
 
     # REFRESH_TOKENS: unique token_hash
@@ -113,6 +132,11 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
         [("from_user_id", 1), ("created_at", -1), ("_id", -1)],
         name="idx_pings_outgoing_cursor",
     )
+    await db[COL_PINGS].create_index(
+        [("pair_id", ASCENDING), ("status", ASCENDING)],
+        name="ix_pings_pair_status",
+    )
+
 
     # COL_DISCOVERY_TOKENS
     await db[COL_DISCOVERY_TOKENS].create_index("user_id", name="idx_discovery_user_id")

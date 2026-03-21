@@ -13,6 +13,10 @@ class SendPingRequest(BaseModel):
     to_user_id: str = Field(min_length=1)
 
 
+class PeerActionRequest(BaseModel):
+    peer_user_id: str
+
+
 class PingResponse(BaseModel):
     id: str
     from_user_id: str

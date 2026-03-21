@@ -1,4 +1,47 @@
-# Voice Chat Backend (FastAPI + Socket.IO)
+# VoiceChat Backend
+
+FastAPI and Socket.IO backend for direct messaging, presence, ping-based chat permissions, discovery flows, and
+passkeys.
+
+## Status
+
+- The `docs/` directory is the current documentation source.
+- Older standalone markdown files in the repository root may be historical and can drift from the code.
+
+## Documentation
+
+- [Docs Index](./docs/index.md)
+- [Auth](./docs/auth.md)
+- [Users](./docs/users.md)
+- [Pings](./docs/pings.md)
+- [Messages](./docs/messages.md)
+- [Realtime](./docs/realtime.md)
+- [Discovery](./docs/discovery.md)
+- [Passkeys](./docs/passkeys.md)
+
+## Architecture
+
+Core services:
+
+- FastAPI API
+- Socket.IO realtime server
+- MongoDB for persistent application data
+- Redis for presence and rate limiting
+- RabbitMQ for background jobs
+- Local or S3-compatible object storage for media
+
+## Local Development
+
+- Install dependencies with Poetry.
+- Start required infrastructure from `docker-compose.yml`.
+- Run the API with `uvicorn app.main:app --reload`.
+
+## Messaging Notes
+
+- Sending messages requires an accepted ping.
+- Typing events and compatibility socket send acknowledgements enforce the same permission rule.
+- Owner deletion hard-deletes the message and removes stored media when present.
+- Peer deletion hides the message only for that user.
 
 ## Overview
 

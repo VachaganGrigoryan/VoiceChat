@@ -10,9 +10,10 @@ from app.core.deps import get_sio
 from app.core.http import PaginatedResponse, ok_paginated, PaginationMeta
 from app.core.security import get_current_user_id
 from app.modules.pings.dependencies import get_pings_service
-from app.modules.pings.schemas import PingResponse, SendPingRequest, PingListItem
+from app.modules.pings.schemas import PingResponse, SendPingRequest, PingListItem, PeerActionRequest
 from app.modules.realtime import emit_ping_received, emit_ping_accepted, emit_chat_permission_updated, \
     emit_ping_declined
+from app.modules.realtime.emits import emit_ping_cancelled, emit_user_blocked
 
 router = APIRouter(prefix="/pings", tags=["pings"])
 
@@ -131,3 +132,51 @@ async def decline_ping(
         )
 
     return ping
+
+
+@router.post("/{ping_id}/cancel", response_model=PingResponse)
+async def cancel_ping(
+        ping_id: str,
+        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+        user_id=Depends(get_current_user_id),
+        service=Depends(get_pings_service),
+):
+    ping = await service.cancel_ping(user_id=user_id, ping_id=ping_id)
+    doc = await service.pings_repo.find_by_id(ping.id)
+    if doc:
+        payload = await service.to_realtime_payload(doc, incoming_for=doc["to_user_id"])
+        await emit_ping_cancelled(sio, to_user_id=doc["to_user_id"], payload=payload)
+    return ping
+
+
+@router.post("/block", response_model=PingResponse)
+async def block_user(
+        body: PeerActionRequest,
+        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+        user_id=Depends(get_current_user_id),
+        service=Depends(get_pings_service),
+):
+    ping = await service.block_user(user_id=user_id, peer_user_id=body.peer_user_id)
+    await emit_user_blocked(sio, user_a=user_id, user_b=body.peer_user_id)
+    await emit_chat_permission_updated(sio, user_a=user_id, user_b=body.peer_user_id, allowed=False)
+    return ping
+
+
+@router.post("/unblock", response_model=PingResponse)
+async def unblock_user(
+        body: PeerActionRequest,
+        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+        user_id=Depends(get_current_user_id),
+        service=Depends(get_pings_service),
+):
+    ping = await service.unblock_user(user_id=user_id, peer_user_id=body.peer_user_id)
+    await emit_chat_permission_updated(sio, user_a=user_id, user_b=body.peer_user_id, allowed=False)
+    return ping
+
+
+@router.get("/blocked", response_model=list[PingResponse])
+async def blocked_users(
+        user_id=Depends(get_current_user_id),
+        service=Depends(get_pings_service),
+):
+    return await service.list_blocked(user_id=user_id)

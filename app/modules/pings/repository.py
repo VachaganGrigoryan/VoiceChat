@@ -57,6 +57,14 @@ class PingsRepository:
     async def get_pair_state(self, *, user_a: str, user_b: str) -> dict[str, Any] | None:
         return await self.col.find_one({"pair_id": pair_id_for(user_a, user_b)})
 
+    async def get_pair_states(self, *, user_id: str, peer_user_ids: list[str]) -> dict[str, dict[str, Any]]:
+        if not peer_user_ids:
+            return {}
+
+        pair_ids = [pair_id_for(user_id, peer_user_id) for peer_user_id in dict.fromkeys(peer_user_ids)]
+        docs = await self.col.find({"pair_id": {"$in": pair_ids}}).to_list(length=len(pair_ids))
+        return {doc["pair_id"]: doc for doc in docs}
+
     async def update_status(self, *, ping_id: str, status: str) -> dict[str, Any] | None:
         now = datetime.now(UTC)
         responded_at = now if status in {"accepted", "declined", "cancelled", "expired", "blocked"} else None
@@ -156,3 +164,96 @@ class PingsRepository:
             {"_id": 1},
         )
         return doc is not None
+
+    async def is_blocked(self, *, user_a: str, user_b: str) -> bool:
+        doc = await self.col.find_one(
+            {
+                "pair_id": pair_id_for(user_a, user_b),
+                "status": "blocked",
+            },
+            {"_id": 1},
+        )
+        return doc is not None
+
+    async def cancel_pending(self, *, ping_id: str, by_user_id: str) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        res = await self.col.find_one_and_update(
+            {
+                "_id": _oid(ping_id),
+                "from_user_id": by_user_id,
+                "status": "pending",
+            },
+            {
+                "$set": {
+                    "status": "cancelled",
+                    "updated_at": now,
+                    "responded_at": now,
+                }
+            },
+            return_document=True,
+        )
+        if not res:
+            raise AppError(code="PING_NOT_CANCELLABLE", message="Ping cannot be cancelled", status_code=400)
+        return res
+
+    async def block_pair(self, *, user_a: str, user_b: str, by_user_id: str) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        pair_id = pair_id_for(user_a, user_b)
+
+        doc = await self.col.find_one({"pair_id": pair_id})
+        if doc:
+            await self.col.update_one(
+                {"_id": doc["_id"]},
+                {
+                    "$set": {
+                        "status": "blocked",
+                        "updated_at": now,
+                        "responded_at": now,
+                        "blocked_by": by_user_id,
+                    }
+                },
+            )
+            return await self.col.find_one({"_id": doc["_id"]})
+
+        new_doc = {
+            "pair_id": pair_id,
+            "from_user_id": user_a,
+            "to_user_id": user_b,
+            "status": "blocked",
+            "blocked_by": by_user_id,
+            "created_at": now,
+            "updated_at": now,
+            "responded_at": now,
+        }
+        result = await self.col.insert_one(new_doc)
+        new_doc["_id"] = result.inserted_id
+        return new_doc
+
+    async def unblock_pair(self, *, user_a: str, user_b: str, by_user_id: str) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        res = await self.col.find_one_and_update(
+            {
+                "pair_id": pair_id_for(user_a, user_b),
+                "status": "blocked",
+                "blocked_by": by_user_id,
+            },
+            {
+                "$set": {
+                    "status": "cancelled",  # or "none" if you introduce it later
+                    "updated_at": now,
+                },
+                "$unset": {"blocked_by": ""},
+            },
+            return_document=True,
+        )
+        if not res:
+            raise AppError(code="PAIR_NOT_BLOCKED", message="Pair is not blocked by this user", status_code=400)
+        return res
+
+    async def list_blocked(self, *, user_id: str) -> list[dict[str, Any]]:
+        return await self.col.find(
+            {
+                "status": "blocked",
+                "$or": [{"from_user_id": user_id}, {"to_user_id": user_id}],
+            }
+        ).sort("updated_at", -1).to_list(length=100)
