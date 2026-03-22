@@ -57,6 +57,32 @@ def accepted_ping_doc(fixed_now):
     }
 
 
+@pytest.fixture
+def declined_ping_doc(fixed_now):
+    return {
+        "_id": "ping1",
+        "from_user_id": "u1",
+        "to_user_id": "u2",
+        "status": "declined",
+        "created_at": fixed_now,
+        "updated_at": fixed_now,
+        "responded_at": fixed_now,
+    }
+
+
+@pytest.fixture
+def cancelled_ping_doc(fixed_now):
+    return {
+        "_id": "ping1",
+        "from_user_id": "u1",
+        "to_user_id": "u2",
+        "status": "cancelled",
+        "created_at": fixed_now,
+        "updated_at": fixed_now,
+        "responded_at": fixed_now,
+    }
+
+
 @pytest.mark.asyncio
 async def test_send_ping_rejects_self_ping(service):
     svc, _, _, _ = service
@@ -129,6 +155,60 @@ async def test_send_ping_creates_pending_ping(service, pending_ping_doc):
     assert result.id == "ping1"
     assert result.status == "pending"
     pings_repo.create_ping.assert_awaited_once_with(from_user_id="u1", to_user_id="u2")
+
+
+@pytest.mark.asyncio
+async def test_send_ping_reopens_declined_ping(service, declined_ping_doc, pending_ping_doc):
+    svc, pings_repo, users_repo, _ = service
+
+    users_repo.find_by_id.return_value = {"_id": "u2", "username": "target"}
+    pings_repo.find_by_pair_id.return_value = declined_ping_doc
+    pings_repo.reopen_ping.return_value = {
+        **pending_ping_doc,
+        "_id": "ping1",
+        "from_user_id": "u1",
+        "to_user_id": "u2",
+    }
+
+    result = await svc.send_ping(from_user_id="u1", to_user_id="u2")
+
+    assert isinstance(result, PingResponse)
+    assert result.id == "ping1"
+    assert result.status == "pending"
+    pings_repo.reopen_ping.assert_awaited_once_with(
+        ping_id="ping1",
+        from_user_id="u1",
+        to_user_id="u2",
+    )
+    pings_repo.create_ping.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_ping_reopens_cancelled_ping_with_new_direction(service, cancelled_ping_doc, pending_ping_doc):
+    svc, pings_repo, users_repo, _ = service
+
+    users_repo.find_by_id.return_value = {"_id": "u1", "username": "target"}
+    pings_repo.find_by_pair_id.return_value = cancelled_ping_doc
+    pings_repo.reopen_ping.return_value = {
+        **pending_ping_doc,
+        "_id": "ping1",
+        "from_user_id": "u2",
+        "to_user_id": "u1",
+    }
+
+    result = await svc.send_ping(from_user_id="u2", to_user_id="u1")
+
+    assert isinstance(result, PingResponse)
+    assert result.id == "ping1"
+    assert result.from_user_id == "u2"
+    assert result.to_user_id == "u1"
+    assert result.status == "pending"
+    pings_repo.reopen_ping.assert_awaited_once_with(
+        ping_id="ping1",
+        from_user_id="u2",
+        to_user_id="u1",
+    )
+    pings_repo.create_ping.assert_not_awaited()
 
 
 @pytest.mark.asyncio
