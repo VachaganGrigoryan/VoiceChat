@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import UploadFile
 
 from app.core.errors import AppError
 from app.modules.auth.repository import UsersRepository
 from app.modules.auth.username import is_valid_username, normalize_username
-from app.modules.users.schemas import UpdateProfileRequest, UserProfileResponse
+from app.modules.pings.repository import PingsRepository
+from app.modules.users.schemas import (
+    SelectedUserProfileResponse,
+    UpdateProfileRequest,
+    UserProfileResponse,
+)
 from app.infra.storage import get_storage, storage_key_builder, build_storage_url
 
 ALLOWED_AVATAR_CONTENT_TYPES: dict[str, str] = {
@@ -19,6 +24,10 @@ ALLOWED_AVATAR_CONTENT_TYPES: dict[str, str] = {
 MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024
 
 
+class PresenceServiceProto(Protocol):
+    async def is_online(self, user_id: str) -> bool: ...
+
+
 def _strip_or_none(value: str | None) -> str | None:
     if value is None:
         return None
@@ -27,8 +36,15 @@ def _strip_or_none(value: str | None) -> str | None:
 
 
 class UsersService:
-    def __init__(self, users: UsersRepository):
+    def __init__(
+        self,
+        users: UsersRepository,
+        pings: PingsRepository,
+        presence_service: "PresenceServiceProto | None" = None,
+    ):
         self.users = users
+        self.pings = pings
+        self.presence_service = presence_service
 
     async def get_me(self, *, user_id: str) -> UserProfileResponse:
         user = await self.users.find_by_id(user_id)
@@ -36,6 +52,30 @@ class UsersService:
             raise AppError(code="USER_NOT_FOUND", message="User not found", status_code=404)
 
         return self._to_profile_response(user)
+
+    async def get_user_profile(
+        self,
+        *,
+        current_user_id: str,
+        selected_user_id: str,
+    ) -> SelectedUserProfileResponse:
+        user = await self.users.find_by_id(selected_user_id)
+        if not user:
+            raise AppError(code="USER_NOT_FOUND", message="User not found", status_code=404)
+
+        if current_user_id != selected_user_id:
+            has_access = await self.pings.has_accepted_permission(
+                user_a=current_user_id,
+                user_b=selected_user_id,
+            )
+            if not has_access:
+                raise AppError(
+                    code="PROFILE_ACCESS_FORBIDDEN",
+                    message="Accepted ping required to access this profile",
+                    status_code=403,
+                )
+
+        return await self._to_selected_profile_response(user)
 
     async def update_me(
         self,
@@ -143,10 +183,6 @@ class UsersService:
         return self._to_profile_response(updated)
 
     def _to_profile_response(self, user: dict[str, Any]) -> UserProfileResponse:
-        avatar = user.get("avatar")
-        if avatar is not None:
-            avatar["url"] = build_storage_url(avatar["storage"], avatar["key"])
-
         return UserProfileResponse(
             id=str(user["_id"]),
             email=user["email"],
@@ -154,7 +190,7 @@ class UsersService:
             username=user.get("username", ""),
             display_name=user.get("display_name"),
             bio=user.get("bio"),
-            avatar=avatar,
+            avatar=self._build_avatar_payload(user.get("avatar")),
             is_private=bool(user.get("is_private", False)),
             default_discovery_enabled=bool(user.get("default_discovery_enabled", True)),
             last_seen_at=user.get("last_seen_at"),
@@ -162,6 +198,26 @@ class UsersService:
             created_at=user["created_at"],
             updated_at=user["updated_at"],
         )
+
+    async def _to_selected_profile_response(self, user: dict[str, Any]) -> SelectedUserProfileResponse:
+        user_id = str(user["_id"])
+        is_online = await self.presence_service.is_online(user_id) if self.presence_service else False
+        return SelectedUserProfileResponse(
+            id=user_id,
+            username=user.get("username", ""),
+            display_name=user.get("display_name"),
+            bio=user.get("bio"),
+            avatar=self._build_avatar_payload(user.get("avatar")),
+            is_online=is_online,
+        )
+
+    def _build_avatar_payload(self, avatar: dict[str, Any] | None) -> dict[str, Any] | None:
+        if avatar is None:
+            return None
+
+        payload = dict(avatar)
+        payload["url"] = build_storage_url(payload["storage"], payload["key"])
+        return payload
 
     async def _read_avatar_bytes(self, file: UploadFile) -> bytes:
         content_type = (file.content_type or "").lower().strip()
