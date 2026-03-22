@@ -9,7 +9,7 @@ from fastapi import UploadFile
 
 from app.core.errors import AppError
 from app.db.mongo import get_db
-from app.infra.storage import get_storage, storage_key_builder, FolderKind, build_storage_url
+from app.infra.storage import get_storage, storage_key_builder, FolderKind
 from app.modules.auth.repository import UsersRepository
 from app.modules.messages.mappers import to_message_doc, to_thread_summary
 from app.modules.messages.repository import MessagesRepository
@@ -17,6 +17,7 @@ from app.modules.messages.schemas import ConversationItem, ConversationPeer, Con
     DeleteMessageResponse, MessageDeleteOutcome, MessageDoc, ThreadSummary, ReplyMode
 from app.modules.pings.schemas import ContactState
 from app.modules.realtime.presence import get_presence_backend
+from app.modules.users.avatar import build_user_avatar_payload
 
 ALLOWED_AUDIO_MIME = {
     "audio/mpeg",
@@ -558,12 +559,7 @@ class MessagesService:
             if media is None and msg.get("audio") is not None:
                 media = msg.get("audio")
 
-            avatar = peer.get("avatar") if peer else None
-            if avatar is not None:
-                avatar = {
-                    **avatar,
-                    "url": build_storage_url(avatar["storage"], avatar["key"]),
-                }
+            avatar = build_user_avatar_payload(peer.get("avatar")) if peer else None
 
             text = msg.get("text")
             msg_type = msg.get("type") or msg.get("message_type") or "voice"

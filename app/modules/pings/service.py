@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from app.core.errors import AppError
 from app.modules.pings.repository import PingsRepository, pair_id_for
 from app.modules.pings.schemas import PingListItem, PingResponse, PeerUserSummary, ContactState
+from app.modules.users.avatar import build_user_avatar_payload
 
 
 class UsersRepositoryProto(Protocol):
@@ -177,7 +178,7 @@ class PingsService:
             id=peer_id,
             username=peer.get("username", "") if peer else "",
             display_name=peer.get("display_name") if peer else None,
-            avatar=peer.get("avatar") if peer else None,
+            avatar=build_user_avatar_payload(peer.get("avatar")) if peer else None,
             is_online=online,
         )
         return PingListItem(
@@ -204,7 +205,7 @@ class PingsService:
                 "id": peer_id,
                 "username": peer.get("username", "") if peer else "",
                 "display_name": peer.get("display_name") if peer else None,
-                "avatar": peer.get("avatar") if peer else None,
+                "avatar": build_user_avatar_payload(peer.get("avatar")) if peer else None,
                 "is_online": is_online,
             },
         }

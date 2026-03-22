@@ -243,7 +243,11 @@ async def test_list_incoming_returns_items_with_peer_and_presence(service, pendi
         "_id": "u1",
         "username": "alice",
         "display_name": "Alice",
-        "avatar": {"url": "avatar.png"},
+        "avatar": {
+            "storage": "local",
+            "key": "avatars/alice.png",
+            "url": "https://stale.example.com/alice.png",
+        },
     }
     presence_service.is_online.return_value = True
 
@@ -254,6 +258,11 @@ async def test_list_incoming_returns_items_with_peer_and_presence(service, pendi
     assert items[0].ping.id == "ping1"
     assert items[0].peer.id == "u1"
     assert items[0].peer.username == "alice"
+    assert items[0].peer.avatar == {
+        "storage": "local",
+        "key": "avatars/alice.png",
+        "url": "/media/avatars/alice.png",
+    }
     assert items[0].peer.is_online is True
 
 
@@ -321,6 +330,31 @@ async def test_list_outgoing_without_presence_service_defaults_false(pending_pin
 
     assert len(items) == 1
     assert items[0].peer.is_online is False
+
+
+@pytest.mark.asyncio
+async def test_to_realtime_payload_builds_avatar_url(service, pending_ping_doc):
+    svc, _, users_repo, presence_service = service
+    users_repo.find_by_id.return_value = {
+        "_id": "u1",
+        "username": "alice",
+        "display_name": "Alice",
+        "avatar": {
+            "storage": "local",
+            "key": "avatars/alice.png",
+            "url": "https://stale.example.com/alice.png",
+        },
+    }
+    presence_service.is_online.return_value = True
+
+    payload = await svc.to_realtime_payload(pending_ping_doc, incoming_for="u2")
+
+    assert payload["peer"]["avatar"] == {
+        "storage": "local",
+        "key": "avatars/alice.png",
+        "url": "/media/avatars/alice.png",
+    }
+    assert payload["peer"]["is_online"] is True
 
 
 @pytest.mark.asyncio

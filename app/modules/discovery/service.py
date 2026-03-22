@@ -6,7 +6,6 @@ from typing import Any, Protocol
 
 from fastapi import HTTPException, status
 
-from app.infra.storage import build_storage_url
 from app.modules.discovery.schemas import (
     CreateInviteLinkResponse,
     DiscoveryUserSummary,
@@ -19,6 +18,7 @@ from app.modules.discovery.security import (
     preview_token,
 )
 from app.modules.discovery.repository import DiscoveryTokensRepository
+from app.modules.users.avatar import build_user_avatar_payload
 
 
 class UsersRepositoryProto(Protocol):
@@ -213,9 +213,6 @@ class DiscoveryService:
     ) -> DiscoveryUserSummary:
         user_id = str(user["_id"])
         online = await self.presence_service.is_online(user_id) if self.presence_service else False
-        avatar = user.get("avatar")
-        if avatar is not None:
-            avatar["url"] = build_storage_url(avatar["storage"], avatar["key"])
 
         contact_state = await self.pings_service.get_contact_state(
             viewer_user_id=requester_user_id,
@@ -226,7 +223,7 @@ class DiscoveryService:
             id=user_id,
             username=user.get("username", ""),
             display_name=user.get("display_name"),
-            avatar=avatar,
+            avatar=build_user_avatar_payload(user.get("avatar")),
             is_online=online,
             can_ping=contact_state.can_ping,
             chat_allowed=contact_state.chat_allowed,

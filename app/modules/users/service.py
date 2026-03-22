@@ -8,12 +8,13 @@ from app.core.errors import AppError
 from app.modules.auth.repository import UsersRepository
 from app.modules.auth.username import is_valid_username, normalize_username
 from app.modules.pings.repository import PingsRepository
+from app.modules.users.avatar import build_user_avatar_payload
 from app.modules.users.schemas import (
     SelectedUserProfileResponse,
     UpdateProfileRequest,
     UserProfileResponse,
 )
-from app.infra.storage import get_storage, storage_key_builder, build_storage_url
+from app.infra.storage import get_storage, storage_key_builder
 
 ALLOWED_AVATAR_CONTENT_TYPES: dict[str, str] = {
     "image/jpeg": ".jpg",
@@ -190,7 +191,7 @@ class UsersService:
             username=user.get("username", ""),
             display_name=user.get("display_name"),
             bio=user.get("bio"),
-            avatar=self._build_avatar_payload(user.get("avatar")),
+            avatar=build_user_avatar_payload(user.get("avatar")),
             is_private=bool(user.get("is_private", False)),
             default_discovery_enabled=bool(user.get("default_discovery_enabled", True)),
             last_seen_at=user.get("last_seen_at"),
@@ -207,17 +208,9 @@ class UsersService:
             username=user.get("username", ""),
             display_name=user.get("display_name"),
             bio=user.get("bio"),
-            avatar=self._build_avatar_payload(user.get("avatar")),
+            avatar=build_user_avatar_payload(user.get("avatar")),
             is_online=is_online,
         )
-
-    def _build_avatar_payload(self, avatar: dict[str, Any] | None) -> dict[str, Any] | None:
-        if avatar is None:
-            return None
-
-        payload = dict(avatar)
-        payload["url"] = build_storage_url(payload["storage"], payload["key"])
-        return payload
 
     async def _read_avatar_bytes(self, file: UploadFile) -> bytes:
         content_type = (file.content_type or "").lower().strip()
