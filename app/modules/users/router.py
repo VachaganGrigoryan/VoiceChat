@@ -8,7 +8,10 @@ from app.core.http import SuccessResponse, ok
 from app.core.security import get_current_user_id
 from app.db.mongo import get_db
 from app.modules.auth.repository import UsersRepository
+from app.modules.pings.repository import PingsRepository
+from app.modules.realtime.presence.factory import get_presence_backend
 from app.modules.users.schemas import (
+    SelectedUserProfileResponse,
     UpdateProfileRequest,
     UpdateUsernameRequest,
     UserProfileResponse,
@@ -19,13 +22,17 @@ from app.modules.users.service import UsersService
 router = APIRouter(
     prefix="/users",
     tags=["users"],
-    responses=build_error_responses(400, 401, 404, 409, 422, 500),
+    responses=build_error_responses(400, 401, 403, 404, 409, 422, 500),
 )
 
 
 def get_users_service() -> UsersService:
     db = get_db()
-    return UsersService(UsersRepository(db))
+    return UsersService(
+        UsersRepository(db),
+        PingsRepository(db),
+        get_presence_backend(),
+    )
 
 
 @router.get("/me", response_model=SuccessResponse[UserProfileResponse])
@@ -35,6 +42,20 @@ async def get_me(
     service: UsersService = Depends(get_users_service),
 ):
     result = await service.get_me(user_id=current_user_id)
+    return ok(request, data=result)
+
+
+@router.get("/{id}", response_model=SuccessResponse[SelectedUserProfileResponse])
+async def get_user_profile(
+    request: Request,
+    id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    service: UsersService = Depends(get_users_service),
+):
+    result = await service.get_user_profile(
+        current_user_id=current_user_id,
+        selected_user_id=id,
+    )
     return ok(request, data=result)
 
 

@@ -1,8 +1,5 @@
-import os
-
 import pytest
 
-from app.core.config import settings
 from app.tests.integration.test_realtime_socket import _create_verified_user_and_tokens, _grant_chat_permission, \
     _post_media
 
@@ -301,9 +298,10 @@ async def test_delete_message_hard_deletes_owned_media_and_hides_for_peer(live_c
     )
     assert owner_message_resp.status_code == 201, owner_message_resp.text
     owner_message = owner_message_resp.json()["data"]
-    media_key = owner_message["media"]["key"]
-    media_path = os.path.join(settings.upload_dir, media_key)
-    assert os.path.exists(media_path)
+    media_url = owner_message["media"]["url"]
+    media_get_resp = await live_client.get(media_url)
+    assert media_get_resp.status_code == 200, media_get_resp.text
+    assert media_get_resp.content == b"owned-audio"
 
     owner_delete_resp = await live_client.delete(
         f"/messages/{owner_message['id']}",
@@ -314,7 +312,8 @@ async def test_delete_message_hard_deletes_owned_media_and_hides_for_peer(live_c
     assert owner_delete_body["deleted_for_everyone"] is True
     assert owner_delete_body["hidden_for_me"] is False
     assert owner_delete_body["deleted_media"] is True
-    assert os.path.exists(media_path) is False
+    media_after_delete_resp = await live_client.get(media_url)
+    assert media_after_delete_resp.status_code == 404, media_after_delete_resp.text
 
     sender_history_after_owner_delete = await live_client.get(
         f"/messages/conversations/{receiver_id}",

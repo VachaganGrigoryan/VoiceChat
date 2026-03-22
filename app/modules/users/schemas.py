@@ -23,6 +23,17 @@ class UserProfileResponse(BaseModel):
     updated_at: datetime
 
 
+class SelectedUserProfileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    username: str
+    display_name: str | None = None
+    bio: str | None = None
+    avatar: dict | None = None
+    is_online: bool = False
+
+
 class UpdateProfileRequest(BaseModel):
     display_name: str | None = Field(default=None, max_length=80)
     bio: str | None = Field(default=None, max_length=300)
