@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from app.core.errors import AppError
 from app.modules.pings.repository import PingsRepository, pair_id_for
 from app.modules.pings.schemas import PingListItem, PingResponse, PeerUserSummary, ContactState
+from app.modules.users.avatar import build_user_avatar_payload
 
 
 class UsersRepositoryProto(Protocol):
@@ -43,7 +44,14 @@ class PingsService:
                 raise HTTPException(status_code=409, detail="Chat permission already granted")
             if existing["status"] == "pending":
                 return self._to_ping_response(existing)
-                # raise HTTPException(status_code=409, detail="Ping already pending")
+            if existing["status"] in {"cancelled", "declined"}:
+                reopened = await self.pings_repo.reopen_ping(
+                    ping_id=str(existing["_id"]),
+                    from_user_id=from_user_id,
+                    to_user_id=to_user_id,
+                )
+                assert reopened is not None
+                return self._to_ping_response(reopened)
 
         doc = await self.pings_repo.create_ping(from_user_id=from_user_id, to_user_id=to_user_id)
         return self._to_ping_response(doc)
@@ -177,7 +185,7 @@ class PingsService:
             id=peer_id,
             username=peer.get("username", "") if peer else "",
             display_name=peer.get("display_name") if peer else None,
-            avatar=peer.get("avatar") if peer else None,
+            avatar=build_user_avatar_payload(peer.get("avatar")) if peer else None,
             is_online=online,
         )
         return PingListItem(
@@ -204,7 +212,7 @@ class PingsService:
                 "id": peer_id,
                 "username": peer.get("username", "") if peer else "",
                 "display_name": peer.get("display_name") if peer else None,
-                "avatar": peer.get("avatar") if peer else None,
+                "avatar": build_user_avatar_payload(peer.get("avatar")) if peer else None,
                 "is_online": is_online,
             },
         }

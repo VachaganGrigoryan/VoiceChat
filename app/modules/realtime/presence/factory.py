@@ -42,8 +42,10 @@ def get_presence_backend() -> PresenceBackend:
 
 
 async def close_presence_backend() -> None:
-    global _redis_client
+    global _presence_backend, _redis_client
+
+    _presence_backend = None
 
     if _redis_client is not None:
-        await _redis_client.close()
+        await _redis_client.aclose()
         _redis_client = None

@@ -5,7 +5,7 @@ from typing import Any
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo import DESCENDING
+from pymongo import DESCENDING, ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from app.core.errors import AppError
@@ -80,6 +80,32 @@ class PingsRepository:
             },
         )
         return await self.find_by_id(ping_id)
+
+    async def reopen_ping(
+        self,
+        *,
+        ping_id: str,
+        from_user_id: str,
+        to_user_id: str,
+    ) -> dict[str, Any] | None:
+        now = datetime.now(UTC)
+        return await self.col.find_one_and_update(
+            {
+                "_id": _oid(ping_id),
+                "status": {"$in": ["cancelled", "declined"]},
+            },
+            {
+                "$set": {
+                    "from_user_id": from_user_id,
+                    "to_user_id": to_user_id,
+                    "status": "pending",
+                    "created_at": now,
+                    "updated_at": now,
+                    "responded_at": None,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
 
     async def list_incoming(
             self,
