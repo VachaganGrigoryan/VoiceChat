@@ -108,7 +108,27 @@ class Settings(BaseSettings):
     turn_auth_secret: str = Field(default="voicechat-turn-secret", alias="TURN_AUTH_SECRET")
     turn_credential_ttl_seconds: int = Field(default=3600, alias="TURN_CREDENTIAL_TTL_SECONDS")
 
-    @field_validator("cors_allowed_origins", "call_stun_urls", "call_turn_urls", mode="before")
+    turn_provider: str = Field(default="coturn", alias="TURN_PROVIDER")
+    turn_multi: bool = Field(default=False, alias="TURN_MULTI")
+    # Coturn settings
+    coturn_urls: list[str] = Field(
+        default=["turn:127.0.0.1:3478"],
+        alias="COTURN_URLS",
+    )
+    coturn_username: str = Field(default="", alias="COTURN_USERNAME")
+    coturn_password: str = Field(default="", alias="COTURN_PASSWORD")
+    turn_ttl_seconds: int = Field(default=3600, alias="TURN_TTL")
+    # Cloudflare settings
+    cf_turn_key_id: str = Field(default="", alias="CF_TURN_KEY_ID")
+    cf_turn_api_token: str = Field(default="", alias="CF_TURN_API_TOKEN")
+    
+    cf_account_id: str = Field(default="", alias="CF_ACCOUNT_ID")
+    cf_account_token: str = Field(default="", alias="CF_ACCOUNT_TOKEN")
+    cf_turn_pause_at_gb: float = Field(default=999.0, alias="CF_TURN_PAUSE_AT_GB")
+    cf_turn_usage_lookback_days: int = Field(default=30, alias="CF_TURN_USAGE_LOOKBACK_DAYS")
+    cf_turn_usage_cache_seconds: int = Field(default=300, alias="CF_TURN_USAGE_CACHE_SECONDS")
+
+    @field_validator("cors_allowed_origins", "call_stun_urls", "coturn_urls", "call_turn_urls", mode="before")
     @classmethod
     def parse_list_settings(cls, value: Any) -> list[str] | Any:
         if isinstance(value, list):

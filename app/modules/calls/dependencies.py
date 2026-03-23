@@ -7,6 +7,7 @@ from app.modules.calls.service import CallsService
 from app.modules.pings.repository import PingsRepository
 from app.modules.pings.service import PingsService
 from app.modules.realtime.presence import get_presence_backend
+from app.modules.webrtc.dependencies import get_webrtc_service
 
 
 def get_calls_service() -> CallsService:
@@ -25,4 +26,5 @@ def get_calls_service() -> CallsService:
         users_repo=users_repo,
         pings_service=pings_service,
         presence_service=presence,
+        webrtc_service=get_webrtc_service(),
     )

@@ -80,14 +80,23 @@ Server to client:
 
 Relevant settings:
 
+- `TURN_PROVIDER`
+- `TURN_MULTI`
 - `CALL_RING_TIMEOUT_SECONDS`
 - `CALL_RECONNECT_GRACE_SECONDS`
 - `CALL_SESSION_BACKEND`
 - `CALL_SESSION_KEY_PREFIX`
 - `CALL_STUN_URLS`
-- `CALL_TURN_URLS`
-- `TURN_REALM`
-- `TURN_AUTH_SECRET`
-- `TURN_CREDENTIAL_TTL_SECONDS`
+- `COTURN_URLS`
+- `COTURN_USERNAME`
+- `COTURN_PASSWORD`
+- `CF_TURN_KEY_ID`
+- `CF_TURN_API_TOKEN`
+- `CF_ACCOUNT_ID`
+- `CF_ACCOUNT_TOKEN`
+- `CF_TURN_PAUSE_AT_GB`
+- `CF_TURN_USAGE_LOOKBACK_DAYS`
+- `CF_TURN_USAGE_CACHE_SECONDS`
+- `TURN_TTL`
 
-TURN credentials are generated dynamically using coturn auth-secret mode.
+ICE server selection is env-driven. Call payloads and `/webrtc/ice-servers` use the same provider layer.

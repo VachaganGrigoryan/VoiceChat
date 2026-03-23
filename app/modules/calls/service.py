@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
@@ -37,6 +34,10 @@ class PresenceServiceProto(Protocol):
     async def is_online(self, user_id: str) -> bool: ...
 
 
+class WebRTCServiceProto(Protocol):
+    async def get_ice_servers(self) -> list[IceServer]: ...
+
+
 class CallsService:
     def __init__(
         self,
@@ -45,11 +46,13 @@ class CallsService:
         users_repo: UsersRepositoryProto,
         pings_service: PingsServiceProto,
         presence_service: PresenceServiceProto | None = None,
+        webrtc_service: WebRTCServiceProto | None = None,
     ) -> None:
         self.repo = repo
         self.users_repo = users_repo
         self.pings_service = pings_service
         self.presence_service = presence_service
+        self.webrtc_service = webrtc_service
 
     async def expire_stale_calls(self) -> int:
         return await self.repo.expire_stale_calls()
@@ -290,7 +293,9 @@ class CallsService:
         peer_user_id = self._peer_user_id(call=model, viewer_user_id=viewer_user_id)
         peer = await self._build_peer_summary(peer_user_id)
 
-        ice_servers = self._build_ice_servers(user_id=viewer_user_id) if include_ice_servers else []
+        ice_servers: list[IceServer] = []
+        if include_ice_servers and self.webrtc_service is not None:
+            ice_servers = await self.webrtc_service.get_ice_servers()
         return CallSession(
             call=model,
             peer_user=peer,
@@ -359,43 +364,6 @@ class CallsService:
             avatar=build_user_avatar_payload(peer.get("avatar")) if peer else None,
             is_online=is_online,
         )
-
-    def _build_ice_servers(self, *, user_id: str) -> list[IceServer]:
-        servers: list[IceServer] = []
-
-        if settings.call_stun_urls:
-            stun_urls: str | list[str]
-            stun_urls = settings.call_stun_urls[0] if len(settings.call_stun_urls) == 1 else settings.call_stun_urls
-            servers.append(IceServer(urls=stun_urls))
-
-        if settings.call_turn_urls and settings.turn_auth_secret:
-            username = self._build_turn_username(user_id=user_id)
-            credential = self._build_turn_credential(username=username)
-            turn_urls: str | list[str]
-            turn_urls = settings.call_turn_urls[0] if len(settings.call_turn_urls) == 1 else settings.call_turn_urls
-            servers.append(
-                IceServer(
-                    urls=turn_urls,
-                    username=username,
-                    credential=credential,
-                )
-            )
-
-        return servers
-
-    def _build_turn_username(self, *, user_id: str) -> str:
-        expires_at = int(
-            (datetime.now(UTC) + timedelta(seconds=settings.turn_credential_ttl_seconds)).timestamp()
-        )
-        return f"{expires_at}:{user_id}"
-
-    def _build_turn_credential(self, *, username: str) -> str:
-        digest = hmac.new(
-            settings.turn_auth_secret.encode("utf-8"),
-            username.encode("utf-8"),
-            hashlib.sha1,
-        ).digest()
-        return base64.b64encode(digest).decode("utf-8")
 
     def is_live_status(self, status: CallStatus) -> bool:
         return status in LIVE_CALL_STATUSES
