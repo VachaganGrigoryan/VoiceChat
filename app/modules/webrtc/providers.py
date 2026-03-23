@@ -165,7 +165,7 @@ class CloudflareProvider(TurnProvider):
     def _usage_cache_key(self) -> str:
         return ":".join(
             [
-                settings.cf_turn_account_id,
+                settings.cf_account_id,
                 settings.cf_turn_key_id,
                 str(settings.cf_turn_usage_lookback_days),
             ]

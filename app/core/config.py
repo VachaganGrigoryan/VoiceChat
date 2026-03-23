@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     call_session_backend: str = Field(default="memory", alias="CALL_SESSION_BACKEND")
     call_session_key_prefix: str = Field(default="call_sessions", alias="CALL_SESSION_KEY_PREFIX")
     call_stun_urls: list[str] = Field(
-        default=["stun:stun.l.google.com:19302"],
+        default=["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"],
         alias="CALL_STUN_URLS",
     )
     call_turn_urls: list[str] = Field(
