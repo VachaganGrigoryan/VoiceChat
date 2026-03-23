@@ -1,8 +1,9 @@
+import json
 import os
 from typing import Any
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = os.getenv("ENV_FILE", ".env")
 
@@ -89,6 +90,43 @@ class Settings(BaseSettings):
 
     socketio_queue_backend: str = Field(default="memory", alias="SOCKETIO_QUEUE_BACKEND")
     socketio_redis_url: str = Field(default="redis://redis:6379/0", alias="SOCKETIO_REDIS_URL")
+
+    # Calls / WebRTC
+    call_ring_timeout_seconds: int = Field(default=45, alias="CALL_RING_TIMEOUT_SECONDS")
+    call_reconnect_grace_seconds: int = Field(default=15, alias="CALL_RECONNECT_GRACE_SECONDS")
+    call_session_backend: str = Field(default="memory", alias="CALL_SESSION_BACKEND")
+    call_session_key_prefix: str = Field(default="call_sessions", alias="CALL_SESSION_KEY_PREFIX")
+    call_stun_urls: list[str] = Field(
+        default=["stun:stun.l.google.com:19302"],
+        alias="CALL_STUN_URLS",
+    )
+    call_turn_urls: list[str] = Field(
+        default=["turn:localhost:3478?transport=udp", "turn:localhost:3478?transport=tcp"],
+        alias="CALL_TURN_URLS",
+    )
+    turn_realm: str = Field(default="voicechat", alias="TURN_REALM")
+    turn_auth_secret: str = Field(default="voicechat-turn-secret", alias="TURN_AUTH_SECRET")
+    turn_credential_ttl_seconds: int = Field(default=3600, alias="TURN_CREDENTIAL_TTL_SECONDS")
+
+    @field_validator("cors_allowed_origins", "call_stun_urls", "call_turn_urls", mode="before")
+    @classmethod
+    def parse_list_settings(cls, value: Any) -> list[str] | Any:
+        if isinstance(value, list):
+            return value
+
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                return []
+
+            if normalized.startswith("["):
+                parsed = json.loads(normalized)
+                if isinstance(parsed, list):
+                    return [str(item) for item in parsed]
+
+            return [item.strip() for item in normalized.split(",") if item.strip()]
+
+        return value
 
 
 settings = Settings()

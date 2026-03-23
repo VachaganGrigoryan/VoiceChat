@@ -15,6 +15,7 @@ passkeys.
 - [Users](./docs/users.md)
 - [Pings](./docs/pings.md)
 - [Messages](./docs/messages.md)
+- [Calls](./docs/calls.md)
 - [Realtime](./docs/realtime.md)
 - [Discovery](./docs/discovery.md)
 - [Passkeys](./docs/passkeys.md)
@@ -25,6 +26,7 @@ Core services:
 
 - FastAPI API
 - Socket.IO realtime server
+- coturn for WebRTC relay/TURN credentials
 - MongoDB for persistent application data
 - Redis for presence and rate limiting
 - RabbitMQ for background jobs
@@ -548,4 +550,3 @@ This project demonstrates:
 - scalable system design
 
 It is designed as a **production-grade backend architecture example** for realtime messaging systems.
-
