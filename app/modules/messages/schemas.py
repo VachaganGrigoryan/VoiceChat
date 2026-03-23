@@ -20,6 +20,15 @@ class MediaMeta(BaseModel):
     duration_ms: Optional[int] = Field(default=None, ge=0)
 
 
+class StickerMessageRef(BaseModel):
+    sticker_id: str
+    pack_id: str
+    pack_slug: str
+    sticker_slug: str
+    emoji: str | None = None
+    version: int = Field(default=1, ge=1)
+
+
 class ReplyPreview(BaseModel):
     message_id: str
     sender_id: str
@@ -44,6 +53,7 @@ class MessageDoc(BaseModel):
     type: MessageType = "text"
     text: Optional[str] = None
     media: Optional[MediaMeta] = None
+    sticker: Optional[StickerMessageRef] = None
 
     status: MessageStatus = "sent"
     edited_at: Optional[datetime] = None
@@ -100,6 +110,22 @@ class EditMessageRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
+class SendStickerMessageRequest(BaseModel):
+    receiver_id: str
+    sticker_id: str
+    emoji: str | None = None
+    reply_mode: Optional[ReplyMode] = None
+    reply_to_message_id: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_reply_fields(self) -> "SendStickerMessageRequest":
+        if self.reply_mode and not self.reply_to_message_id:
+            raise ValueError("reply_to_message_id is required when reply_mode is set")
+        if self.reply_to_message_id and not self.reply_mode:
+            raise ValueError("reply_mode is required when reply_to_message_id is set")
+        return self
+
+
 class UpdateMessageStatusRequest(BaseModel):
     # useful if later you want one REST endpoint instead of two
     status: Literal["delivered", "read"]
@@ -136,7 +162,8 @@ class ConversationLastMessage(BaseModel):
     id: str
     type: str
     text: str | None = None
-    media: dict | None = None
+    media: MediaMeta | None = None
+    sticker: StickerMessageRef | None = None
     status: MessageStatus = "sent"
     created_at: datetime
 

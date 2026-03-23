@@ -13,7 +13,7 @@ from app.core.rate_limit import rate_limit
 from app.core.security import require_verified_user
 from app.modules.messages.dependencies import get_messages_service
 from app.modules.messages.schemas import MessageDoc, SendTextMessageRequest, ConversationItem, EditMessageRequest, \
-    DeleteMessageResponse, AddReactionRequest, ThreadSummary
+    DeleteMessageResponse, AddReactionRequest, ThreadSummary, SendStickerMessageRequest
 from app.modules.messages.service import MessagesService
 from app.modules.realtime import emit_to_user, emit_message_to_receiver, emit_message_status_to_user, \
     emit_message_edited, \
@@ -35,7 +35,7 @@ router = APIRouter(
 async def upload_media(
     request: Request,
     sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-    type: Literal["voice", "image", "sticker", "video"] = Form(...),
+    type: Literal["voice", "image", "video"] = Form(...),
     receiver_id: str = Form(...),
     duration_ms: Optional[int] = Form(None),
     text: Optional[str] = Form(None),
@@ -133,6 +133,55 @@ async def send_text(
         data=result.message,
         status_code=201,
     )
+
+
+@router.post(
+    "/sticker",
+    status_code=201,
+    response_model=SuccessResponse[MessageDoc],
+    dependencies=[Depends(rate_limit("60/minute", scope="sticker_message"))],
+)
+async def send_sticker(
+    request: Request,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    body: SendStickerMessageRequest,
+    user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
+):
+    result = await service.send_sticker_message(
+        sender_id=str(user["_id"]),
+        receiver_id=body.receiver_id,
+        sticker_id=body.sticker_id,
+        emoji=body.emoji,
+        reply_mode=body.reply_mode,
+        reply_to_message_id=body.reply_to_message_id,
+    )
+
+    if result.thread_summary is not None:
+        await emit_thread_reply_created(
+            sio,
+            sender_id=result.message.sender_id,
+            receiver_id=result.message.receiver_id,
+            payload=result.message.model_dump(mode="json"),
+        )
+        await emit_thread_summary_updated(
+            sio,
+            sender_id=result.message.sender_id,
+            receiver_id=result.message.receiver_id,
+            payload={
+                "thread_root_id": result.thread_summary.thread_root_id,
+                "thread_reply_count": result.thread_summary.thread_reply_count,
+                "last_thread_reply_at": result.thread_summary.last_thread_reply_at,
+            },
+        )
+    else:
+        await emit_message_to_receiver(
+            sio,
+            receiver_id=body.receiver_id,
+            payload=result.message.model_dump(mode="json"),
+        )
+
+    return ok(request, data=result.message, status_code=201)
 
 
 @router.get(

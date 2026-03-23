@@ -44,6 +44,9 @@ TEST_COLLECTIONS = [
     "messages",
     "refresh_tokens",
     "verification_codes",
+    "sticker_packs",
+    "stickers",
+    "sticker_upload_sessions",
 ]
 
 

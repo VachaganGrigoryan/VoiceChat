@@ -11,6 +11,9 @@ COL_PASSKEYS = "passkeys"
 COL_PASSKEY_CHALLENGES = "passkey_challenges"
 COL_PINGS = "pings"
 COL_DISCOVERY_TOKENS = "discovery_tokens"
+COL_STICKER_PACKS = "sticker_packs"
+COL_STICKERS = "stickers"
+COL_STICKER_UPLOAD_SESSIONS = "sticker_upload_sessions"
 
 
 async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
@@ -148,4 +151,39 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
         [("user_id", 1), ("type", 1), ("is_active", 1)],
         partialFilterExpression={"type": "code", "is_active": True},
         name="uniq_active_code_per_user",
+    )
+
+    # STICKERS
+    await db[COL_STICKER_PACKS].create_index(
+        [("slug", ASCENDING)],
+        unique=True,
+        name="ux_sticker_packs_slug",
+    )
+    await db[COL_STICKER_PACKS].create_index(
+        [("owner_user_id", ASCENDING)],
+        name="ix_sticker_packs_owner_user_id",
+    )
+    await db[COL_STICKER_PACKS].create_index(
+        [("status", ASCENDING), ("visibility", ASCENDING)],
+        name="ix_sticker_packs_status_visibility",
+    )
+
+    await db[COL_STICKERS].create_index(
+        [("pack_id", ASCENDING), ("slug", ASCENDING)],
+        unique=True,
+        name="ux_stickers_pack_id_slug",
+    )
+    await db[COL_STICKERS].create_index(
+        [("pack_id", ASCENDING)],
+        name="ix_stickers_pack_id",
+    )
+    await db[COL_STICKERS].create_index(
+        [("emoji_aliases", ASCENDING)],
+        name="ix_stickers_emoji_aliases",
+    )
+
+    await db[COL_STICKER_UPLOAD_SESSIONS].create_index(
+        [("expires_at", ASCENDING)],
+        expireAfterSeconds=0,
+        name="ttl_sticker_upload_sessions_expires",
     )

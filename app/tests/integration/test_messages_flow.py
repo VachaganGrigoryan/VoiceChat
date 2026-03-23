@@ -1,7 +1,11 @@
 import pytest
 
-from app.tests.integration.test_realtime_socket import _create_verified_user_and_tokens, _grant_chat_permission, \
-    _post_media
+from app.tests.integration.test_realtime_socket import (
+    _create_verified_user_and_tokens,
+    _grant_chat_permission,
+    _insert_active_sticker_pack,
+    _post_media,
+)
 
 
 def _auth_headers(access_token: str) -> dict[str, str]:
@@ -37,33 +41,138 @@ async def test_media_upload_rejects_unsupported_type(live_client):
 
 
 @pytest.mark.asyncio
-async def test_sticker_upload_rejects_too_large(live_client):
-    try:
-        health = await live_client.get("/health/live")
-    except Exception:
-        pytest.skip("Live server is not running on http://api_test:8000")
-
-    assert health.status_code == 200
-
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-big-sticker@test.com")
-    receiver, _ = await _create_verified_user_and_tokens("receiver-big-sticker@test.com")
+async def test_send_sticker_message_returns_reference_payload(inprocess_client):
+    sender, sender_tokens = await _create_verified_user_and_tokens("sender-sticker-message@test.com")
+    receiver, _ = await _create_verified_user_and_tokens("receiver-sticker-message@test.com")
     await _grant_chat_permission(str(sender["_id"]), str(receiver["_id"]))
+    _, sticker = await _insert_active_sticker_pack(owner_user_id=str(sender["_id"]))
 
-    too_big = b"x" * (2 * 1024 * 1024 + 1)
-
-    resp = await _post_media(
-        live_client,
-        access_token=sender_tokens["access_token"],
-        kind="sticker",
-        receiver_id=str(receiver["_id"]),
-        filename="sticker.webp",
-        content=too_big,
-        mime="image/webp",
+    resp = await inprocess_client.post(
+        "/messages/sticker",
+        headers=_auth_headers(sender_tokens["access_token"]),
+        json={
+            "receiver_id": str(receiver["_id"]),
+            "sticker_id": str(sticker["_id"]),
+            "emoji": "🎉",
+        },
     )
 
-    assert resp.status_code == 413, resp.text
-    body = resp.json()
-    assert body["error"]["code"] == "FILE_TOO_LARGE"
+    assert resp.status_code == 201, resp.text
+    body = resp.json()["data"]
+    assert body["type"] == "sticker"
+    assert body["media"] is not None
+    assert body["media"]["storage"] == "local"
+    assert body["media"]["mime"] == "image/webp"
+    assert body["media"]["key"] == sticker["storage_key"]
+    assert body["sticker"]["sticker_id"] == str(sticker["_id"])
+    assert body["sticker"]["emoji"] == "🎉"
+
+    history = await inprocess_client.get(
+        f"/messages/conversations/{receiver['_id']}",
+        headers=_auth_headers(sender_tokens["access_token"]),
+    )
+    assert history.status_code == 200, history.text
+    item = history.json()["data"][0]
+    assert item["type"] == "sticker"
+    assert item["media"] is not None
+    assert item["media"]["storage"] == "local"
+    assert item["media"]["key"] == sticker["storage_key"]
+    assert item["sticker"]["sticker_id"] == str(sticker["_id"])
+
+    conversations = await inprocess_client.get(
+        "/messages/conversations",
+        headers=_auth_headers(sender_tokens["access_token"]),
+    )
+    assert conversations.status_code == 200, conversations.text
+    last_message = conversations.json()["data"][0]["last_message"]
+    assert last_message["type"] == "sticker"
+    assert last_message["media"] is not None
+    assert last_message["media"]["storage"] == "local"
+    assert last_message["media"]["key"] == sticker["storage_key"]
+
+
+@pytest.mark.asyncio
+async def test_history_keeps_sticker_ref_when_asset_is_missing(inprocess_client):
+    from datetime import UTC, datetime
+
+    from bson import ObjectId
+
+    from app.db.mongo import get_db
+    from app.modules.messages.repository import conversation_id_for
+
+    sender, sender_tokens = await _create_verified_user_and_tokens("sender-missing-sticker@test.com")
+    receiver, _ = await _create_verified_user_and_tokens("receiver-missing-sticker@test.com")
+    sender_id = str(sender["_id"])
+    receiver_id = str(receiver["_id"])
+    await _grant_chat_permission(sender_id, receiver_id)
+
+    now = datetime.now(UTC)
+    db = get_db()
+    missing_sticker_id = str(ObjectId())
+    await db["messages"].insert_one(
+        {
+            "conversation_id": conversation_id_for(sender_id, receiver_id),
+            "sender_id": ObjectId(sender_id),
+            "receiver_id": ObjectId(receiver_id),
+            "type": "sticker",
+            "text": None,
+            "media": None,
+            "sticker": {
+                "sticker_id": missing_sticker_id,
+                "pack_id": str(ObjectId()),
+                "pack_slug": "missing_pack",
+                "sticker_slug": "missing_sticker",
+                "emoji": "🎉",
+                "version": 1,
+            },
+            "hidden_for_user_ids": [],
+            "status": "sent",
+            "edited_at": None,
+            "delivered_at": None,
+            "read_at": None,
+            "reply_mode": None,
+            "reply_to_message_id": None,
+            "thread_root_id": None,
+            "reply_preview": None,
+            "is_thread_root": False,
+            "thread_reply_count": 0,
+            "last_thread_reply_at": None,
+            "reactions": [],
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+
+    history = await inprocess_client.get(
+        f"/messages/conversations/{receiver_id}",
+        headers=_auth_headers(sender_tokens["access_token"]),
+    )
+    assert history.status_code == 200, history.text
+    item = history.json()["data"][0]
+    assert item["type"] == "sticker"
+    assert item["sticker"]["sticker_id"] == missing_sticker_id
+    assert item["media"] is None
+
+
+@pytest.mark.asyncio
+async def test_send_sticker_message_rejects_non_owner(inprocess_client):
+    owner, owner_tokens = await _create_verified_user_and_tokens("owner-sticker@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens("sender-non-owner-sticker@test.com")
+    receiver, _ = await _create_verified_user_and_tokens("receiver-owner-sticker@test.com")
+    await _grant_chat_permission(str(sender["_id"]), str(receiver["_id"]))
+    _, sticker = await _insert_active_sticker_pack(owner_user_id=str(owner["_id"]))
+
+    resp = await inprocess_client.post(
+        "/messages/sticker",
+        headers=_auth_headers(sender_tokens["access_token"]),
+        json={
+            "receiver_id": str(receiver["_id"]),
+            "sticker_id": str(sticker["_id"]),
+            "emoji": "🎉",
+        },
+    )
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["error"]["code"] == "STICKER_NOT_FOUND"
 
 
 @pytest.mark.asyncio

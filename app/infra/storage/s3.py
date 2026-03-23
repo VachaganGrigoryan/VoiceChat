@@ -6,10 +6,12 @@ import boto3
 from botocore.exceptions import ClientError
 
 from app.core.config import settings
-from app.infra.storage.base import Storage, StoredFile
+from app.infra.storage.base import Storage, StoredFile, UploadTarget
 
 
 class S3Storage(Storage):
+    name = "s3"
+
     def __init__(self):
         self.client = boto3.client(
             "s3",
@@ -73,4 +75,39 @@ class S3Storage(Storage):
                 "Key": normalized,
             },
             ExpiresIn=expires_in,
+        )
+
+    async def read(self, key: str) -> bytes:
+        normalized = self._normalize_key(key)
+        try:
+            response = self.client.get_object(Bucket=self.bucket, Key=normalized)
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code")
+            if code in {"NoSuchKey", "404"}:
+                raise FileNotFoundError(normalized) from exc
+            raise
+
+        return response["Body"].read()
+
+    def create_upload_target(
+        self,
+        *,
+        key: str,
+        mime: str,
+        expires_in: int,
+    ) -> UploadTarget:
+        normalized = self._normalize_key(key)
+        url = self.client.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": self.bucket,
+                "Key": normalized,
+                "ContentType": mime,
+            },
+            ExpiresIn=expires_in,
+        )
+        return UploadTarget(
+            url=url,
+            method="PUT",
+            headers={"Content-Type": mime},
         )

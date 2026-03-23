@@ -88,6 +88,23 @@ COMMON_ERROR_RESPONSES = {
             }
         },
     },
+    415: {
+        "model": ErrorResponse,
+        "description": "Unsupported Media Type. The uploaded or submitted content type is not supported.",
+        "content": {
+            "application/json": {
+                "example": {
+                    "success": False,
+                    "error": {
+                        "code": "UNSUPPORTED_MEDIA_TYPE",
+                        "message": "The provided content type is not supported.",
+                        "details": None,
+                    },
+                    "request_id": "req_1234567890",
+                }
+            }
+        },
+    },
     422: {
         "model": ErrorResponse,
         "description": "Validation Error. One or more request fields failed validation.",

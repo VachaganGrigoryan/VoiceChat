@@ -227,6 +227,7 @@ class MessagesRepository:
         message_type: str,
         text: str | None = None,
         media: dict[str, Any] | None = None,
+        sticker: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         sid = _oid(sender_id)
         rid = _oid(receiver_id)
@@ -240,6 +241,7 @@ class MessagesRepository:
             "type": message_type,
             "text": text,
             "media": media,
+            "sticker": sticker,
             "hidden_for_user_ids": [],
             "status": "sent",
             "edited_at": None,
@@ -270,6 +272,7 @@ class MessagesRepository:
             reply_to_message_id: str,
             text: str | None = None,
             media: dict[str, Any] | None = None,
+            sticker: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         target = await self._load_reply_target(
             sender_id=sender_id,
@@ -282,6 +285,7 @@ class MessagesRepository:
             message_type=message_type,
             text=text,
             media=media,
+            sticker=sticker,
         )
 
         updated = await self.col.find_one_and_update(
@@ -308,6 +312,7 @@ class MessagesRepository:
             reply_to_message_id: str,
             text: str | None = None,
             media: dict[str, Any] | None = None,
+            sticker: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         target = await self._load_reply_target(
             sender_id=sender_id,
@@ -324,6 +329,7 @@ class MessagesRepository:
             "type": message_type,
             "text": text,
             "media": media,
+            "sticker": sticker,
             "hidden_for_user_ids": [],
             "status": "sent",
             "edited_at": None,

@@ -9,6 +9,7 @@ from app.infra.storage.base import Storage, StoredFile
 
 
 class LocalStorage(Storage):
+    name = "local"
 
     def _normalize_key(self, key: str) -> str:
         normalized = key.replace("\\", "/").lstrip("/")
@@ -60,3 +61,11 @@ class LocalStorage(Storage):
 
     def get_file_url(self, key: str) -> str:
         return f"/media/{self._normalize_key(key)}"
+
+    async def read(self, key: str) -> bytes:
+        full_path = self._full_path(key)
+        try:
+            with open(full_path, "rb") as f:
+                return f.read()
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(self._normalize_key(key)) from exc

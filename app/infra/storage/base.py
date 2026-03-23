@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -12,7 +12,17 @@ class StoredFile:
     size_bytes: int
     mime: str
 
+
+@dataclass
+class UploadTarget:
+    url: str
+    method: str = "PUT"
+    headers: dict[str, str] = field(default_factory=dict)
+
+
 class Storage(ABC):
+    name: str
+
     @abstractmethod
     async def save(
         self,
@@ -31,3 +41,16 @@ class Storage(ABC):
     @abstractmethod
     def get_file_url(self, key: str) -> str:
         raise NotImplementedError
+
+    @abstractmethod
+    async def read(self, key: str) -> bytes:
+        raise NotImplementedError
+
+    def create_upload_target(
+        self,
+        *,
+        key: str,
+        mime: str,
+        expires_in: int,
+    ) -> UploadTarget | None:
+        return None

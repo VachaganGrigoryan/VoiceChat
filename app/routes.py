@@ -10,6 +10,7 @@ from app.modules.realtime.router import router as realtime_router
 from app.modules.passkeys.router import router as passkeys_router
 from app.modules.pings.router import router as pings_router
 from app.modules.discovery.router import router as discovery_router
+from app.modules.stickers.router import router as stickers_router
 
 
 def register_routers(app: FastAPI) -> None:
@@ -21,5 +22,6 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(users_router)
     app.include_router(pings_router)
     app.include_router(discovery_router)
+    app.include_router(stickers_router)
     app.include_router(messages_router)
     app.include_router(realtime_router)

@@ -61,6 +61,66 @@ async def _grant_chat_permission(user_a_id: str, user_b_id: str) -> None:
     )
 
 
+async def _insert_active_sticker_pack(
+    *,
+    owner_user_id: str,
+    pack_slug: str | None = None,
+    sticker_slug: str | None = None,
+    emoji_aliases: list[str] | None = None,
+) -> tuple[dict, dict]:
+    db = get_db()
+    now = datetime.now(UTC)
+    pack_id = ObjectId()
+    sticker_id = ObjectId()
+    pack_slug = pack_slug or f"pack_{uuid.uuid4().hex[:8]}"
+    sticker_slug = sticker_slug or f"sticker_{uuid.uuid4().hex[:8]}"
+
+    pack = {
+        "_id": pack_id,
+        "slug": pack_slug,
+        "owner_user_id": ObjectId(owner_user_id),
+        "title": "Test Pack",
+        "description": "Test sticker pack",
+        "cover_sticker_id": sticker_id,
+        "visibility": "private",
+        "status": "active",
+        "kind": "custom",
+        "tags": ["test"],
+        "sticker_count": 1,
+        "is_deleted": False,
+        "created_at": now,
+        "updated_at": now,
+        "published_at": now,
+    }
+    sticker = {
+        "_id": sticker_id,
+        "pack_id": pack_id,
+        "storage": "local",
+        "slug": sticker_slug,
+        "title": "Test Sticker",
+        "emoji_aliases": emoji_aliases or ["🎉"],
+        "file_kind": "webp",
+        "mime_type": "image/webp",
+        "storage_key": f"stickers/{pack_id}/{sticker_id}/original.webp",
+        "thumbnail_storage_key": f"stickers/{pack_id}/{sticker_id}/thumb.webp",
+        "width": 64,
+        "height": 64,
+        "file_size": 128,
+        "checksum_sha256": "deadbeef",
+        "status": "active",
+        "sort_order": 1,
+        "version": 1,
+        "is_animated": False,
+        "created_by_user_id": ObjectId(owner_user_id),
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    await db["sticker_packs"].insert_one(pack)
+    await db["stickers"].insert_one(sticker)
+    return pack, sticker
+
+
 async def _connect_socket(access_token: str) -> socketio.AsyncClient:
     sio = socketio.AsyncClient()
     await asyncio.wait_for(
@@ -386,6 +446,7 @@ async def test_socket_sticker_message_delivery(live_client):
     sender, sender_tokens = await _create_verified_user_and_tokens("sender-sticker@test.com")
     receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-sticker@test.com")
 
+    _, sticker = await _insert_active_sticker_pack(owner_user_id=str(sender["_id"]))
     receiver_id = str(receiver["_id"])
     await _grant_chat_permission(str(sender["_id"]), receiver_id)
 
@@ -401,21 +462,24 @@ async def test_socket_sticker_message_delivery(live_client):
         receiver_msg_event.set()
 
     try:
-        resp = await _post_media(
-            live_client,
-            access_token=sender_tokens["access_token"],
-            kind="sticker",
-            receiver_id=receiver_id,
-            filename="sticker.webp",
-            content=b"x" * 1024,
-            mime="image/webp",
+        resp = await live_client.post(
+            "/messages/sticker",
+            headers={"Authorization": f"Bearer {sender_tokens['access_token']}"},
+            json={
+                "receiver_id": receiver_id,
+                "sticker_id": str(sticker["_id"]),
+                "emoji": "🎉",
+            },
         )
         assert resp.status_code == 201, resp.text
 
         body = resp.json()["data"]
         assert body["type"] == "sticker"
         assert body["media"] is not None
-        assert body["media"]["mime"] == "image/webp"
+        assert body["media"]["storage"] == "local"
+        assert body["media"]["key"] == sticker["storage_key"]
+        assert body["sticker"]["sticker_id"] == str(sticker["_id"])
+        assert body["sticker"]["emoji"] == "🎉"
 
         await asyncio.wait_for(receiver_msg_event.wait(), timeout=5)
         message = receiver_events[-1].get("message", receiver_events[-1])
@@ -423,7 +487,10 @@ async def test_socket_sticker_message_delivery(live_client):
         assert message["id"] == body["id"]
         assert message["type"] == "sticker"
         assert message["media"] is not None
-        assert message["media"]["mime"] == "image/webp"
+        assert message["media"]["storage"] == "local"
+        assert message["media"]["key"] == sticker["storage_key"]
+        assert message["sticker"]["sticker_id"] == str(sticker["_id"])
+        assert message["sticker"]["pack_slug"] == body["sticker"]["pack_slug"]
 
     finally:
         if sender_sio.connected:

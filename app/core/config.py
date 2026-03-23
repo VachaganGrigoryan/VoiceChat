@@ -1,8 +1,7 @@
 import os
-from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator
+from pydantic import Field
 
 _ENV_FILE = os.getenv("ENV_FILE", ".env")
 
@@ -70,6 +69,15 @@ class Settings(BaseSettings):
     s3_secret_key: str = Field(default="", alias="S3_SECRET_KEY")
     s3_bucket: str = Field(default="voicechat", alias="S3_BUCKET")
     s3_region: str = Field(default="us-east-1", alias="S3_REGION")
+    cdn_base_url: str = Field(default="", alias="CDN_BASE_URL")
+
+    # Stickers
+    sticker_max_bytes: int = Field(default=512 * 1024, alias="STICKER_MAX_BYTES")
+    sticker_max_width: int = Field(default=512, alias="STICKER_MAX_WIDTH")
+    sticker_max_height: int = Field(default=512, alias="STICKER_MAX_HEIGHT")
+    sticker_thumb_max_side: int = Field(default=160, alias="STICKER_THUMB_MAX_SIDE")
+    sticker_upload_session_ttl_seconds: int = Field(default=15 * 60, alias="STICKER_UPLOAD_SESSION_TTL_SECONDS")
+    sticker_upload_presign_expires_seconds: int = Field(default=15 * 60, alias="STICKER_UPLOAD_PRESIGN_EXPIRES_SECONDS")
 
     # RabbitMQ
     rabbitmq_url: str = Field(

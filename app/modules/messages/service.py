@@ -11,6 +11,7 @@ from app.core.errors import AppError
 from app.db.mongo import get_db
 from app.infra.storage import get_storage, storage_key_builder, FolderKind
 from app.modules.auth.repository import UsersRepository
+from app.modules.messages.hydration import MessageHydrator, StickerMediaResolverProto
 from app.modules.messages.mappers import to_message_doc, to_thread_summary
 from app.modules.messages.repository import MessagesRepository
 from app.modules.messages.schemas import ConversationItem, ConversationPeer, ConversationLastMessage, \
@@ -36,11 +37,6 @@ ALLOWED_IMAGE_MIME = {
     "image/webp",
 }
 
-ALLOWED_STICKER_MIME = {
-    "image/png",
-    "image/webp",
-}
-
 ALLOWED_VIDEO_MIME = {
     "video/mp4",
     "video/webm",
@@ -50,7 +46,6 @@ ALLOWED_VIDEO_MIME = {
 EDIT_WINDOW_MINUTES = 15
 MAX_TEXT_LENGTH = 4000
 MAX_FILE_BYTES = 10 * 1024 * 1024
-MAX_STICKER_BYTES = 2 * 1024 * 1024
 
 MEDIA_RULES: dict[str, dict] = {
     "voice": {
@@ -61,11 +56,6 @@ MEDIA_RULES: dict[str, dict] = {
     "image": {
         "allowed_mime": ALLOWED_IMAGE_MIME,
         "max_bytes": MAX_FILE_BYTES,
-        "folder": "media",
-    },
-    "sticker": {
-        "allowed_mime": ALLOWED_STICKER_MIME,
-        "max_bytes": MAX_STICKER_BYTES,
         "folder": "media",
     },
     "video": {
@@ -88,14 +78,27 @@ class PingsServiceProto(Protocol):
     async def get_contact_states(self, *, viewer_user_id: str, peer_user_ids: list[str]) -> dict[str, Any]: ...
 
 
+class StickersServiceProto(StickerMediaResolverProto, Protocol):
+    async def prepare_message_sticker(
+        self,
+        *,
+        owner_user_id: str,
+        sticker_id: str,
+        emoji: str | None = None,
+    ) -> dict[str, Any]: ...
+
+
 class MessagesService:
     def __init__(
         self,
         repo: MessagesRepository,
         pings_service: PingsServiceProto | None = None,
+        sticker_service: StickersServiceProto | None = None,
     ):
         self.repo = repo
         self.pings_service = pings_service
+        self.sticker_service = sticker_service
+        self.hydrator = MessageHydrator(sticker_service)
 
     async def _read_upload(self, *, file: UploadFile) -> bytes:
         if not file or not file.filename:
@@ -297,6 +300,47 @@ class MessagesService:
             reply_to_message_id=normalized_reply_to_message_id,
         )
 
+    async def send_sticker_message(
+        self,
+        *,
+        sender_id: str,
+        receiver_id: str,
+        sticker_id: str,
+        emoji: str | None = None,
+        reply_mode: ReplyMode | None = None,
+        reply_to_message_id: str | None = None,
+    ) -> SendMessageResult:
+        if self.pings_service is not None:
+            await self.pings_service.ensure_can_message(
+                sender_id=sender_id,
+                receiver_id=receiver_id,
+            )
+        if self.sticker_service is None:
+            raise AppError(
+                code="STICKERS_NOT_CONFIGURED",
+                message="Sticker sending is not available",
+                status_code=500,
+            )
+
+        normalized_reply_mode, normalized_reply_to_message_id = self._normalize_reply_fields(
+            reply_mode=reply_mode,
+            reply_to_message_id=reply_to_message_id,
+        )
+        sticker = await self.sticker_service.prepare_message_sticker(
+            owner_user_id=sender_id,
+            sticker_id=sticker_id,
+            emoji=emoji,
+        )
+
+        return await self._create_outgoing_message(
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+            message_type="sticker",
+            sticker=sticker,
+            reply_mode=normalized_reply_mode,
+            reply_to_message_id=normalized_reply_to_message_id,
+        )
+
     async def _create_outgoing_message(
             self,
             *,
@@ -305,6 +349,7 @@ class MessagesService:
             message_type: str,
             text: str | None = None,
             media: dict[str, Any] | None = None,
+            sticker: dict[str, Any] | None = None,
             reply_mode: ReplyMode | None = None,
             reply_to_message_id: str | None = None,
     ) -> SendMessageResult:
@@ -315,9 +360,11 @@ class MessagesService:
                 message_type=message_type,
                 text=text,
                 media=media,
+                sticker=sticker,
                 reply_to_message_id=reply_to_message_id,
             )
-            return SendMessageResult(message=to_message_doc(doc))
+            message = await self.hydrator.hydrate_message(to_message_doc(doc))
+            return SendMessageResult(message=message)
 
         if reply_mode == "thread":
             doc = await self.repo.create_thread_reply(
@@ -326,6 +373,7 @@ class MessagesService:
                 message_type=message_type,
                 text=text,
                 media=media,
+                sticker=sticker,
                 reply_to_message_id=reply_to_message_id,
             )
             summary_doc = await self.repo.load_thread_summary(
@@ -333,7 +381,7 @@ class MessagesService:
                 user_id=sender_id,
             )
             return SendMessageResult(
-                message=to_message_doc(doc),
+                message=await self.hydrator.hydrate_message(to_message_doc(doc)),
                 thread_summary=to_thread_summary(summary_doc),
             )
 
@@ -343,8 +391,9 @@ class MessagesService:
             message_type=message_type,
             text=text,
             media=media,
+            sticker=sticker,
         )
-        return SendMessageResult(message=to_message_doc(doc))
+        return SendMessageResult(message=await self.hydrator.hydrate_message(to_message_doc(doc)))
 
     async def mark_delivered(self, *, message_id: str, receiver_id: str):
         doc = await self.repo.mark_delivered_for_receiver(
@@ -451,7 +500,7 @@ class MessagesService:
             limit=limit,
             cursor=cursor,
         )
-        items = [to_message_doc(d) for d in docs]
+        items = await self.hydrator.hydrate_messages([to_message_doc(d) for d in docs])
         return items, next_cursor
 
     async def get_thread(
@@ -464,7 +513,7 @@ class MessagesService:
             message_id=message_id,
             user_id=user_id,
         )
-        return [to_message_doc(doc) for doc in docs]
+        return await self.hydrator.hydrate_messages([to_message_doc(doc) for doc in docs])
 
     async def get_thread_summary(
             self,
@@ -558,6 +607,7 @@ class MessagesService:
             media = msg.get("media")
             if media is None and msg.get("audio") is not None:
                 media = msg.get("audio")
+            sticker = msg.get("sticker")
 
             avatar = build_user_avatar_payload(peer.get("avatar")) if peer else None
 
@@ -582,6 +632,7 @@ class MessagesService:
                         type=msg_type,
                         text=text,
                         media=media,
+                        sticker=sticker,
                         status=msg.get("status", "sent"),
                         created_at=msg["created_at"],
                     ),
@@ -590,7 +641,7 @@ class MessagesService:
                 )
             )
 
-        return items, next_cursor
+        return await self.hydrator.hydrate_conversation_items(items), next_cursor
 
     async def _get_presence_map(self, *, presence, user_ids: list[str]) -> dict[str, bool]:
         if not user_ids:

@@ -15,6 +15,7 @@ passkeys.
 - [Users](./docs/users.md)
 - [Pings](./docs/pings.md)
 - [Messages](./docs/messages.md)
+- [Stickers](./docs/stickers.md)
 - [Realtime](./docs/realtime.md)
 - [Discovery](./docs/discovery.md)
 - [Passkeys](./docs/passkeys.md)
@@ -548,4 +549,3 @@ This project demonstrates:
 - scalable system design
 
 It is designed as a **production-grade backend architecture example** for realtime messaging systems.
-

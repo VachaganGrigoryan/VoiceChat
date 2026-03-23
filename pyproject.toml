@@ -26,6 +26,7 @@ limits = "^5.8.0"
 aio-pika = "^9.6.1"
 redis = "^7.3.0"
 webauthn = "^2.7.1"
+Pillow = "^11.3.0"
 
 
 [tool.poetry.group.dev.dependencies]

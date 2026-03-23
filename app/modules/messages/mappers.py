@@ -5,7 +5,7 @@ from typing import Any
 from bson import ObjectId
 
 from app.infra.storage import build_storage_url
-from app.modules.messages.schemas import MessageDoc, ReplyPreview, MessageReactionGroup, ThreadSummary
+from app.modules.messages.schemas import MessageDoc, ReplyPreview, MessageReactionGroup, ThreadSummary, StickerMessageRef
 
 
 def _id(x):
@@ -28,6 +28,10 @@ def to_message_doc(m: dict[str, Any]) -> MessageDoc:
             **media,
             "url": build_storage_url(media["storage"], media["key"])
         }
+
+    sticker = m.get("sticker")
+    if sticker is not None:
+        sticker = StickerMessageRef(**sticker)
 
     reply_preview = m.get("reply_preview")
     if reply_preview is not None:
@@ -57,6 +61,7 @@ def to_message_doc(m: dict[str, Any]) -> MessageDoc:
         type=m["type"],
         text=m.get("text"),
         media=media,
+        sticker=sticker,
         status=m["status"],
         edited_at=m.get("edited_at"),
         delivered_at=m.get("delivered_at"),

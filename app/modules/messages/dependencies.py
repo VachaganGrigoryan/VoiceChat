@@ -4,6 +4,8 @@ from app.modules.messages.service import MessagesService
 from app.modules.pings.repository import PingsRepository
 from app.modules.pings.service import PingsService
 from app.modules.auth.repository import UsersRepository
+from app.modules.stickers.repository import StickersRepository
+from app.modules.stickers.service import StickersService
 
 
 def get_messages_service() -> MessagesService:
@@ -18,4 +20,5 @@ def get_messages_service() -> MessagesService:
     return MessagesService(
         repo=MessagesRepository(db),
         pings_service=pings_service,
+        sticker_service=StickersService(StickersRepository(db)),
     )

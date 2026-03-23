@@ -5,10 +5,12 @@ Base path: `/messages`
 ## Endpoints
 
 - `POST /messages/media`
-  Multipart upload for `voice`, `image`, `sticker`, and `video`.
+  Multipart upload for `voice`, `image`, and `video`.
   Fields: `type`, `receiver_id`, `file`, optional `text`, optional `duration_ms`.
 - `POST /messages/text`
   Send a text message.
+- `POST /messages/sticker`
+  Send a sticker reference. Input: `receiver_id`, `sticker_id`, optional `emoji`.
 - `GET /messages/conversations/{user_id}`
   Paginated history with a peer.
 - `GET /messages/conversations`
@@ -30,6 +32,7 @@ Base path: `/messages`
 - Media captions use the same max length and empty captions normalize to `null`.
 - `duration_ms` must be greater than or equal to `0`.
 - Media mime type and file size are validated by message type.
+- Sticker sending validates that the current user owns the sticker and that the pack is published.
 
 ## Delivery State Rules
 
@@ -44,7 +47,8 @@ Base path: `/messages`
 - If the peer deletes a message they received, the message is hidden only for that user.
 - Hidden messages are excluded from that user’s history and conversation list.
 
-## Current Sticker Behavior
+## Sticker Behavior
 
-- `sticker` currently uses the same upload path as other media messages.
-- A centralized reusable sticker catalog is not implemented yet.
+- Sticker uploads and catalog management live under `/stickers`.
+- Sticker messages persist a `sticker` reference object and the backend hydrates `media` from the sticker asset record for direct rendering.
+- `POST /stickers/resolve` is still available for batch/catalog/preload flows, but normal chat rendering should not require it.
