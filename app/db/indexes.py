@@ -11,6 +11,7 @@ COL_PASSKEYS = "passkeys"
 COL_PASSKEY_CHALLENGES = "passkey_challenges"
 COL_PINGS = "pings"
 COL_DISCOVERY_TOKENS = "discovery_tokens"
+COL_CALLS = "calls"
 
 
 async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
@@ -135,6 +136,26 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db[COL_PINGS].create_index(
         [("pair_id", ASCENDING), ("status", ASCENDING)],
         name="ix_pings_pair_status",
+    )
+
+    # COL_CALLS
+    await db[COL_CALLS].create_index(
+        [("participant_user_ids", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"is_live": True},
+        name="ux_calls_live_participant",
+    )
+    await db[COL_CALLS].create_index(
+        [("status", ASCENDING), ("expires_at", ASCENDING)],
+        name="ix_calls_status_expires_at",
+    )
+    await db[COL_CALLS].create_index(
+        [("status", ASCENDING), ("reconnect_deadline_at", ASCENDING)],
+        name="ix_calls_status_reconnect_deadline_at",
+    )
+    await db[COL_CALLS].create_index(
+        [("participant_user_ids", ASCENDING), ("created_at", DESCENDING)],
+        name="ix_calls_participant_created_at_desc",
     )
 
 

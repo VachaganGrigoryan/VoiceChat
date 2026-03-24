@@ -41,6 +41,7 @@ async def clean_redis():
 TEST_COLLECTIONS = [
     "users",
     "pings",
+    "calls",
     "messages",
     "refresh_tokens",
     "verification_codes",

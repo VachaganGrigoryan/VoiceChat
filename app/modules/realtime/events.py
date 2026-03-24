@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from app.core.errors import AppError
 from app.db.mongo import get_db
+from app.modules.calls.ws import (
+    handle_call_socket_connect,
+    handle_call_socket_disconnect,
+)
 from app.modules.messages.dependencies import get_messages_service
 from app.modules.messages.repository import MessagesRepository
+from app.modules.calls.ws import register_events as register_call_events
 from app.modules.realtime.auth import authenticate_socket, get_socket_user_id
 from app.modules.realtime.emits import (
     emit_message_status_to_user,
@@ -13,6 +18,8 @@ from app.modules.realtime.presence import get_presence_backend
 
 
 def register_events(sio) -> None:
+    register_call_events(sio)
+
     async def ensure_chat_allowed(*, sender_id: str, receiver_id: str) -> None:
         service = get_messages_service()
         if service.pings_service is None:
@@ -37,6 +44,7 @@ def register_events(sio) -> None:
         if became_online:
             await emit_presence_update(sio, user_id, True, skip_sid=sid)
 
+        await handle_call_socket_connect(sio, sid=sid, user_id=user_id)
         return True
 
     @sio.event
@@ -44,6 +52,8 @@ def register_events(sio) -> None:
         user_id = await get_socket_user_id(sio, sid)
         if not user_id:
             return
+
+        await handle_call_socket_disconnect(sio, sid=sid, user_id=user_id)
 
         presence = get_presence_backend()
         became_offline = await presence.remove_connection(user_id, sid)
