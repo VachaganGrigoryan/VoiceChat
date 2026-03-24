@@ -54,6 +54,20 @@ services:
       timeout: 5s
       retries: 20
 
+  mongo-express:
+    image: mongo-express
+    container_name: mongo-express
+    restart: always
+    ports:
+      - "8081:8081"
+    environment:
+      # - ME_CONFIG_MONGODB_ADMINUSERNAME=admin
+      # - ME_CONFIG_MONGODB_ADMINPASSWORD=password
+      - ME_CONFIG_MONGODB_SERVER=mongo
+      - ME_CONFIG_BASICAUTH=false
+    depends_on:
+      - mongo
+
   # Optional: SMTP test server with web UI at http://localhost:8025
   mailhog:
     image: mailhog/mailhog:v1.0.1
@@ -89,6 +103,27 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  coturn:
+    image: coturn/coturn:latest
+    container_name: voicechat_coturn
+    restart: unless-stopped
+    ports:
+      - "3478:3478/tcp"
+      - "3478:3478/udp"
+      - "49160-49200:49160-49200/udp"
+    command:
+      - -n
+      - --use-auth-secret
+      - --static-auth-secret=voicechat-turn-secret
+      - --realm=voicechat.local
+      - --listening-ip=0.0.0.0
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49200
+      - --no-cli
+      - --no-software-attribute
+      - --fingerprint
 
   rabbitmq:
     image: rabbitmq:3-management
