@@ -16,14 +16,16 @@ def service():
     users_repo = AsyncMock()
     pings_service = AsyncMock()
     presence_service = AsyncMock()
+    webrtc_service = AsyncMock()
 
     svc = CallsService(
         repo=repo,
         users_repo=users_repo,
         pings_service=pings_service,
         presence_service=presence_service,
+        webrtc_service=webrtc_service,
     )
-    return svc, repo, users_repo, pings_service, presence_service
+    return svc, repo, users_repo, pings_service, presence_service, webrtc_service
 
 
 @pytest.fixture
@@ -50,7 +52,7 @@ def ringing_call_doc():
 
 @pytest.mark.asyncio
 async def test_create_call_rejects_self_call(service):
-    svc, _, _, _, _ = service
+    svc, _, _, _, _, _ = service
 
     with pytest.raises(AppError) as exc:
         await svc.create_call(
@@ -64,7 +66,7 @@ async def test_create_call_rejects_self_call(service):
 
 @pytest.mark.asyncio
 async def test_create_call_requires_existing_target(service):
-    svc, _, users_repo, _, _ = service
+    svc, _, users_repo, _, _, _ = service
     users_repo.find_by_id.return_value = None
 
     with pytest.raises(AppError) as exc:
@@ -79,7 +81,7 @@ async def test_create_call_requires_existing_target(service):
 
 @pytest.mark.asyncio
 async def test_create_call_enforces_permission_and_returns_doc(service, ringing_call_doc):
-    svc, repo, users_repo, pings_service, _ = service
+    svc, repo, users_repo, pings_service, _, _ = service
     users_repo.find_by_id.return_value = {"_id": "u2", "username": "callee"}
     repo.create_call.return_value = ringing_call_doc
 
@@ -96,7 +98,7 @@ async def test_create_call_enforces_permission_and_returns_doc(service, ringing_
 
 @pytest.mark.asyncio
 async def test_end_call_cancels_ringing_call_for_caller(service, ringing_call_doc):
-    svc, repo, _, _, _ = service
+    svc, repo, _, _, _, _ = service
     cancelled = {**ringing_call_doc, "status": "cancelled", "is_live": False, "ended_at": ringing_call_doc["created_at"]}
     repo.find_by_id.return_value = ringing_call_doc
     repo.expire_call_if_due.return_value = None
@@ -113,7 +115,7 @@ async def test_end_call_cancels_ringing_call_for_caller(service, ringing_call_do
 
 @pytest.mark.asyncio
 async def test_mark_active_promotes_connecting_call(service, ringing_call_doc):
-    svc, repo, _, _, _ = service
+    svc, repo, _, _, _, _ = service
     connecting = {
         **ringing_call_doc,
         "status": "connecting",
@@ -138,8 +140,8 @@ async def test_mark_active_promotes_connecting_call(service, ringing_call_doc):
 
 
 @pytest.mark.asyncio
-async def test_build_session_generates_turn_credentials(service, ringing_call_doc, monkeypatch):
-    svc, _, users_repo, _, presence_service = service
+async def test_build_session_uses_webrtc_service_ice_servers(service, ringing_call_doc):
+    svc, _, users_repo, _, presence_service, webrtc_service = service
     users_repo.find_by_id.return_value = {
         "_id": "u2",
         "username": "callee",
@@ -147,11 +149,14 @@ async def test_build_session_generates_turn_credentials(service, ringing_call_do
         "avatar": None,
     }
     presence_service.is_online.return_value = True
-
-    monkeypatch.setattr(settings, "call_stun_urls", ["stun:stun.example.com:3478"])
-    monkeypatch.setattr(settings, "call_turn_urls", ["turn:turn.example.com:3478"])
-    monkeypatch.setattr(settings, "turn_auth_secret", "secret")
-    monkeypatch.setattr(settings, "turn_credential_ttl_seconds", 300)
+    webrtc_service.get_ice_servers.return_value = [
+        {"urls": "stun:stun.example.com:3478"},
+        {
+            "urls": ["turn:turn.example.com:3478"],
+            "username": "turn-user",
+            "credential": "turn-pass",
+        },
+    ]
 
     session = await svc.build_session(call_doc=ringing_call_doc, viewer_user_id="u1")
 
@@ -159,13 +164,14 @@ async def test_build_session_generates_turn_credentials(service, ringing_call_do
     assert session.peer_user.id == "u2"
     assert session.peer_user.is_online is True
     assert len(session.ice_servers) == 2
-    assert session.ice_servers[1].username is not None
-    assert session.ice_servers[1].credential is not None
+    assert session.ice_servers[1].username == "turn-user"
+    assert session.ice_servers[1].credential == "turn-pass"
+    webrtc_service.get_ice_servers.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_mark_reconnecting_from_disconnect_sets_deadline(service, ringing_call_doc, monkeypatch):
-    svc, repo, _, _, _ = service
+    svc, repo, _, _, _, _ = service
     active_call = {
         **ringing_call_doc,
         "status": "active",
@@ -194,7 +200,7 @@ async def test_mark_reconnecting_from_disconnect_sets_deadline(service, ringing_
 
 @pytest.mark.asyncio
 async def test_resume_call_rejects_non_recoverable_state(service, ringing_call_doc):
-    svc, repo, _, _, _ = service
+    svc, repo, _, _, _, _ = service
     repo.expire_call_if_due.return_value = None
     repo.find_by_id.return_value = ringing_call_doc
 
@@ -206,7 +212,7 @@ async def test_resume_call_rejects_non_recoverable_state(service, ringing_call_d
 
 @pytest.mark.asyncio
 async def test_resume_call_updates_recoverable_call(service, ringing_call_doc):
-    svc, repo, _, _, _ = service
+    svc, repo, _, _, _, _ = service
     reconnecting_call = {
         **ringing_call_doc,
         "status": "reconnecting",

@@ -283,6 +283,11 @@ async def test_call_recovery_after_socket_refresh(live_client):
         answer_events.append(data)
         answer_event.set()
 
+    @callee_sio.on("call.offer")
+    async def on_offer(data):
+        offer_events.append(data)
+        offer_event.set()
+
     @caller_sio.on("call.connected")
     async def on_connected(data):
         connected_events.append(data)
@@ -308,10 +313,16 @@ async def test_call_recovery_after_socket_refresh(live_client):
             "call.offer",
             {"call_id": call_id, "sdp": {"type": "offer", "sdp": "initial-offer"}},
         )
+        await asyncio.wait_for(offer_event.wait(), timeout=5)
+        assert offer_events[-1]["call_id"] == call_id
+
         await callee_sio.emit(
             "call.answer",
             {"call_id": call_id, "sdp": {"type": "answer", "sdp": "initial-answer"}},
         )
+        await asyncio.wait_for(answer_event.wait(), timeout=5)
+        assert answer_events[-1]["call_id"] == call_id
+
         await caller_sio.emit("call.connected", {"call_id": call_id})
         await asyncio.wait_for(connected_event.wait(), timeout=5)
         assert connected_events[-1]["call"]["status"] == "active"
@@ -359,6 +370,7 @@ async def test_call_recovery_after_socket_refresh(live_client):
         await asyncio.wait_for(resumed_event.wait(), timeout=5)
         assert resumed_events[-1]["call"]["id"] == call_id
 
+        offer_event.clear()
         await caller_sio.emit(
             "call.offer",
             {"call_id": call_id, "sdp": {"type": "offer", "sdp": "resumed-offer"}},
