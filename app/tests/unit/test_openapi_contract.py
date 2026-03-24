@@ -59,3 +59,44 @@ def test_all_documented_422_responses_use_error_response():
             mismatches.append(f"{method.upper()} {path}")
 
     assert mismatches == []
+
+
+def test_messages_media_upload_openapi_exposes_new_type_contract():
+    spec = create_app().openapi()
+
+    request_schema = spec["components"]["schemas"][
+        "Body_upload_media_messages_media_post"
+    ]
+
+    assert request_schema["properties"]["type"]["enum"] == ["media", "file"]
+    assert request_schema["properties"]["media_kind"]["anyOf"][0]["enum"] == [
+        "voice",
+        "audio",
+        "image",
+        "video",
+    ]
+
+
+def test_message_schemas_expose_normalized_message_and_media_kinds():
+    spec = create_app().openapi()
+
+    message_doc = spec["components"]["schemas"]["MessageDoc"]
+    media_meta = spec["components"]["schemas"]["MediaMeta"]
+    reply_preview = spec["components"]["schemas"]["ReplyPreview"]
+
+    assert message_doc["properties"]["type"]["enum"] == ["text", "media", "file"]
+    assert media_meta["properties"]["kind"]["enum"] == [
+        "voice",
+        "audio",
+        "image",
+        "video",
+        "file",
+    ]
+    assert reply_preview["properties"]["type"]["enum"] == ["text", "media", "file"]
+    assert reply_preview["properties"]["media_kind"]["anyOf"][0]["enum"] == [
+        "voice",
+        "audio",
+        "image",
+        "video",
+        "file",
+    ]

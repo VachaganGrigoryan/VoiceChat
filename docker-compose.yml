@@ -158,7 +158,7 @@ services:
       - uploads_data:/app/uploads_test
     ports:
       - "8001:8000"
-    command: poetry run uvicorn app.main:asgi_app --host 0.0.0.0 --port 8000
+    command: poetry run uvicorn app.main:asgi_app --host 0.0.0.0 --port 8000 --reload
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')"]
       interval: 5s

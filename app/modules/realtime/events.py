@@ -7,6 +7,7 @@ from app.modules.calls.ws import (
     handle_call_socket_disconnect,
 )
 from app.modules.messages.dependencies import get_messages_service
+from app.modules.messages.mappers import normalize_message_record
 from app.modules.messages.repository import MessagesRepository
 from app.modules.calls.ws import register_events as register_call_events
 from app.modules.realtime.auth import authenticate_socket, get_socket_user_id
@@ -135,7 +136,10 @@ def register_events(sio) -> None:
         if not receiver_id or not message_id:
             await sio.emit(
                 "error",
-                {"code": "INVALID_PAYLOAD", "message": "`to` and `message_id` are required"},
+                {
+                    "code": "INVALID_PAYLOAD",
+                    "message": "`to` and `message_id` are required",
+                },
                 to=sid,
             )
             return
@@ -185,6 +189,7 @@ def register_events(sio) -> None:
             return
 
         sender_id = str(msg["sender_id"])
+        normalized_type, normalized_media = normalize_message_record(msg)
 
         await emit_message_status_to_user(
             sio,
@@ -192,7 +197,10 @@ def register_events(sio) -> None:
             {
                 "message_id": message_id,
                 "status": "delivered",
-                "message_type": msg.get("type"),
+                "message_type": normalized_type,
+                "media_kind": (
+                    normalized_media.get("kind") if normalized_media else None
+                ),
                 "delivered_at": msg.get("delivered_at"),
             },
         )
@@ -231,6 +239,7 @@ def register_events(sio) -> None:
             return
 
         sender_id = str(msg["sender_id"])
+        normalized_type, normalized_media = normalize_message_record(msg)
 
         await emit_message_status_to_user(
             sio,
@@ -238,7 +247,10 @@ def register_events(sio) -> None:
             {
                 "message_id": message_id,
                 "status": "read",
-                "message_type": msg.get("type"),
+                "message_type": normalized_type,
+                "media_kind": (
+                    normalized_media.get("kind") if normalized_media else None
+                ),
                 "read_at": msg.get("read_at"),
             },
         )

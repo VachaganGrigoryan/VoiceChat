@@ -90,12 +90,16 @@ Deletes current avatar.
 
 ### Messages
 
-#### POST `/messages/voice`
-Creates voice message.
+#### POST `/messages/media`
+Creates file-bearing message.
 
 **Input**
 - `receiver_id`
-- `file` (voice file upload flow as currently implemented)
+- `type` as `media` or `file`
+- `file`
+- optional `media_kind` when `type=media`
+- optional `text`
+- optional `duration_ms`
 
 **Response data fields**
 - `id`
@@ -200,24 +204,29 @@ Gets recent conversations for current user.
 - `updated_at`
 
 ### `type`
-Supported / planned:
-- `voice`
+Supported:
 - `text`
-- `image`
-- `emoji`
-- `sticker`
-- `video` later
+- `media`
+- `file`
 
 ### `media`
-Used for voice/image/sticker/video-like payloads.
+Used for file-bearing payloads.
 
 **Fields**
+- `kind`
 - `storage`
 - `key`
 - `url`
 - `mime`
 - `size_bytes`
 - `duration_ms`
+
+### `media.kind`
+- `voice`
+- `audio`
+- `image`
+- `video`
+- `file`
 
 ---
 

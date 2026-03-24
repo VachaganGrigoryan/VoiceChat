@@ -11,6 +11,7 @@ from app.db.indexes import COL_MESSAGES
 
 def normalize_media(audio: dict) -> dict:
     return {
+        "kind": "voice",
         "storage": audio.get("storage", "local"),
         "key": audio.get("key", ""),
         "url": audio.get("url", ""),
@@ -44,14 +45,42 @@ async def main() -> None:
         set_data: dict = {"updated_at": now}
         unset_data: dict = {}
 
-        # Keep using `type` as the canonical field for now.
-        if "type" not in msg or not msg.get("type"):
-            set_data["type"] = "voice"
+        if "type" not in msg or not msg.get("type") or msg.get("type") == "voice":
+            set_data["type"] = "media"
+        elif msg.get("type") == "image":
+            set_data["type"] = "media"
+        elif msg.get("type") == "video":
+            set_data["type"] = "media"
+        elif msg.get("type") == "sticker":
+            set_data["type"] = "media"
+        elif msg.get("type") == "emoji":
+            set_data["type"] = "text"
 
         # Migrate old voice payload: audio -> media
         if msg.get("audio") is not None and msg.get("media") is None:
             set_data["media"] = normalize_media(msg["audio"])
             unset_data["audio"] = ""
+        elif isinstance(msg.get("media"), dict) and not msg["media"].get("kind"):
+            normalized_kind = "file"
+            current_type = msg.get("type")
+            if current_type == "voice":
+                normalized_kind = "voice"
+            elif current_type in {"image", "sticker"}:
+                normalized_kind = "image"
+            elif current_type == "video":
+                normalized_kind = "video"
+            elif current_type == "media":
+                mime = str(msg["media"].get("mime", "")).lower()
+                if mime.startswith("audio/"):
+                    normalized_kind = "audio"
+                elif mime.startswith("image/"):
+                    normalized_kind = "image"
+                elif mime.startswith("video/"):
+                    normalized_kind = "video"
+            set_data["media"] = {
+                **msg["media"],
+                "kind": normalized_kind,
+            }
 
         # Ensure text exists for generic message shape
         if "text" not in msg:

@@ -11,69 +11,29 @@ from app.core.errors import AppError
 from app.db.mongo import get_db
 from app.infra.storage import get_storage, storage_key_builder, FolderKind
 from app.modules.auth.repository import UsersRepository
-from app.modules.messages.mappers import to_message_doc, to_thread_summary
+from app.modules.messages.mappers import (
+    normalize_message_record,
+    to_message_doc,
+    to_thread_summary,
+)
+from app.modules.messages.media_policy import resolve_media_policy
 from app.modules.messages.repository import MessagesRepository
-from app.modules.messages.schemas import ConversationItem, ConversationPeer, ConversationLastMessage, \
-    DeleteMessageResponse, MessageDeleteOutcome, MessageDoc, ThreadSummary, ReplyMode
+from app.modules.messages.schemas import (
+    ConversationItem,
+    ConversationPeer,
+    ConversationLastMessage,
+    DeleteMessageResponse,
+    MessageDeleteOutcome,
+    MessageDoc,
+    ThreadSummary,
+    ReplyMode,
+)
 from app.modules.pings.schemas import ContactState
 from app.modules.realtime.presence import get_presence_backend
 from app.modules.users.avatar import build_user_avatar_payload
 
-ALLOWED_AUDIO_MIME = {
-    "audio/mpeg",
-    "audio/mp3",
-    "audio/wav",
-    "audio/x-wav",
-    "audio/mp4",
-    "audio/aac",
-    "audio/webm",
-    "audio/ogg",
-}
-
-ALLOWED_IMAGE_MIME = {
-    "image/jpeg",
-    "image/png",
-    "image/webp",
-}
-
-ALLOWED_STICKER_MIME = {
-    "image/png",
-    "image/webp",
-}
-
-ALLOWED_VIDEO_MIME = {
-    "video/mp4",
-    "video/webm",
-    "video/quicktime",
-}
-
 EDIT_WINDOW_MINUTES = 15
 MAX_TEXT_LENGTH = 4000
-MAX_FILE_BYTES = 10 * 1024 * 1024
-MAX_STICKER_BYTES = 2 * 1024 * 1024
-
-MEDIA_RULES: dict[str, dict] = {
-    "voice": {
-        "allowed_mime": ALLOWED_AUDIO_MIME,
-        "max_bytes": MAX_FILE_BYTES,
-        "folder": "voice",
-    },
-    "image": {
-        "allowed_mime": ALLOWED_IMAGE_MIME,
-        "max_bytes": MAX_FILE_BYTES,
-        "folder": "media",
-    },
-    "sticker": {
-        "allowed_mime": ALLOWED_STICKER_MIME,
-        "max_bytes": MAX_STICKER_BYTES,
-        "folder": "media",
-    },
-    "video": {
-        "allowed_mime": ALLOWED_VIDEO_MIME,
-        "max_bytes": MAX_FILE_BYTES,
-        "folder": "video",
-    },
-}
 
 
 @dataclass
@@ -84,8 +44,12 @@ class SendMessageResult:
 
 class PingsServiceProto(Protocol):
     async def ensure_can_message(self, *, sender_id: str, receiver_id: str) -> None: ...
-    async def get_contact_state(self, *, viewer_user_id: str, peer_user_id: str) -> Any: ...
-    async def get_contact_states(self, *, viewer_user_id: str, peer_user_ids: list[str]) -> dict[str, Any]: ...
+    async def get_contact_state(
+        self, *, viewer_user_id: str, peer_user_id: str
+    ) -> Any: ...
+    async def get_contact_states(
+        self, *, viewer_user_id: str, peer_user_ids: list[str]
+    ) -> dict[str, Any]: ...
 
 
 class MessagesService:
@@ -115,8 +79,15 @@ class MessagesService:
 
         return content
 
-    def _build_media_meta(self, *, stored, duration_ms: int | None = None) -> dict:
+    def _build_media_meta(
+        self,
+        *,
+        stored,
+        media_kind: str,
+        duration_ms: int | None = None,
+    ) -> dict:
         return {
+            "kind": media_kind,
             "storage": stored.storage,
             "key": stored.key,
             "url": stored.url,
@@ -130,7 +101,11 @@ class MessagesService:
         if not normalized:
             return None
         if len(normalized) > MAX_TEXT_LENGTH:
-            raise AppError(code="TEXT_TOO_LONG", message="Text message is too long", status_code=400)
+            raise AppError(
+                code="TEXT_TOO_LONG",
+                message="Text message is too long",
+                status_code=400,
+            )
         return normalized
 
     def _normalize_duration_ms(self, duration_ms: int | None) -> int | None:
@@ -145,10 +120,10 @@ class MessagesService:
         return duration_ms
 
     def _normalize_reply_fields(
-            self,
-            *,
-            reply_mode: ReplyMode | None = None,
-            reply_to_message_id: str | None = None,
+        self,
+        *,
+        reply_mode: ReplyMode | None = None,
+        reply_to_message_id: str | None = None,
     ) -> tuple[ReplyMode | None, str | None]:
         normalized_reply_to_message_id = (reply_to_message_id or "").strip() or None
         if reply_mode is None and normalized_reply_to_message_id is None:
@@ -164,7 +139,9 @@ class MessagesService:
     def _normalize_emoji(self, emoji: str) -> str:
         normalized = (emoji or "").strip()
         if not normalized:
-            raise AppError(code="INVALID_EMOJI", message="emoji is required", status_code=400)
+            raise AppError(
+                code="INVALID_EMOJI", message="emoji is required", status_code=400
+            )
         return normalized
 
     async def _store_media(
@@ -204,16 +181,17 @@ class MessagesService:
         )
 
     async def upload_media_message(
-            self,
-            *,
-            sender_id: str,
-            receiver_id: str,
-            message_type: str,
-            file: UploadFile,
-            text: str | None = None,
-            duration_ms: int | None = None,
-            reply_mode: ReplyMode | None = None,
-            reply_to_message_id: str | None = None,
+        self,
+        *,
+        sender_id: str,
+        receiver_id: str,
+        message_type: str,
+        media_kind: str | None,
+        file: UploadFile,
+        text: str | None = None,
+        duration_ms: int | None = None,
+        reply_mode: ReplyMode | None = None,
+        reply_to_message_id: str | None = None,
     ) -> SendMessageResult:
         if self.pings_service is not None:
             await self.pings_service.ensure_can_message(
@@ -221,25 +199,24 @@ class MessagesService:
                 receiver_id=receiver_id,
             )
 
-        rules = MEDIA_RULES.get(message_type)
-        if not rules:
-            raise AppError(
-                code="UNSUPPORTED_MESSAGE_TYPE",
-                message=f"Unsupported media message type: {message_type}",
-                status_code=400,
-            )
+        policy = resolve_media_policy(
+            message_type=message_type,
+            media_kind=media_kind,
+        )
 
         stored = await self._store_media(
             sender_id=sender_id,
             file=file,
-            allowed_mime=rules["allowed_mime"],
-            max_bytes=rules["max_bytes"],
-            folder=rules["folder"],
+            allowed_mime=set(policy.allowed_mime),
+            max_bytes=policy.max_bytes,
+            folder=policy.folder,
         )
 
-        normalized_reply_mode, normalized_reply_to_message_id = self._normalize_reply_fields(
-            reply_mode=reply_mode,
-            reply_to_message_id=reply_to_message_id,
+        normalized_reply_mode, normalized_reply_to_message_id = (
+            self._normalize_reply_fields(
+                reply_mode=reply_mode,
+                reply_to_message_id=reply_to_message_id,
+            )
         )
 
         try:
@@ -250,6 +227,7 @@ class MessagesService:
                 text=self._normalize_optional_text(text),
                 media=self._build_media_meta(
                     stored=stored,
+                    media_kind=policy.media_kind,
                     duration_ms=self._normalize_duration_ms(duration_ms),
                 ),
                 reply_mode=normalized_reply_mode,
@@ -263,9 +241,17 @@ class MessagesService:
     def _normalize_text(self, text: Optional[str] = None) -> str:
         normalized = (text or "").strip()
         if not normalized:
-            raise AppError(code="TEXT_REQUIRED", message="Text message cannot be empty", status_code=400)
+            raise AppError(
+                code="TEXT_REQUIRED",
+                message="Text message cannot be empty",
+                status_code=400,
+            )
         if len(normalized) > MAX_TEXT_LENGTH:
-            raise AppError(code="TEXT_TOO_LONG", message="Text message is too long", status_code=400)
+            raise AppError(
+                code="TEXT_TOO_LONG",
+                message="Text message is too long",
+                status_code=400,
+            )
         return normalized
 
     async def send_text_message(
@@ -274,8 +260,8 @@ class MessagesService:
         sender_id: str,
         receiver_id: str,
         text: str,
-            reply_mode: ReplyMode | None = None,
-            reply_to_message_id: str | None = None,
+        reply_mode: ReplyMode | None = None,
+        reply_to_message_id: str | None = None,
     ) -> SendMessageResult:
         if self.pings_service is not None:
             await self.pings_service.ensure_can_message(
@@ -283,9 +269,11 @@ class MessagesService:
                 receiver_id=receiver_id,
             )
 
-        normalized_reply_mode, normalized_reply_to_message_id = self._normalize_reply_fields(
-            reply_mode=reply_mode,
-            reply_to_message_id=reply_to_message_id,
+        normalized_reply_mode, normalized_reply_to_message_id = (
+            self._normalize_reply_fields(
+                reply_mode=reply_mode,
+                reply_to_message_id=reply_to_message_id,
+            )
         )
 
         return await self._create_outgoing_message(
@@ -298,15 +286,15 @@ class MessagesService:
         )
 
     async def _create_outgoing_message(
-            self,
-            *,
-            sender_id: str,
-            receiver_id: str,
-            message_type: str,
-            text: str | None = None,
-            media: dict[str, Any] | None = None,
-            reply_mode: ReplyMode | None = None,
-            reply_to_message_id: str | None = None,
+        self,
+        *,
+        sender_id: str,
+        receiver_id: str,
+        message_type: str,
+        text: str | None = None,
+        media: dict[str, Any] | None = None,
+        reply_mode: ReplyMode | None = None,
+        reply_to_message_id: str | None = None,
     ) -> SendMessageResult:
         if reply_mode == "quote":
             doc = await self.repo.create_quote_reply(
@@ -360,7 +348,9 @@ class MessagesService:
         )
         return to_message_doc(doc)
 
-    async def mark_conversation_read(self, *, receiver_id: str, peer_user_id: str) -> int:
+    async def mark_conversation_read(
+        self, *, receiver_id: str, peer_user_id: str
+    ) -> int:
         return await self.repo.mark_conversation_read_for_receiver(
             receiver_id=receiver_id,
             peer_user_id=peer_user_id,
@@ -369,14 +359,20 @@ class MessagesService:
     async def edit_text_message(self, *, message_id: str, sender_id: str, text: str):
         existing = await self.repo.get_by_id(message_id=message_id)
         if not existing:
-            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
 
         created_at = existing["created_at"]
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=UTC)
 
         if datetime.now(UTC) - created_at > timedelta(minutes=EDIT_WINDOW_MINUTES):
-            raise AppError(code="EDIT_WINDOW_EXPIRED", message="Edit window expired", status_code=400)
+            raise AppError(
+                code="EDIT_WINDOW_EXPIRED",
+                message="Edit window expired",
+                status_code=400,
+            )
 
         doc = await self.repo.edit_text_message(
             message_id=message_id,
@@ -388,12 +384,16 @@ class MessagesService:
     async def delete_message(self, *, message_id: str, actor_user_id: str):
         existing = await self.repo.get_by_id(message_id=message_id)
         if not existing:
-            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
 
         owner_user_id = str(existing["sender_id"])
         receiver_user_id = str(existing["receiver_id"])
         if actor_user_id not in {owner_user_id, receiver_user_id}:
-            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
 
         if actor_user_id == owner_user_id:
             deleted = await self.repo.hard_delete_owned_message(
@@ -438,12 +438,12 @@ class MessagesService:
         )
 
     async def get_history(
-            self,
-            *,
-            user_id: str,
-            peer_user_id: str,
-            limit: int = 20,
-            cursor: Optional[str] = None,
+        self,
+        *,
+        user_id: str,
+        peer_user_id: str,
+        limit: int = 20,
+        cursor: Optional[str] = None,
     ):
         docs, next_cursor = await self.repo.list_history(
             user_id=user_id,
@@ -455,10 +455,10 @@ class MessagesService:
         return items, next_cursor
 
     async def get_thread(
-            self,
-            *,
-            message_id: str,
-            user_id: str,
+        self,
+        *,
+        message_id: str,
+        user_id: str,
     ) -> list[MessageDoc]:
         docs = await self.repo.load_thread_messages(
             message_id=message_id,
@@ -467,10 +467,10 @@ class MessagesService:
         return [to_message_doc(doc) for doc in docs]
 
     async def get_thread_summary(
-            self,
-            *,
-            message_id: str,
-            user_id: str,
+        self,
+        *,
+        message_id: str,
+        user_id: str,
     ) -> ThreadSummary:
         doc = await self.repo.load_thread_summary(
             message_id=message_id,
@@ -479,11 +479,11 @@ class MessagesService:
         return to_thread_summary(doc)
 
     async def add_reaction(
-            self,
-            *,
-            message_id: str,
-            user_id: str,
-            emoji: str,
+        self,
+        *,
+        message_id: str,
+        user_id: str,
+        emoji: str,
     ) -> MessageDoc:
         doc = await self.repo.add_or_toggle_grouped_reaction(
             message_id=message_id,
@@ -493,11 +493,11 @@ class MessagesService:
         return to_message_doc(doc)
 
     async def remove_reaction(
-            self,
-            *,
-            message_id: str,
-            user_id: str,
-            emoji: str,
+        self,
+        *,
+        message_id: str,
+        user_id: str,
+        emoji: str,
     ) -> MessageDoc:
         doc = await self.repo.remove_grouped_reaction(
             message_id=message_id,
@@ -526,15 +526,22 @@ class MessagesService:
         items: list[ConversationItem] = []
         peer_user_ids = list(
             dict.fromkeys(
-                str(row["last_message"]["receiver_id"]) if str(row["last_message"]["sender_id"]) == user_id
-                else str(row["last_message"]["sender_id"])
+                (
+                    str(row["last_message"]["receiver_id"])
+                    if str(row["last_message"]["sender_id"]) == user_id
+                    else str(row["last_message"]["sender_id"])
+                )
                 for row in rows
             )
         )
 
         users_task = asyncio.create_task(users_repo.find_by_ids(peer_user_ids))
-        presence_task = asyncio.create_task(self._get_presence_map(presence=presence, user_ids=peer_user_ids))
-        contact_states_task = asyncio.create_task(self._get_contact_states(user_id=user_id, peer_user_ids=peer_user_ids))
+        presence_task = asyncio.create_task(
+            self._get_presence_map(presence=presence, user_ids=peer_user_ids)
+        )
+        contact_states_task = asyncio.create_task(
+            self._get_contact_states(user_id=user_id, peer_user_ids=peer_user_ids)
+        )
         users_by_id, online_by_id, contact_states = await asyncio.gather(
             users_task,
             presence_task,
@@ -555,14 +562,10 @@ class MessagesService:
                 ContactState(can_ping=True, chat_allowed=False, ping_status="none"),
             )
 
-            media = msg.get("media")
-            if media is None and msg.get("audio") is not None:
-                media = msg.get("audio")
-
             avatar = build_user_avatar_payload(peer.get("avatar")) if peer else None
 
             text = msg.get("text")
-            msg_type = msg.get("type") or msg.get("message_type") or "voice"
+            msg_type, media = normalize_message_record(msg)
 
             items.append(
                 ConversationItem(
@@ -592,14 +595,20 @@ class MessagesService:
 
         return items, next_cursor
 
-    async def _get_presence_map(self, *, presence, user_ids: list[str]) -> dict[str, bool]:
+    async def _get_presence_map(
+        self, *, presence, user_ids: list[str]
+    ) -> dict[str, bool]:
         if not user_ids:
             return {}
 
-        statuses = await asyncio.gather(*(presence.is_online(user_id) for user_id in user_ids))
+        statuses = await asyncio.gather(
+            *(presence.is_online(user_id) for user_id in user_ids)
+        )
         return dict(zip(user_ids, statuses))
 
-    async def _get_contact_states(self, *, user_id: str, peer_user_ids: list[str]) -> dict[str, ContactState]:
+    async def _get_contact_states(
+        self, *, user_id: str, peer_user_ids: list[str]
+    ) -> dict[str, ContactState]:
         if self.pings_service is None or not peer_user_ids:
             return {}
         return await self.pings_service.get_contact_states(

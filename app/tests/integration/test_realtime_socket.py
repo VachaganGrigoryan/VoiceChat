@@ -90,10 +90,13 @@ def _media_upload(
     files = {
         "file": (filename, BytesIO(content), mime),
     }
+    message_type = "file" if kind == "file" else "media"
     data: dict[str, str] = {
-        "type": kind,
+        "type": message_type,
         "receiver_id": receiver_id,
     }
+    if message_type == "media":
+        data["media_kind"] = kind
     if text is not None:
         data["text"] = text
     if duration_ms is not None:
@@ -141,7 +144,9 @@ async def test_socket_connect_and_voice_delivery(live_client):
     assert health.status_code == 200
 
     sender, sender_tokens = await _create_verified_user_and_tokens("sender@test.com")
-    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver@test.com")
+    receiver, receiver_tokens = await _create_verified_user_and_tokens(
+        "receiver@test.com"
+    )
 
     sender_id = str(sender["_id"])
     receiver_id = str(receiver["_id"])
@@ -214,8 +219,9 @@ async def test_socket_connect_and_voice_delivery(live_client):
         assert message["id"] == message_id
         assert message["sender_id"] == sender_id
         assert message["receiver_id"] == receiver_id
-        assert message["type"] == "voice"
+        assert message["type"] == "media"
         assert message["media"] is not None
+        assert message["media"]["kind"] == "voice"
         assert message["media"]["mime"] == "audio/mpeg"
 
         await receiver_sio.emit("message_delivered", {"message_id": message_id})
@@ -226,7 +232,8 @@ async def test_socket_connect_and_voice_delivery(live_client):
         status_payload = sender_status_events[-1]
         assert status_payload["message_id"] == message_id
         assert status_payload["status"] == "delivered"
-        assert status_payload["message_type"] == "voice"
+        assert status_payload["message_type"] == "media"
+        assert status_payload["media_kind"] == "voice"
 
     finally:
         if sender_sio.connected:
@@ -245,8 +252,12 @@ async def test_socket_text_message_delivery_and_read(live_client):
 
     assert health.status_code == 200
 
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-text@test.com")
-    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-text@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-text@test.com"
+    )
+    receiver, receiver_tokens = await _create_verified_user_and_tokens(
+        "receiver-text@test.com"
+    )
 
     sender_id = str(sender["_id"])
     receiver_id = str(receiver["_id"])
@@ -321,8 +332,12 @@ async def test_socket_image_message_delivery(live_client):
 
     assert health.status_code == 200
 
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-image@test.com")
-    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-image@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-image@test.com"
+    )
+    receiver, receiver_tokens = await _create_verified_user_and_tokens(
+        "receiver-image@test.com"
+    )
 
     receiver_id = str(receiver["_id"])
     await _grant_chat_permission(str(sender["_id"]), receiver_id)
@@ -352,18 +367,20 @@ async def test_socket_image_message_delivery(live_client):
         assert resp.status_code == 201, resp.text
 
         body = resp.json()["data"]
-        assert body["type"] == "image"
+        assert body["type"] == "media"
         assert body["text"] == "caption"
         assert body["media"] is not None
+        assert body["media"]["kind"] == "image"
         assert body["media"]["mime"] == "image/png"
 
         await asyncio.wait_for(receiver_msg_event.wait(), timeout=5)
         message = receiver_events[-1].get("message", receiver_events[-1])
 
         assert message["id"] == body["id"]
-        assert message["type"] == "image"
+        assert message["type"] == "media"
         assert message["text"] == "caption"
         assert message["media"] is not None
+        assert message["media"]["kind"] == "image"
         assert message["media"]["mime"] == "image/png"
 
     finally:
@@ -375,7 +392,7 @@ async def test_socket_image_message_delivery(live_client):
 
 
 @pytest.mark.asyncio
-async def test_socket_sticker_message_delivery(live_client):
+async def test_socket_audio_message_delivery(live_client):
     try:
         health = await live_client.get("/health/live")
     except Exception:
@@ -383,8 +400,12 @@ async def test_socket_sticker_message_delivery(live_client):
 
     assert health.status_code == 200
 
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-sticker@test.com")
-    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-sticker@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-audio@test.com"
+    )
+    receiver, receiver_tokens = await _create_verified_user_and_tokens(
+        "receiver-audio@test.com"
+    )
 
     receiver_id = str(receiver["_id"])
     await _grant_chat_permission(str(sender["_id"]), receiver_id)
@@ -404,26 +425,28 @@ async def test_socket_sticker_message_delivery(live_client):
         resp = await _post_media(
             live_client,
             access_token=sender_tokens["access_token"],
-            kind="sticker",
+            kind="audio",
             receiver_id=receiver_id,
-            filename="sticker.webp",
+            filename="track.mp3",
             content=b"x" * 1024,
-            mime="image/webp",
+            mime="audio/mpeg",
         )
         assert resp.status_code == 201, resp.text
 
         body = resp.json()["data"]
-        assert body["type"] == "sticker"
+        assert body["type"] == "media"
         assert body["media"] is not None
-        assert body["media"]["mime"] == "image/webp"
+        assert body["media"]["kind"] == "audio"
+        assert body["media"]["mime"] == "audio/mpeg"
 
         await asyncio.wait_for(receiver_msg_event.wait(), timeout=5)
         message = receiver_events[-1].get("message", receiver_events[-1])
 
         assert message["id"] == body["id"]
-        assert message["type"] == "sticker"
+        assert message["type"] == "media"
         assert message["media"] is not None
-        assert message["media"]["mime"] == "image/webp"
+        assert message["media"]["kind"] == "audio"
+        assert message["media"]["mime"] == "audio/mpeg"
 
     finally:
         if sender_sio.connected:
@@ -442,8 +465,12 @@ async def test_socket_thread_and_reaction_events_are_emitted_to_both_users(live_
 
     assert health.status_code == 200
 
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-thread-events@test.com")
-    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-thread-events@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-thread-events@test.com"
+    )
+    receiver, receiver_tokens = await _create_verified_user_and_tokens(
+        "receiver-thread-events@test.com"
+    )
 
     sender_id = str(sender["_id"])
     receiver_id = str(receiver["_id"])
@@ -565,8 +592,12 @@ async def test_socket_video_message_delivery(live_client):
 
     assert health.status_code == 200
 
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-video@test.com")
-    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-video@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-video@test.com"
+    )
+    receiver, receiver_tokens = await _create_verified_user_and_tokens(
+        "receiver-video@test.com"
+    )
 
     receiver_id = str(receiver["_id"])
     await _grant_chat_permission(str(sender["_id"]), receiver_id)
@@ -596,18 +627,20 @@ async def test_socket_video_message_delivery(live_client):
         assert resp.status_code == 201, resp.text
 
         body = resp.json()["data"]
-        assert body["type"] == "video"
+        assert body["type"] == "media"
         assert body["text"] == "video caption"
         assert body["media"] is not None
+        assert body["media"]["kind"] == "video"
         assert body["media"]["mime"] == "video/mp4"
 
         await asyncio.wait_for(receiver_msg_event.wait(), timeout=5)
         message = receiver_events[-1].get("message", receiver_events[-1])
 
         assert message["id"] == body["id"]
-        assert message["type"] == "video"
+        assert message["type"] == "media"
         assert message["text"] == "video caption"
         assert message["media"] is not None
+        assert message["media"]["kind"] == "video"
         assert message["media"]["mime"] == "video/mp4"
 
     finally:
@@ -627,7 +660,9 @@ async def test_socket_typing_and_send_message_require_chat_permission(live_clien
 
     assert health.status_code == 200
 
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-no-chat@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-no-chat@test.com"
+    )
     receiver, _ = await _create_verified_user_and_tokens("receiver-no-chat@test.com")
 
     sender_sio = await _connect_socket(sender_tokens["access_token"])
