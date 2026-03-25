@@ -12,13 +12,6 @@ from app.modules.messages.schemas import (
     ThreadSummary,
 )
 
-LEGACY_MEDIA_KIND_BY_TYPE = {
-    "voice": "voice",
-    "image": "image",
-    "video": "video",
-    "sticker": "image",
-}
-
 
 def _id(x):
     if isinstance(x, ObjectId):
@@ -26,80 +19,40 @@ def _id(x):
     return str(x)
 
 
-def _legacy_media_kind(message_type: Any) -> str | None:
-    if not isinstance(message_type, str):
-        return None
-    return LEGACY_MEDIA_KIND_BY_TYPE.get(message_type)
+def _normalize_message_type(message_type: Any) -> str:
+    if message_type in {"text", "media", "file"}:
+        return message_type
+    return "text"
 
 
-def _normalize_preview_type(
+def _normalize_media(
     *,
-    message_type: Any,
-    media_kind: Any = None,
-) -> tuple[str, str | None]:
-    legacy_kind = _legacy_media_kind(message_type)
-    if legacy_kind is not None:
-        return "media", legacy_kind
+    message_type: str,
+    media: Any,
+) -> dict[str, Any] | None:
+    if not isinstance(media, dict):
+        return None
 
-    if message_type == "emoji":
-        return "text", None
+    normalized_media = dict(media)
+    if message_type == "file" and not normalized_media.get("kind"):
+        normalized_media["kind"] = "file"
 
-    if message_type == "media":
-        return "media", media_kind if isinstance(media_kind, str) else None
-
-    if message_type == "file":
-        return "file", "file"
-
-    if message_type == "text":
-        return "text", None
-
-    if isinstance(media_kind, str) and media_kind == "file":
-        return "file", "file"
-
-    return "text", None
-
-
-def _infer_media_kind_from_mime(mime: Any) -> str:
-    if not isinstance(mime, str):
-        return "file"
-
-    normalized = mime.lower().strip()
-    if normalized.startswith("audio/"):
-        return "audio"
-    if normalized.startswith("image/"):
-        return "image"
-    if normalized.startswith("video/"):
-        return "video"
-    return "file"
+    normalized_media["url"] = build_storage_url(
+        normalized_media["storage"],
+        normalized_media["key"],
+    )
+    return normalized_media
 
 
 def normalize_message_record(
     message: dict[str, Any],
 ) -> tuple[str, dict[str, Any] | None]:
-    media = message.get("media")
-    normalized_media = dict(media) if isinstance(media, dict) else None
-
-    message_type = message.get("type")
-    normalized_type, normalized_kind = _normalize_preview_type(
+    message_type = _normalize_message_type(message.get("type"))
+    media = _normalize_media(
         message_type=message_type,
-        media_kind=normalized_media.get("kind") if normalized_media else None,
+        media=message.get("media"),
     )
-
-    if normalized_media is not None:
-        if normalized_type == "media":
-            normalized_kind = normalized_kind or _infer_media_kind_from_mime(
-                normalized_media.get("mime")
-            )
-        elif normalized_type == "file":
-            normalized_kind = "file"
-
-        normalized_media["kind"] = normalized_kind or "file"
-        normalized_media["url"] = build_storage_url(
-            normalized_media["storage"],
-            normalized_media["key"],
-        )
-
-    return normalized_type, normalized_media
+    return message_type, media
 
 
 def message_is_deleted(m: dict[str, Any]) -> bool:
@@ -114,15 +67,12 @@ def to_message_doc(m: dict[str, Any]) -> MessageDoc:
 
     reply_preview = m.get("reply_preview")
     if reply_preview is not None:
-        preview_type, preview_media_kind = _normalize_preview_type(
-            message_type=reply_preview.get("type", "text"),
-            media_kind=reply_preview.get("media_kind"),
-        )
+        preview_type = _normalize_message_type(reply_preview.get("type"))
         reply_preview = ReplyPreview(
             message_id=str(reply_preview["message_id"]),
             sender_id=_id(reply_preview["sender_id"]),
             type=preview_type,
-            media_kind=preview_media_kind,
+            media_kind=reply_preview.get("media_kind"),
             text=reply_preview.get("text"),
             is_deleted=bool(reply_preview.get("is_deleted", False)),
         )
