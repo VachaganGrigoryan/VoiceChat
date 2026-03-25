@@ -8,16 +8,36 @@ from starlette.requests import Request
 
 from app.core.deps import get_sio
 from app.core.errors.openapi import build_error_responses
-from app.core.http import ok, PaginationMeta, SuccessResponse, PaginatedResponse, ok_paginated
+from app.core.http import (
+    ok,
+    PaginationMeta,
+    SuccessResponse,
+    PaginatedResponse,
+    ok_paginated,
+)
 from app.core.rate_limit import rate_limit
 from app.core.security import require_verified_user
 from app.modules.messages.dependencies import get_messages_service
-from app.modules.messages.schemas import MessageDoc, SendTextMessageRequest, ConversationItem, EditMessageRequest, \
-    DeleteMessageResponse, AddReactionRequest, ThreadSummary
+from app.modules.messages.schemas import (
+    MessageDoc,
+    SendTextMessageRequest,
+    ConversationItem,
+    EditMessageRequest,
+    DeleteMessageResponse,
+    AddReactionRequest,
+    ThreadSummary,
+)
 from app.modules.messages.service import MessagesService
-from app.modules.realtime import emit_to_user, emit_message_to_receiver, emit_message_status_to_user, \
-    emit_message_edited, \
-    emit_message_deleted, emit_message_reacted, emit_thread_reply_created, emit_thread_summary_updated
+from app.modules.realtime import (
+    emit_to_user,
+    emit_message_to_receiver,
+    emit_message_status_to_user,
+    emit_message_edited,
+    emit_message_deleted,
+    emit_message_reacted,
+    emit_thread_reply_created,
+    emit_thread_summary_updated,
+)
 
 router = APIRouter(
     prefix="/messages",
@@ -35,12 +55,13 @@ router = APIRouter(
 async def upload_media(
     request: Request,
     sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-    type: Literal["voice", "image", "sticker", "video"] = Form(...),
+    type: Literal["media", "file"] = Form(...),
+    media_kind: Optional[Literal["voice", "audio", "image", "video"]] = Form(None),
     receiver_id: str = Form(...),
     duration_ms: Optional[int] = Form(None),
     text: Optional[str] = Form(None),
-        reply_mode: Optional[Literal["quote", "thread"]] = Form(None),
-        reply_to_message_id: Optional[str] = Form(None),
+    reply_mode: Optional[Literal["quote", "thread"]] = Form(None),
+    reply_to_message_id: Optional[str] = Form(None),
     file: UploadFile = File(...),
     user: dict = Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
@@ -49,6 +70,7 @@ async def upload_media(
         sender_id=str(user["_id"]),
         receiver_id=receiver_id,
         message_type=type,
+        media_kind=media_kind,
         file=file,
         text=text,
         duration_ms=duration_ms,
@@ -200,10 +222,10 @@ async def conversations(
     response_model=SuccessResponse[dict],
 )
 async def mark_conversation_read(
-        request: Request,
-        user_id: str,
-        user: dict = Depends(require_verified_user),
-        service: MessagesService = Depends(get_messages_service),
+    request: Request,
+    user_id: str,
+    user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
     updated = await service.mark_conversation_read(
         receiver_id=str(user["_id"]),
@@ -217,10 +239,10 @@ async def mark_conversation_read(
     response_model=SuccessResponse[list[MessageDoc]],
 )
 async def get_thread(
-        request: Request,
-        message_id: str,
-        user: dict = Depends(require_verified_user),
-        service: MessagesService = Depends(get_messages_service),
+    request: Request,
+    message_id: str,
+    user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
     items = await service.get_thread(
         message_id=message_id,
@@ -234,10 +256,10 @@ async def get_thread(
     response_model=SuccessResponse[ThreadSummary],
 )
 async def get_thread_summary(
-        request: Request,
-        message_id: str,
-        user: dict = Depends(require_verified_user),
-        service: MessagesService = Depends(get_messages_service),
+    request: Request,
+    message_id: str,
+    user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
     summary = await service.get_thread_summary(
         message_id=message_id,
@@ -251,12 +273,12 @@ async def get_thread_summary(
     response_model=SuccessResponse[MessageDoc],
 )
 async def add_reaction(
-        request: Request,
-        message_id: str,
-        body: AddReactionRequest,
-        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-        user: dict = Depends(require_verified_user),
-        service: MessagesService = Depends(get_messages_service),
+    request: Request,
+    message_id: str,
+    body: AddReactionRequest,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
     message = await service.add_reaction(
         message_id=message_id,
@@ -270,7 +292,9 @@ async def add_reaction(
         payload={
             "message_id": message.id,
             "conversation_id": message.conversation_id,
-            "reactions": [reaction.model_dump(mode="json") for reaction in message.reactions],
+            "reactions": [
+                reaction.model_dump(mode="json") for reaction in message.reactions
+            ],
             "updated_at": message.updated_at,
         },
     )
@@ -282,12 +306,12 @@ async def add_reaction(
     response_model=SuccessResponse[MessageDoc],
 )
 async def remove_reaction(
-        request: Request,
-        message_id: str,
-        emoji: str,
-        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-        user: dict = Depends(require_verified_user),
-        service: MessagesService = Depends(get_messages_service),
+    request: Request,
+    message_id: str,
+    emoji: str,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
     message = await service.remove_reaction(
         message_id=message_id,
@@ -301,7 +325,9 @@ async def remove_reaction(
         payload={
             "message_id": message.id,
             "conversation_id": message.conversation_id,
-            "reactions": [reaction.model_dump(mode="json") for reaction in message.reactions],
+            "reactions": [
+                reaction.model_dump(mode="json") for reaction in message.reactions
+            ],
             "updated_at": message.updated_at,
         },
     )
@@ -313,11 +339,11 @@ async def remove_reaction(
     response_model=SuccessResponse[MessageDoc],
 )
 async def mark_delivered(
-        request: Request,
-        message_id: str,
-        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-        user: dict = Depends(require_verified_user),
-        service: MessagesService = Depends(get_messages_service),
+    request: Request,
+    message_id: str,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
     message = await service.mark_delivered(
         message_id=message_id,
@@ -341,11 +367,11 @@ async def mark_delivered(
     response_model=SuccessResponse[MessageDoc],
 )
 async def mark_read(
-        request: Request,
-        message_id: str,
-        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-        user: dict = Depends(require_verified_user),
-        service: MessagesService = Depends(get_messages_service),
+    request: Request,
+    message_id: str,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
     message = await service.mark_read(
         message_id=message_id,
@@ -370,12 +396,12 @@ async def mark_read(
     response_model=SuccessResponse[MessageDoc],
 )
 async def edit_message(
-        request: Request,
-        message_id: str,
-        body: EditMessageRequest,
-        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-        user: dict = Depends(require_verified_user),
-        service: MessagesService = Depends(get_messages_service),
+    request: Request,
+    message_id: str,
+    body: EditMessageRequest,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
     message = await service.edit_text_message(
         message_id=message_id,
@@ -396,11 +422,11 @@ async def edit_message(
     response_model=SuccessResponse[DeleteMessageResponse],
 )
 async def delete_message(
-        request: Request,
-        message_id: str,
-        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-        user: dict = Depends(require_verified_user),
-        service: MessagesService = Depends(get_messages_service),
+    request: Request,
+    message_id: str,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
 ):
     outcome = await service.delete_message(
         message_id=message_id,

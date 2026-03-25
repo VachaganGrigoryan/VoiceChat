@@ -5,13 +5,15 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-MessageType = Literal["voice", "text", "image", "emoji", "sticker", "video"]
+MessageType = Literal["text", "media", "file"]
+MediaKind = Literal["voice", "audio", "image", "video", "file"]
 MessageStatus = Literal["sent", "delivered", "read"]
 StorageProvider = Literal["local", "s3"]
 ReplyMode = Literal["quote", "thread"]
 
 
 class MediaMeta(BaseModel):
+    kind: MediaKind
     storage: StorageProvider
     key: str
     url: str
@@ -24,6 +26,7 @@ class ReplyPreview(BaseModel):
     message_id: str
     sender_id: str
     type: MessageType
+    media_kind: Optional[MediaKind] = None
     text: Optional[str] = None
     is_deleted: bool = False
 
@@ -134,9 +137,9 @@ class ConversationPeer(BaseModel):
 
 class ConversationLastMessage(BaseModel):
     id: str
-    type: str
+    type: MessageType
     text: str | None = None
-    media: dict | None = None
+    media: MediaMeta | None = None
     status: MessageStatus = "sent"
     created_at: datetime
 

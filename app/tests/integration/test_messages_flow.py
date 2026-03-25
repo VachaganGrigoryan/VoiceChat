@@ -1,7 +1,11 @@
 import pytest
 
-from app.tests.integration.test_realtime_socket import _create_verified_user_and_tokens, _grant_chat_permission, \
-    _post_media
+from app.tests.integration.test_realtime_socket import (
+    _create_verified_user_and_tokens,
+    _grant_chat_permission,
+    _media_upload,
+    _post_media,
+)
 
 
 def _auth_headers(access_token: str) -> dict[str, str]:
@@ -17,7 +21,9 @@ async def test_media_upload_rejects_unsupported_type(live_client):
 
     assert health.status_code == 200
 
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-bad-type@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-bad-type@test.com"
+    )
     receiver, _ = await _create_verified_user_and_tokens("receiver-bad-type@test.com")
     await _grant_chat_permission(str(sender["_id"]), str(receiver["_id"]))
 
@@ -37,7 +43,7 @@ async def test_media_upload_rejects_unsupported_type(live_client):
 
 
 @pytest.mark.asyncio
-async def test_sticker_upload_rejects_too_large(live_client):
+async def test_file_upload_accepts_document_and_archive(live_client):
     try:
         health = await live_client.get("/health/live")
     except Exception:
@@ -45,25 +51,129 @@ async def test_sticker_upload_rejects_too_large(live_client):
 
     assert health.status_code == 200
 
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-big-sticker@test.com")
-    receiver, _ = await _create_verified_user_and_tokens("receiver-big-sticker@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-file@test.com"
+    )
+    receiver, _ = await _create_verified_user_and_tokens("receiver-file@test.com")
     await _grant_chat_permission(str(sender["_id"]), str(receiver["_id"]))
 
-    too_big = b"x" * (2 * 1024 * 1024 + 1)
-
-    resp = await _post_media(
+    document_resp = await _post_media(
         live_client,
         access_token=sender_tokens["access_token"],
-        kind="sticker",
+        kind="file",
         receiver_id=str(receiver["_id"]),
-        filename="sticker.webp",
-        content=too_big,
-        mime="image/webp",
+        filename="notes.pdf",
+        content=b"fake-pdf",
+        mime="application/pdf",
     )
+    assert document_resp.status_code == 201, document_resp.text
+    document_body = document_resp.json()["data"]
+    assert document_body["type"] == "file"
+    assert document_body["media"]["kind"] == "file"
+    assert document_body["media"]["mime"] == "application/pdf"
 
-    assert resp.status_code == 413, resp.text
-    body = resp.json()
-    assert body["error"]["code"] == "FILE_TOO_LARGE"
+    archive_resp = await _post_media(
+        live_client,
+        access_token=sender_tokens["access_token"],
+        kind="file",
+        receiver_id=str(receiver["_id"]),
+        filename="bundle.zip",
+        content=b"PK\x03\x04archive",
+        mime="application/zip",
+    )
+    assert archive_resp.status_code == 201, archive_resp.text
+    archive_body = archive_resp.json()["data"]
+    assert archive_body["type"] == "file"
+    assert archive_body["media"]["kind"] == "file"
+    assert archive_body["media"]["mime"] == "application/zip"
+
+
+@pytest.mark.asyncio
+async def test_file_upload_accepts_previewable_mimes_as_generic_attachments(
+    inprocess_client,
+):
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-file-preview@test.com"
+    )
+    receiver, _ = await _create_verified_user_and_tokens(
+        "receiver-file-preview@test.com"
+    )
+    await _grant_chat_permission(str(sender["_id"]), str(receiver["_id"]))
+
+    image_resp = await _post_media(
+        inprocess_client,
+        access_token=sender_tokens["access_token"],
+        kind="file",
+        receiver_id=str(receiver["_id"]),
+        filename="poster.png",
+        content=b"fake-image",
+        mime="image/png",
+    )
+    assert image_resp.status_code == 201, image_resp.text
+    image_body = image_resp.json()["data"]
+    assert image_body["type"] == "file"
+    assert image_body["media"]["kind"] == "file"
+    assert image_body["media"]["mime"] == "image/png"
+
+    audio_resp = await _post_media(
+        inprocess_client,
+        access_token=sender_tokens["access_token"],
+        kind="file",
+        receiver_id=str(receiver["_id"]),
+        filename="track.mp3",
+        content=b"fake-audio",
+        mime="audio/mpeg",
+    )
+    assert audio_resp.status_code == 201, audio_resp.text
+    audio_body = audio_resp.json()["data"]
+    assert audio_body["type"] == "file"
+    assert audio_body["media"]["kind"] == "file"
+    assert audio_body["media"]["mime"] == "audio/mpeg"
+
+
+@pytest.mark.asyncio
+async def test_media_upload_validates_type_and_media_kind_contract(inprocess_client):
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-media-kind@test.com"
+    )
+    receiver, _ = await _create_verified_user_and_tokens("receiver-media-kind@test.com")
+    await _grant_chat_permission(str(sender["_id"]), str(receiver["_id"]))
+
+    missing_kind_data, missing_kind_files = _media_upload(
+        kind="image",
+        receiver_id=str(receiver["_id"]),
+        filename="photo.png",
+        content=b"fake-image",
+        mime="image/png",
+    )
+    missing_kind_data.pop("media_kind", None)
+
+    missing_kind_resp = await inprocess_client.post(
+        "/messages/media",
+        headers=_auth_headers(sender_tokens["access_token"]),
+        data=missing_kind_data,
+        files=missing_kind_files,
+    )
+    assert missing_kind_resp.status_code == 400, missing_kind_resp.text
+    assert missing_kind_resp.json()["error"]["code"] == "INVALID_MEDIA_KIND"
+
+    invalid_file_data, invalid_file_files = _media_upload(
+        kind="file",
+        receiver_id=str(receiver["_id"]),
+        filename="notes.pdf",
+        content=b"fake-pdf",
+        mime="application/pdf",
+    )
+    invalid_file_data["media_kind"] = "image"
+
+    invalid_file_resp = await inprocess_client.post(
+        "/messages/media",
+        headers=_auth_headers(sender_tokens["access_token"]),
+        data=invalid_file_data,
+        files=invalid_file_files,
+    )
+    assert invalid_file_resp.status_code == 400, invalid_file_resp.text
+    assert invalid_file_resp.json()["error"]["code"] == "INVALID_MEDIA_KIND"
 
 
 @pytest.mark.asyncio
@@ -75,7 +185,9 @@ async def test_send_text_rejects_empty(live_client):
 
     assert health.status_code == 200
 
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-empty-text@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-empty-text@test.com"
+    )
     receiver, _ = await _create_verified_user_and_tokens("receiver-empty-text@test.com")
     await _grant_chat_permission(str(sender["_id"]), str(receiver["_id"]))
 
@@ -102,8 +214,12 @@ async def test_conversations_endpoint_returns_recent_items(live_client):
 
     assert health.status_code == 200
 
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-conversations@test.com")
-    receiver, _ = await _create_verified_user_and_tokens("receiver-conversations@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-conversations@test.com"
+    )
+    receiver, _ = await _create_verified_user_and_tokens(
+        "receiver-conversations@test.com"
+    )
 
     receiver_id = str(receiver["_id"])
     await _grant_chat_permission(str(sender["_id"]), receiver_id)
@@ -150,7 +266,9 @@ async def test_message_history_new_route_and_cursor(live_client):
 
     assert health.status_code == 200
 
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-history@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-history@test.com"
+    )
     receiver, _ = await _create_verified_user_and_tokens("receiver-history@test.com")
 
     receiver_id = str(receiver["_id"])
@@ -201,7 +319,9 @@ async def test_conversations_endpoint_cursor(live_client):
 
     assert health.status_code == 200
 
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-conv-cursor@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-conv-cursor@test.com"
+    )
     receiver_a, _ = await _create_verified_user_and_tokens("receiver-a@test.com")
     receiver_b, _ = await _create_verified_user_and_tokens("receiver-b@test.com")
 
@@ -240,8 +360,12 @@ async def test_conversations_endpoint_cursor(live_client):
 
 @pytest.mark.asyncio
 async def test_media_upload_validates_caption_and_duration(inprocess_client):
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-media-validate@test.com")
-    receiver, _ = await _create_verified_user_and_tokens("receiver-media-validate@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-media-validate@test.com"
+    )
+    receiver, _ = await _create_verified_user_and_tokens(
+        "receiver-media-validate@test.com"
+    )
     await _grant_chat_permission(str(sender["_id"]), str(receiver["_id"]))
 
     caption_resp = await _post_media(
@@ -272,6 +396,66 @@ async def test_media_upload_validates_caption_and_duration(inprocess_client):
 
 
 @pytest.mark.asyncio
+async def test_history_and_conversations_expose_normalized_media_shapes(
+    inprocess_client,
+):
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-normalized-media@test.com"
+    )
+    receiver, _ = await _create_verified_user_and_tokens(
+        "receiver-normalized-media@test.com"
+    )
+    receiver_id = str(receiver["_id"])
+    await _grant_chat_permission(str(sender["_id"]), receiver_id)
+
+    image_resp = await _post_media(
+        inprocess_client,
+        access_token=sender_tokens["access_token"],
+        kind="image",
+        receiver_id=receiver_id,
+        filename="photo.png",
+        content=b"fake-image",
+        mime="image/png",
+        text="inline preview",
+    )
+    assert image_resp.status_code == 201, image_resp.text
+
+    file_resp = await _post_media(
+        inprocess_client,
+        access_token=sender_tokens["access_token"],
+        kind="file",
+        receiver_id=receiver_id,
+        filename="bundle.zip",
+        content=b"PK\x03\x04archive",
+        mime="application/zip",
+    )
+    assert file_resp.status_code == 201, file_resp.text
+
+    history_resp = await inprocess_client.get(
+        f"/messages/conversations/{receiver_id}",
+        headers=_auth_headers(sender_tokens["access_token"]),
+    )
+    assert history_resp.status_code == 200, history_resp.text
+    history_items = history_resp.json()["data"]
+    assert [item["type"] for item in history_items[:2]] == ["file", "media"]
+    assert history_items[0]["media"]["kind"] == "file"
+    assert history_items[0]["media"]["mime"] == "application/zip"
+    assert history_items[1]["media"]["kind"] == "image"
+    assert history_items[1]["text"] == "inline preview"
+
+    conversations_resp = await inprocess_client.get(
+        "/messages/conversations?limit=10",
+        headers=_auth_headers(sender_tokens["access_token"]),
+    )
+    assert conversations_resp.status_code == 200, conversations_resp.text
+    conversation_item = conversations_resp.json()["data"][0]
+    assert conversation_item["peer_user"]["id"] == receiver_id
+    assert conversation_item["last_message"]["type"] == "file"
+    assert conversation_item["last_message"]["media"]["kind"] == "file"
+    assert conversation_item["last_message"]["media"]["mime"] == "application/zip"
+
+
+@pytest.mark.asyncio
 async def test_delete_message_hard_deletes_owned_media_and_hides_for_peer(live_client):
     try:
         health = await live_client.get("/health/live")
@@ -280,8 +464,12 @@ async def test_delete_message_hard_deletes_owned_media_and_hides_for_peer(live_c
 
     assert health.status_code == 200
 
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-delete@test.com")
-    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-delete@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-delete@test.com"
+    )
+    receiver, receiver_tokens = await _create_verified_user_and_tokens(
+        "receiver-delete@test.com"
+    )
     sender_id = str(sender["_id"])
     receiver_id = str(receiver["_id"])
     await _grant_chat_permission(sender_id, receiver_id)
@@ -319,7 +507,9 @@ async def test_delete_message_hard_deletes_owned_media_and_hides_for_peer(live_c
         f"/messages/conversations/{receiver_id}",
         headers=_auth_headers(sender_tokens["access_token"]),
     )
-    assert sender_history_after_owner_delete.status_code == 200, sender_history_after_owner_delete.text
+    assert (
+        sender_history_after_owner_delete.status_code == 200
+    ), sender_history_after_owner_delete.text
     assert sender_history_after_owner_delete.json()["data"] == []
 
     peer_message_resp = await live_client.post(
@@ -369,8 +559,12 @@ async def test_edit_deleted_message_returns_not_found(live_client):
 
     assert health.status_code == 200
 
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-edit-deleted@test.com")
-    receiver, _ = await _create_verified_user_and_tokens("receiver-edit-deleted@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-edit-deleted@test.com"
+    )
+    receiver, _ = await _create_verified_user_and_tokens(
+        "receiver-edit-deleted@test.com"
+    )
     sender_id = str(sender["_id"])
     receiver_id = str(receiver["_id"])
     await _grant_chat_permission(sender_id, receiver_id)
@@ -402,9 +596,15 @@ async def test_edit_deleted_message_returns_not_found(live_client):
 
 
 @pytest.mark.asyncio
-async def test_quote_replies_stay_in_history_and_thread_replies_use_thread_endpoints(inprocess_client):
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-threads@test.com")
-    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-threads@test.com")
+async def test_quote_replies_stay_in_history_and_thread_replies_use_thread_endpoints(
+    inprocess_client,
+):
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-threads@test.com"
+    )
+    receiver, receiver_tokens = await _create_verified_user_and_tokens(
+        "receiver-threads@test.com"
+    )
     sender_id = str(sender["_id"])
     receiver_id = str(receiver["_id"])
     await _grant_chat_permission(sender_id, receiver_id)
@@ -487,8 +687,12 @@ async def test_quote_replies_stay_in_history_and_thread_replies_use_thread_endpo
 
 @pytest.mark.asyncio
 async def test_reactions_are_grouped_and_returned_in_history(inprocess_client):
-    sender, sender_tokens = await _create_verified_user_and_tokens("sender-reactions@test.com")
-    receiver, receiver_tokens = await _create_verified_user_and_tokens("receiver-reactions@test.com")
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "sender-reactions@test.com"
+    )
+    receiver, receiver_tokens = await _create_verified_user_and_tokens(
+        "receiver-reactions@test.com"
+    )
     sender_id = str(sender["_id"])
     receiver_id = str(receiver["_id"])
     await _grant_chat_permission(sender_id, receiver_id)
@@ -539,7 +743,9 @@ async def test_reactions_are_grouped_and_returned_in_history(inprocess_client):
     reactions = remove_sender_fire.json()["data"]["reactions"]
     assert len(reactions) == 2
 
-    remaining_fire = next(reaction for reaction in reactions if reaction["emoji"] == "🔥")
+    remaining_fire = next(
+        reaction for reaction in reactions if reaction["emoji"] == "🔥"
+    )
     assert remaining_fire["count"] == 1
     assert remaining_fire["user_ids"] == [receiver_id]
 
@@ -550,4 +756,11 @@ async def test_reactions_are_grouped_and_returned_in_history(inprocess_client):
     assert history_resp.status_code == 200, history_resp.text
     history_message = history_resp.json()["data"][0]
     assert len(history_message["reactions"]) == 2
-    assert next(reaction for reaction in history_message["reactions"] if reaction["emoji"] == "🔥")["count"] == 1
+    assert (
+        next(
+            reaction
+            for reaction in history_message["reactions"]
+            if reaction["emoji"] == "🔥"
+        )["count"]
+        == 1
+    )

@@ -5,13 +5,54 @@ from typing import Any
 from bson import ObjectId
 
 from app.infra.storage import build_storage_url
-from app.modules.messages.schemas import MessageDoc, ReplyPreview, MessageReactionGroup, ThreadSummary
+from app.modules.messages.schemas import (
+    MessageDoc,
+    MessageReactionGroup,
+    ReplyPreview,
+    ThreadSummary,
+)
 
 
 def _id(x):
     if isinstance(x, ObjectId):
         return str(x)
     return str(x)
+
+
+def _normalize_message_type(message_type: Any) -> str:
+    if message_type in {"text", "media", "file"}:
+        return message_type
+    return "text"
+
+
+def _normalize_media(
+    *,
+    message_type: str,
+    media: Any,
+) -> dict[str, Any] | None:
+    if not isinstance(media, dict):
+        return None
+
+    normalized_media = dict(media)
+    if message_type == "file" and not normalized_media.get("kind"):
+        normalized_media["kind"] = "file"
+
+    normalized_media["url"] = build_storage_url(
+        normalized_media["storage"],
+        normalized_media["key"],
+    )
+    return normalized_media
+
+
+def normalize_message_record(
+    message: dict[str, Any],
+) -> tuple[str, dict[str, Any] | None]:
+    message_type = _normalize_message_type(message.get("type"))
+    media = _normalize_media(
+        message_type=message_type,
+        media=message.get("media"),
+    )
+    return message_type, media
 
 
 def message_is_deleted(m: dict[str, Any]) -> bool:
@@ -22,19 +63,16 @@ def message_is_deleted(m: dict[str, Any]) -> bool:
 def to_message_doc(m: dict[str, Any]) -> MessageDoc:
     is_deleted = message_is_deleted(m)
 
-    media = m.get("media")
-    if media is not None:
-        media = {
-            **media,
-            "url": build_storage_url(media["storage"], media["key"])
-        }
+    normalized_type, media = normalize_message_record(m)
 
     reply_preview = m.get("reply_preview")
     if reply_preview is not None:
+        preview_type = _normalize_message_type(reply_preview.get("type"))
         reply_preview = ReplyPreview(
             message_id=str(reply_preview["message_id"]),
             sender_id=_id(reply_preview["sender_id"]),
-            type=reply_preview.get("type", "text"),
+            type=preview_type,
+            media_kind=reply_preview.get("media_kind"),
             text=reply_preview.get("text"),
             is_deleted=bool(reply_preview.get("is_deleted", False)),
         )
@@ -54,7 +92,7 @@ def to_message_doc(m: dict[str, Any]) -> MessageDoc:
         conversation_id=m["conversation_id"],
         sender_id=_id(m["sender_id"]),
         receiver_id=_id(m["receiver_id"]),
-        type=m["type"],
+        type=normalized_type,
         text=m.get("text"),
         media=media,
         status=m["status"],

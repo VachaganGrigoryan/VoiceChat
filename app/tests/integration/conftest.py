@@ -45,6 +45,9 @@ TEST_COLLECTIONS = [
     "messages",
     "refresh_tokens",
     "verification_codes",
+    "passkeys",
+    "passkey_challenges",
+    "discovery_tokens",
 ]
 
 

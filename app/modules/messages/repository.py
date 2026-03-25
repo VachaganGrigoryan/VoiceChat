@@ -10,7 +10,7 @@ from pymongo import ReturnDocument
 from app.core.errors import AppError
 from app.core.pagination.cursor import decode_cursor, encode_cursor
 from app.db.indexes import COL_MESSAGES
-from app.modules.messages.mappers import message_is_deleted
+from app.modules.messages.mappers import message_is_deleted, normalize_message_record
 
 REACTION_MAX_GROUPS = 10
 REACTION_UPDATE_RETRIES = 3
@@ -44,10 +44,12 @@ def _truncate_preview_text(value: str | None) -> str | None:
 
 def _build_reply_preview(message: dict[str, Any]) -> dict[str, Any]:
     is_deleted = message_is_deleted(message)
+    message_type, media = normalize_message_record(message)
     return {
         "message_id": str(message["_id"]),
         "sender_id": _id_str(message["sender_id"]),
-        "type": message.get("type", "text"),
+        "type": message_type,
+        "media_kind": media.get("kind") if media is not None else None,
         "text": None if is_deleted else _truncate_preview_text(message.get("text")),
         "is_deleted": is_deleted,
     }
@@ -73,37 +75,49 @@ class MessagesRepository:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.col = db[COL_MESSAGES]
 
-    def _assert_message_participant(self, *, message: dict[str, Any], user_id: str) -> None:
+    def _assert_message_participant(
+        self, *, message: dict[str, Any], user_id: str
+    ) -> None:
         if user_id not in _message_participants(message):
-            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
 
     async def _load_reply_target(
-            self,
-            *,
-            sender_id: str,
-            receiver_id: str,
-            reply_to_message_id: str,
+        self,
+        *,
+        sender_id: str,
+        receiver_id: str,
+        reply_to_message_id: str,
     ) -> dict[str, Any]:
         conv_id = conversation_id_for(sender_id, receiver_id)
         target = await self.col.find_one({"_id": _oid(reply_to_message_id)})
         if not target:
-            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
         if target.get("conversation_id") != conv_id:
-            raise AppError(code="INVALID_REPLY_TARGET", message="Reply target must belong to the same conversation",
-                           status_code=400)
+            raise AppError(
+                code="INVALID_REPLY_TARGET",
+                message="Reply target must belong to the same conversation",
+                status_code=400,
+            )
 
         participants = _message_participants(target)
         if {sender_id, receiver_id} != participants:
-            raise AppError(code="INVALID_REPLY_TARGET", message="Reply target must belong to the same conversation",
-                           status_code=400)
+            raise AppError(
+                code="INVALID_REPLY_TARGET",
+                message="Reply target must belong to the same conversation",
+                status_code=400,
+            )
 
         return target
 
     async def _resolve_thread_root(
-            self,
-            *,
-            message_id: str,
-            user_id: str,
+        self,
+        *,
+        message_id: str,
+        user_id: str,
     ) -> tuple[dict[str, Any], str]:
         message = await self.col.find_one(
             {
@@ -112,29 +126,37 @@ class MessagesRepository:
             }
         )
         if not message:
-            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
         self._assert_message_participant(message=message, user_id=user_id)
 
         thread_root_id = str(message.get("thread_root_id") or message["_id"])
         return message, thread_root_id
 
     async def _replace_reactions_with_retry(
-            self,
-            *,
-            message_id: str,
-            user_id: str,
-            emoji: str,
-            remove_only: bool,
+        self,
+        *,
+        message_id: str,
+        user_id: str,
+        emoji: str,
+        remove_only: bool,
     ) -> dict[str, Any]:
         normalized_emoji = emoji.strip()
         if not normalized_emoji:
-            raise AppError(code="INVALID_EMOJI", message="emoji is required", status_code=400)
+            raise AppError(
+                code="INVALID_EMOJI", message="emoji is required", status_code=400
+            )
 
         message_oid = _oid(message_id)
         for _ in range(REACTION_UPDATE_RETRIES):
             existing = await self.col.find_one({"_id": message_oid})
             if not existing:
-                raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+                raise AppError(
+                    code="MESSAGE_NOT_FOUND",
+                    message="Message not found",
+                    status_code=404,
+                )
 
             self._assert_message_participant(message=existing, user_id=user_id)
             if user_id in existing.get("hidden_for_user_ids", []):
@@ -144,8 +166,11 @@ class MessagesRepository:
                     status_code=400,
                 )
             if message_is_deleted(existing):
-                raise AppError(code="MESSAGE_NOT_REACTABLE", message="Deleted messages cannot be reacted to",
-                               status_code=400)
+                raise AppError(
+                    code="MESSAGE_NOT_REACTABLE",
+                    message="Deleted messages cannot be reacted to",
+                    status_code=400,
+                )
 
             now = datetime.now(UTC)
             reactions: list[dict[str, Any]] = []
@@ -157,7 +182,9 @@ class MessagesRepository:
                     reactions.append(
                         {
                             **reaction,
-                            "user_ids": [str(uid) for uid in reaction.get("user_ids", [])],
+                            "user_ids": [
+                                str(uid) for uid in reaction.get("user_ids", [])
+                            ],
                         }
                     )
                     continue
@@ -181,7 +208,9 @@ class MessagesRepository:
                             "emoji": normalized_emoji,
                             "user_ids": user_ids,
                             "count": len(user_ids),
-                            "updated_at": now if changed else reaction.get("updated_at") or now,
+                            "updated_at": (
+                                now if changed else reaction.get("updated_at") or now
+                            ),
                         }
                     )
 
@@ -217,7 +246,11 @@ class MessagesRepository:
             if updated is not None:
                 return updated
 
-        raise AppError(code="REACTION_UPDATE_CONFLICT", message="Reaction update conflict", status_code=409)
+        raise AppError(
+            code="REACTION_UPDATE_CONFLICT",
+            message="Reaction update conflict",
+            status_code=409,
+        )
 
     async def create_message(
         self,
@@ -262,14 +295,14 @@ class MessagesRepository:
         return doc
 
     async def create_quote_reply(
-            self,
-            *,
-            sender_id: str,
-            receiver_id: str,
-            message_type: str,
-            reply_to_message_id: str,
-            text: str | None = None,
-            media: dict[str, Any] | None = None,
+        self,
+        *,
+        sender_id: str,
+        receiver_id: str,
+        message_type: str,
+        reply_to_message_id: str,
+        text: str | None = None,
+        media: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         target = await self._load_reply_target(
             sender_id=sender_id,
@@ -296,18 +329,22 @@ class MessagesRepository:
             return_document=ReturnDocument.AFTER,
         )
         if updated is None:
-            raise AppError(code="MESSAGE_CREATE_FAILED", message="Failed to create message", status_code=500)
+            raise AppError(
+                code="MESSAGE_CREATE_FAILED",
+                message="Failed to create message",
+                status_code=500,
+            )
         return updated
 
     async def create_thread_reply(
-            self,
-            *,
-            sender_id: str,
-            receiver_id: str,
-            message_type: str,
-            reply_to_message_id: str,
-            text: str | None = None,
-            media: dict[str, Any] | None = None,
+        self,
+        *,
+        sender_id: str,
+        receiver_id: str,
+        message_type: str,
+        reply_to_message_id: str,
+        text: str | None = None,
+        media: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         target = await self._load_reply_target(
             sender_id=sender_id,
@@ -360,7 +397,11 @@ class MessagesRepository:
             return_document=ReturnDocument.AFTER,
         )
         if root is None:
-            raise AppError(code="THREAD_ROOT_NOT_FOUND", message="Thread root not found", status_code=404)
+            raise AppError(
+                code="THREAD_ROOT_NOT_FOUND",
+                message="Thread root not found",
+                status_code=404,
+            )
 
         return doc
 
@@ -371,11 +412,13 @@ class MessagesRepository:
         receiver_id: str,
         audio: dict[str, Any],
     ) -> dict[str, Any]:
+        media = dict(audio)
+        media["kind"] = "voice"
         return await self.create_message(
             sender_id=sender_id,
             receiver_id=receiver_id,
-            message_type="voice",
-            media=audio,
+            message_type="media",
+            media=media,
         )
 
     async def list_history(
@@ -422,11 +465,7 @@ class MessagesRepository:
                 },
             ]
 
-        cur = (
-            self.col.find(q)
-            .sort([("created_at", -1), ("_id", -1)])
-            .limit(limit + 1)
-        )
+        cur = self.col.find(q).sort([("created_at", -1), ("_id", -1)]).limit(limit + 1)
         items = await cur.to_list(length=limit + 1)
 
         next_cursor: Optional[str] = None
@@ -441,14 +480,18 @@ class MessagesRepository:
         return items, next_cursor
 
     async def list_conversations_for_user(
-            self,
-            *,
-            user_id: str,
-            limit: int = 50,
-            cursor: str | None = None,
+        self,
+        *,
+        user_id: str,
+        limit: int = 50,
+        cursor: str | None = None,
     ) -> tuple[list[dict[str, Any]], str | None]:
         if limit < 1 or limit > 100:
-            raise AppError(code="INVALID_LIMIT", message="limit must be between 1 and 100", status_code=400)
+            raise AppError(
+                code="INVALID_LIMIT",
+                message="limit must be between 1 and 100",
+                status_code=400,
+            )
 
         uid = _oid(user_id)
 
@@ -533,10 +576,10 @@ class MessagesRepository:
         return await self.col.find_one({"_id": _oid(message_id)})
 
     async def load_thread_messages(
-            self,
-            *,
-            message_id: str,
-            user_id: str,
+        self,
+        *,
+        message_id: str,
+        user_id: str,
     ) -> list[dict[str, Any]]:
         message, thread_root_id = await self._resolve_thread_root(
             message_id=message_id,
@@ -552,10 +595,10 @@ class MessagesRepository:
         return await cur.to_list(length=None)
 
     async def load_thread_summary(
-            self,
-            *,
-            message_id: str,
-            user_id: str,
+        self,
+        *,
+        message_id: str,
+        user_id: str,
     ) -> dict[str, Any]:
         _, thread_root_id = await self._resolve_thread_root(
             message_id=message_id,
@@ -568,16 +611,20 @@ class MessagesRepository:
             }
         )
         if not root:
-            raise AppError(code="THREAD_ROOT_NOT_FOUND", message="Thread root not found", status_code=404)
+            raise AppError(
+                code="THREAD_ROOT_NOT_FOUND",
+                message="Thread root not found",
+                status_code=404,
+            )
         self._assert_message_participant(message=root, user_id=user_id)
         return root
 
     async def add_or_toggle_grouped_reaction(
-            self,
-            *,
-            message_id: str,
-            user_id: str,
-            emoji: str,
+        self,
+        *,
+        message_id: str,
+        user_id: str,
+        emoji: str,
     ) -> dict[str, Any]:
         return await self._replace_reactions_with_retry(
             message_id=message_id,
@@ -587,11 +634,11 @@ class MessagesRepository:
         )
 
     async def remove_grouped_reaction(
-            self,
-            *,
-            message_id: str,
-            user_id: str,
-            emoji: str,
+        self,
+        *,
+        message_id: str,
+        user_id: str,
+        emoji: str,
     ) -> dict[str, Any]:
         return await self._replace_reactions_with_retry(
             message_id=message_id,
@@ -600,7 +647,9 @@ class MessagesRepository:
             remove_only=True,
         )
 
-    async def mark_delivered_for_receiver(self, *, message_id: str, receiver_id: str) -> dict[str, Any]:
+    async def mark_delivered_for_receiver(
+        self, *, message_id: str, receiver_id: str
+    ) -> dict[str, Any]:
         receiver_oid = _oid(receiver_id)
         query = {
             "_id": _oid(message_id),
@@ -609,7 +658,9 @@ class MessagesRepository:
         }
         existing = await self.col.find_one(query)
         if not existing:
-            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
         if existing.get("status") in {"delivered", "read"}:
             return existing
 
@@ -626,10 +677,14 @@ class MessagesRepository:
             return_document=ReturnDocument.AFTER,
         )
         if not res:
-            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
         return res
 
-    async def mark_read_for_receiver(self, *, message_id: str, receiver_id: str) -> dict[str, Any]:
+    async def mark_read_for_receiver(
+        self, *, message_id: str, receiver_id: str
+    ) -> dict[str, Any]:
         receiver_oid = _oid(receiver_id)
         query = {
             "_id": _oid(message_id),
@@ -638,7 +693,9 @@ class MessagesRepository:
         }
         existing = await self.col.find_one(query)
         if not existing:
-            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
         if existing.get("status") == "read":
             return existing
 
@@ -656,14 +713,16 @@ class MessagesRepository:
             return_document=ReturnDocument.AFTER,
         )
         if not res:
-            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
         return res
 
     async def mark_conversation_read_for_receiver(
-            self,
-            *,
-            receiver_id: str,
-            peer_user_id: str,
+        self,
+        *,
+        receiver_id: str,
+        peer_user_id: str,
     ) -> int:
         now = datetime.now(UTC)
         conversation_id = conversation_id_for(receiver_id, peer_user_id)
@@ -697,11 +756,11 @@ class MessagesRepository:
         return result.modified_count
 
     async def edit_text_message(
-            self,
-            *,
-            message_id: str,
-            sender_id: str,
-            text: str,
+        self,
+        *,
+        message_id: str,
+        sender_id: str,
+        text: str,
     ) -> dict[str, Any]:
         now = datetime.now(UTC)
         res = await self.col.find_one_and_update(
@@ -720,14 +779,18 @@ class MessagesRepository:
             return_document=ReturnDocument.AFTER,
         )
         if not res:
-            raise AppError(code="MESSAGE_NOT_EDITABLE", message="Message cannot be edited", status_code=400)
+            raise AppError(
+                code="MESSAGE_NOT_EDITABLE",
+                message="Message cannot be edited",
+                status_code=400,
+            )
         return res
 
     async def hard_delete_owned_message(
-            self,
-            *,
-            message_id: str,
-            sender_id: str,
+        self,
+        *,
+        message_id: str,
+        sender_id: str,
     ) -> dict[str, Any]:
         res = await self.col.find_one_and_delete(
             {
@@ -736,7 +799,9 @@ class MessagesRepository:
             }
         )
         if not res:
-            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
 
         now = datetime.now(UTC)
         await self.col.update_many(
@@ -752,10 +817,10 @@ class MessagesRepository:
         return res
 
     async def hide_message_for_user(
-            self,
-            *,
-            message_id: str,
-            user_id: str,
+        self,
+        *,
+        message_id: str,
+        user_id: str,
     ) -> dict[str, Any]:
         now = datetime.now(UTC)
         res = await self.col.find_one_and_update(
@@ -773,5 +838,7 @@ class MessagesRepository:
             return_document=ReturnDocument.AFTER,
         )
         if not res:
-            raise AppError(code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404)
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
         return res
