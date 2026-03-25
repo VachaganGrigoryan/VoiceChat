@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class RegisterPasskeyStartRequest(BaseModel):
@@ -24,6 +24,16 @@ class LoginPasskeyFinishRequest(BaseModel):
     credential: dict[str, Any]
 
 
+class PasskeyRegistrationOptionsPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    nickname: str | None = None
+
+
+class PasskeyAuthenticationOptionsPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
 class PasskeyResponse(BaseModel):
     credential_id: str
     nickname: str | None = None
@@ -39,13 +49,8 @@ class PasskeysListResponse(BaseModel):
     items: list[PasskeyResponse]
 
 
-class PasskeyDeleteResponse(BaseModel):
-    success: bool
-
-
-class PasskeyRegistrationFinishResponse(BaseModel):
-    success: bool
-    passkey: PasskeyResponse
+class PasskeyDeleteResult(BaseModel):
+    deleted: bool
 
 
 class AuthTokensResponse(BaseModel):

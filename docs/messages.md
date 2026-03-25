@@ -5,8 +5,10 @@ Base path: `/messages`
 ## Endpoints
 
 - `POST /messages/media`
-  Multipart upload for `voice`, `image`, `sticker`, and `video`.
-  Fields: `type`, `receiver_id`, `file`, optional `text`, optional `duration_ms`.
+  Multipart upload for `media` and `file` messages.
+  Fields: `type`, `receiver_id`, `file`, optional `media_kind`, optional `text`, optional `duration_ms`.
+  `media_kind` is required when `type=media` and must be one of `voice`, `audio`, `image`, `video`.
+  `media_kind` must be omitted when `type=file`.
 - `POST /messages/text`
   Send a text message.
 - `GET /messages/conversations/{user_id}`
@@ -29,7 +31,9 @@ Base path: `/messages`
 - Text is trimmed and capped at 4000 characters.
 - Media captions use the same max length and empty captions normalize to `null`.
 - `duration_ms` must be greater than or equal to `0`.
-- Media mime type and file size are validated by message type.
+- Upload mime type and file size are validated by `type` and `media_kind`.
+- `type=media` is for previewable uploads.
+- `type=file` is for generic downloadable attachments, including documents and archives.
 
 ## Delivery State Rules
 
@@ -44,7 +48,8 @@ Base path: `/messages`
 - If the peer deletes a message they received, the message is hidden only for that user.
 - Hidden messages are excluded from that user’s history and conversation list.
 
-## Current Sticker Behavior
+## Message Shape
 
-- `sticker` currently uses the same upload path as other media messages.
-- A centralized reusable sticker catalog is not implemented yet.
+- Stored message `type` is `text`, `media`, or `file`.
+- File-bearing messages carry `media.kind` as the frontend render hint.
+- Supported `media.kind` values are `voice`, `audio`, `image`, `video`, and `file`.
