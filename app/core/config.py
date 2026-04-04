@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     # Passkey
     passkey_rp_id: str = Field(default="localhost", alias="PASSKEY_RP_ID")
     passkey_rp_name: str = Field(default="Voice Chat", alias="PASSKEY_RP_NAME")
-    passkey_origin: str = Field(default="http://localhost:5173", alias="PASSKEY_ORIGIN")
+    passkey_origin: str = Field(default="http://localhost:3000", alias="PASSKEY_ORIGIN")
     passkey_challenge_ttl_seconds: int = Field(
         default=300,
         alias="PASSKEY_CHALLENGE_TTL_SECONDS",

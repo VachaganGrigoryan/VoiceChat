@@ -30,8 +30,14 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
 
     # VERIFICATION: TTL expiry + lookup indexes
     await db[COL_VERIFICATION].create_index([("expires_at", ASCENDING)], expireAfterSeconds=0, name="ttl_verification_expires")
-    await db[COL_VERIFICATION].create_index([("email", ASCENDING), ("purpose", ASCENDING)], name="ix_verification_email_purpose")
-    await db[COL_VERIFICATION].create_index([("user_id", ASCENDING), ("purpose", ASCENDING)], name="ix_verification_user_purpose")
+    await db[COL_VERIFICATION].create_index(
+        [("method", ASCENDING), ("identifier", ASCENDING), ("purpose", ASCENDING)],
+        name="ix_verification_method_identifier_purpose",
+    )
+    await db[COL_VERIFICATION].create_index(
+        [("user_id", ASCENDING), ("method", ASCENDING), ("purpose", ASCENDING)],
+        name="ix_verification_user_method_purpose",
+    )
 
     # MESSAGES:
     # Recommended approach: store conversation_id = f"{minId}_{maxId}"

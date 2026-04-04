@@ -3,7 +3,21 @@
 ## REST API
 
 ### Auth
-No external changes in this recap.
+- `POST /auth/start`
+- `POST /auth/finish`
+- `POST /auth/refresh`
+- `POST /auth/logout`
+
+`/auth/start` accepts a method-based auth request. Only `email` is supported in this version:
+
+- `method`
+- `identifier`
+
+`/auth/finish` completes the same flow:
+
+- `method`
+- `identifier`
+- `code`
 
 ---
 

@@ -83,12 +83,20 @@ async def require_verified_user(user: dict[str, Any] = Depends(get_current_user)
     return user
 
 
-def hash_verification_code(email: str, code: str) -> str:
-    msg = f"{email.lower().strip()}:{code}".encode("utf-8")
+def hash_auth_code(identifier: str, code: str) -> str:
+    msg = f"{identifier.lower().strip()}:{code}".encode("utf-8")
     key = settings.jwt_secret.encode("utf-8")
     return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 
-def verify_verification_code(email: str, code: str, expected_hash: str) -> bool:
-    computed = hash_verification_code(email, code)
+def verify_auth_code(identifier: str, code: str, expected_hash: str) -> bool:
+    computed = hash_auth_code(identifier, code)
     return hmac.compare_digest(computed, expected_hash)
+
+
+def hash_verification_code(email: str, code: str) -> str:
+    return hash_auth_code(email, code)
+
+
+def verify_verification_code(email: str, code: str, expected_hash: str) -> bool:
+    return verify_auth_code(email, code, expected_hash)
