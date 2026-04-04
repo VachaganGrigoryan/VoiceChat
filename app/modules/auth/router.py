@@ -8,9 +8,9 @@ from app.core.errors.openapi import build_error_responses
 from app.core.rate_limit import rate_limit
 from app.db.mongo import get_db
 from app.modules.auth.schemas import (
-    GenericEmailRequest,
-    GenericCodeSentResponse,
-    VerifyRequest,
+    StartAuthRequest,
+    AuthChallengeResponse,
+    FinishAuthRequest,
     TokenPairResponse,
     RefreshRequest,
     MessageResponse,
@@ -30,52 +30,42 @@ router = APIRouter(
 
 
 @router.post(
-    "/register",
-    response_model=SuccessResponse[GenericCodeSentResponse],
-    status_code=201,
-    dependencies=[Depends(rate_limit("10/15 minutes", scope="auth_register"))],
+    "/start",
+    response_model=SuccessResponse[AuthChallengeResponse],
+    dependencies=[Depends(rate_limit("10/15 minutes", scope="auth_start"))],
 )
-async def register(request: Request, body: GenericEmailRequest):
+async def start_auth(request: Request, body: StartAuthRequest):
     db = get_db()
     service = AuthService(
         UsersRepository(db),
         VerificationCodesRepository(db),
         RefreshTokensRepository(db),
     )
-    result = await service.register(email=body.email)
-    return ok(request, data=GenericCodeSentResponse(**result))
+    result = await service.start_auth(
+        method=body.method,
+        identifier=str(body.identifier),
+    )
+    return ok(request, data=AuthChallengeResponse(**result))
 
 
 @router.post(
-    "/verify",
+    "/finish",
     response_model=SuccessResponse[TokenPairResponse],
-    dependencies=[Depends(rate_limit("10/15 minutes", scope="auth_verify"))],
+    dependencies=[Depends(rate_limit("10/15 minutes", scope="auth_finish"))],
 )
-async def verify(request: Request, body: VerifyRequest):
+async def finish_auth(request: Request, body: FinishAuthRequest):
     db = get_db()
     service = AuthService(
         UsersRepository(db),
         VerificationCodesRepository(db),
         RefreshTokensRepository(db),
     )
-    result = await service.verify(email=body.email, code=body.code)
+    result = await service.finish_auth(
+        method=body.method,
+        identifier=str(body.identifier),
+        code=body.code,
+    )
     return ok(request, data=TokenPairResponse(**result))
-
-
-@router.post(
-    "/login",
-    response_model=SuccessResponse[GenericCodeSentResponse],
-    dependencies=[Depends(rate_limit("5/15 minutes", scope="auth_login"))],
-)
-async def login(request: Request, body: GenericEmailRequest):
-    db = get_db()
-    service = AuthService(
-        UsersRepository(db),
-        VerificationCodesRepository(db),
-        RefreshTokensRepository(db),
-    )
-    result = await service.login(email=body.email)
-    return ok(request, data=GenericCodeSentResponse(**result))
 
 
 @router.post(

@@ -7,6 +7,7 @@ os.environ["ENV_FILE"] = ".env.test"
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.core.config import settings
+from app.core.rate_limit.limiter import rate_limiter
 from app.db.mongo import connect_mongo, disconnect_mongo
 from app.factory import create_app
 from app.socket import create_socket_server, register_socket_events
@@ -36,6 +37,13 @@ async def clean_redis():
     redis = Redis.from_url(REDIS_URL)
     await redis.flushdb()
     await redis.aclose()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def clean_rate_limits():
+    await rate_limiter.storage.reset()
+    yield
+    await rate_limiter.storage.reset()
 
 
 TEST_COLLECTIONS = [

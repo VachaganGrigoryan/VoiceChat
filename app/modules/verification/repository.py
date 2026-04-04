@@ -24,15 +24,17 @@ class VerificationCodesRepository:
     async def create_code(
         self,
         *,
+        method: str,
+        identifier: str,
         user_id: str,
-        email: str,
         purpose: str,
         code_hash: str,
         expires_at: datetime,
     ) -> dict[str, Any]:
         doc = {
+            "method": method,
+            "identifier": identifier.lower().strip(),
             "user_id": user_id,  # keep as str for simplicity
-            "email": email.lower().strip(),
             "purpose": purpose,
             "code_hash": code_hash,
             "attempts": 0,
@@ -43,16 +45,18 @@ class VerificationCodesRepository:
         doc["_id"] = res.inserted_id
         return doc
 
-    async def find_active_by_email_any(
-            self,
-            *,
-            email: str,
-            purposes: list[str],
+    async def find_active_by_identifier_any(
+        self,
+        *,
+        method: str,
+        identifier: str,
+        purposes: list[str],
     ) -> Optional[dict[str, Any]]:
         now = datetime.now(UTC)
         return await self.col.find_one(
             {
-                "email": email.lower().strip(),
+                "method": method,
+                "identifier": identifier.lower().strip(),
                 "purpose": {"$in": purposes},
                 "expires_at": {"$gt": now},
             },
@@ -69,5 +73,17 @@ class VerificationCodesRepository:
             raise AppError(code="CODE_NOT_FOUND", message="Verification code not found", status_code=404)
         return int(res.get("attempts", 0))
 
-    async def delete_by_user_and_purpose(self, *, user_id: str, purpose: str) -> None:
-        await self.col.delete_many({"user_id": user_id, "purpose": purpose})
+    async def delete_by_user_method_and_purpose(
+        self,
+        *,
+        user_id: str,
+        method: str,
+        purpose: str,
+    ) -> None:
+        await self.col.delete_many(
+            {
+                "user_id": user_id,
+                "method": method,
+                "purpose": purpose,
+            }
+        )

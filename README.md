@@ -406,9 +406,8 @@ created_at
 ## Auth
 
 ```
-POST /auth/register
-POST /auth/login
-POST /auth/verify → returns access + refresh
+POST /auth/start
+POST /auth/finish → returns access + refresh
 POST /auth/refresh → rotates refresh token
 POST /auth/logout → revokes refresh token
 ```

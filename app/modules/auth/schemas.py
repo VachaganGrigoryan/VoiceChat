@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, EmailStr, Field
 
 
-class GenericEmailRequest(BaseModel):
-    email: EmailStr
+class StartAuthRequest(BaseModel):
+    method: Literal["email"]
+    identifier: EmailStr
 
 
-class GenericCodeSentResponse(BaseModel):
-    email: EmailStr
+class AuthChallengeResponse(BaseModel):
+    method: Literal["email"]
+    identifier: EmailStr
     message: str
 
 
-class VerifyRequest(BaseModel):
-    email: EmailStr
+class FinishAuthRequest(BaseModel):
+    method: Literal["email"]
+    identifier: EmailStr
     code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
 
 

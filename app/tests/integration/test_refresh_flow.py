@@ -1,6 +1,7 @@
 import pytest
 
 from app.modules.auth import service as auth_service
+from app.tests.integration.auth_helpers import finish_email_auth, start_email_auth
 
 
 @pytest.mark.asyncio
@@ -10,13 +11,10 @@ async def test_refresh_token_rotation(inprocess_client, monkeypatch):
 
     monkeypatch.setattr(auth_service, "_generate_6_digit_code", lambda: fixed_code)
 
-    register_res = await inprocess_client.post("/auth/register", json={"email": email})
-    assert register_res.status_code == 200
+    start_res = await start_email_auth(inprocess_client, email)
+    assert start_res.status_code == 200
 
-    verify_res = await inprocess_client.post(
-        "/auth/verify",
-        json={"email": email, "code": fixed_code},
-    )
+    verify_res = await finish_email_auth(inprocess_client, email, fixed_code)
     assert verify_res.status_code == 200
 
     tokens = verify_res.json()["data"]
