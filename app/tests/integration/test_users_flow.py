@@ -5,6 +5,7 @@ import uuid
 import pytest
 
 from app.modules.auth import service as auth_service
+from app.tests.integration.auth_helpers import finish_email_auth, start_email_auth
 from app.tests.integration.test_realtime_socket import (
     _create_verified_user_and_tokens,
     _grant_chat_permission,
@@ -18,13 +19,10 @@ async def test_get_me_after_verify(inprocess_client, monkeypatch):
 
     monkeypatch.setattr(auth_service, "_generate_6_digit_code", lambda: fixed_code)
 
-    register_res = await inprocess_client.post("/auth/register", json={"email": email})
-    assert register_res.status_code == 200
+    start_res = await start_email_auth(inprocess_client, email)
+    assert start_res.status_code == 200
 
-    verify_res = await inprocess_client.post(
-        "/auth/verify",
-        json={"email": email, "code": fixed_code},
-    )
+    verify_res = await finish_email_auth(inprocess_client, email, fixed_code)
     assert verify_res.status_code == 200
 
     tokens = verify_res.json()["data"]
@@ -63,13 +61,10 @@ async def test_update_profile_data(inprocess_client, monkeypatch):
 
     monkeypatch.setattr(auth_service, "_generate_6_digit_code", lambda: fixed_code)
 
-    register_res = await inprocess_client.post("/auth/register", json={"email": email})
-    assert register_res.status_code == 200
+    start_res = await start_email_auth(inprocess_client, email)
+    assert start_res.status_code == 200
 
-    verify_res = await inprocess_client.post(
-        "/auth/verify",
-        json={"email": email, "code": fixed_code},
-    )
+    verify_res = await finish_email_auth(inprocess_client, email, fixed_code)
     assert verify_res.status_code == 200
 
     access_token = verify_res.json()["data"]["access_token"]
@@ -115,13 +110,10 @@ async def test_update_username(inprocess_client, monkeypatch):
 
     monkeypatch.setattr(auth_service, "_generate_6_digit_code", lambda: fixed_code)
 
-    register_res = await inprocess_client.post("/auth/register", json={"email": email})
-    assert register_res.status_code == 200
+    start_res = await start_email_auth(inprocess_client, email)
+    assert start_res.status_code == 200
 
-    verify_res = await inprocess_client.post(
-        "/auth/verify",
-        json={"email": email, "code": fixed_code},
-    )
+    verify_res = await finish_email_auth(inprocess_client, email, fixed_code)
     assert verify_res.status_code == 200
 
     access_token = verify_res.json()["data"]["access_token"]
@@ -158,21 +150,15 @@ async def test_update_username_rejects_duplicate(inprocess_client, monkeypatch):
     email_a = f"user-a-{uuid.uuid4().hex[:8]}@test.com"
     email_b = f"user-b-{uuid.uuid4().hex[:8]}@test.com"
 
-    reg_a = await inprocess_client.post("/auth/register", json={"email": email_a})
+    reg_a = await start_email_auth(inprocess_client, email_a)
     assert reg_a.status_code == 200
-    ver_a = await inprocess_client.post(
-        "/auth/verify",
-        json={"email": email_a, "code": fixed_code},
-    )
+    ver_a = await finish_email_auth(inprocess_client, email_a, fixed_code)
     assert ver_a.status_code == 200
     token_a = ver_a.json()["data"]["access_token"]
 
-    reg_b = await inprocess_client.post("/auth/register", json={"email": email_b})
+    reg_b = await start_email_auth(inprocess_client, email_b)
     assert reg_b.status_code == 200
-    ver_b = await inprocess_client.post(
-        "/auth/verify",
-        json={"email": email_b, "code": fixed_code},
-    )
+    ver_b = await finish_email_auth(inprocess_client, email_b, fixed_code)
     assert ver_b.status_code == 200
     token_b = ver_b.json()["data"]["access_token"]
 
@@ -302,13 +288,10 @@ async def test_update_username_rejects_invalid_value(inprocess_client, monkeypat
 
     monkeypatch.setattr(auth_service, "_generate_6_digit_code", lambda: fixed_code)
 
-    register_res = await inprocess_client.post("/auth/register", json={"email": email})
-    assert register_res.status_code == 200
+    start_res = await start_email_auth(inprocess_client, email)
+    assert start_res.status_code == 200
 
-    verify_res = await inprocess_client.post(
-        "/auth/verify",
-        json={"email": email, "code": fixed_code},
-    )
+    verify_res = await finish_email_auth(inprocess_client, email, fixed_code)
     assert verify_res.status_code == 200
 
     access_token = verify_res.json()["data"]["access_token"]
