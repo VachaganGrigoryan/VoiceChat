@@ -54,6 +54,7 @@ class CallsRepository:
             "expires_at": expires_at,
             "reconnect_deadline_at": None,
             "disconnected_user_ids": [],
+            "hidden_for_user_ids": [],
             "is_live": True,
             "history_message_id": None,
         }
@@ -424,6 +425,7 @@ class CallsRepository:
             "participant_user_ids": user_id,
             "status": {"$in": sorted(TERMINAL_CALL_STATUSES)},
             "ended_at": {"$ne": None},
+            "hidden_for_user_ids": {"$ne": user_id},
         }
         if peer_user_id is not None:
             query["participant_user_ids"] = {"$all": [user_id, peer_user_id]}
@@ -462,3 +464,45 @@ class CallsRepository:
             items = items[:limit]
 
         return items, next_cursor
+
+    async def hard_delete_own_calls_in_history(
+        self,
+        *,
+        user_id: str,
+        peer_user_id: str | None = None,
+    ) -> int:
+        """Hard-deletes terminal call records where the user was the caller."""
+        query: dict[str, Any] = {
+            "caller_user_id": user_id,
+            "status": {"$in": sorted(TERMINAL_CALL_STATUSES)},
+            "ended_at": {"$ne": None},
+        }
+        if peer_user_id is not None:
+            query["callee_user_id"] = peer_user_id
+        result = await self.col.delete_many(query)
+        return result.deleted_count
+
+    async def hide_peer_calls_for_user(
+        self,
+        *,
+        user_id: str,
+        peer_user_id: str | None = None,
+    ) -> int:
+        """Soft-hides terminal call records where the user was the callee."""
+        now = datetime.now(UTC)
+        query: dict[str, Any] = {
+            "callee_user_id": user_id,
+            "status": {"$in": sorted(TERMINAL_CALL_STATUSES)},
+            "ended_at": {"$ne": None},
+            "hidden_for_user_ids": {"$ne": user_id},
+        }
+        if peer_user_id is not None:
+            query["caller_user_id"] = peer_user_id
+        result = await self.col.update_many(
+            query,
+            {
+                "$addToSet": {"hidden_for_user_ids": user_id},
+                "$set": {"updated_at": now},
+            },
+        )
+        return result.modified_count
