@@ -3,16 +3,22 @@ from __future__ import annotations
 from typing import Annotated
 
 import socketio
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from starlette.requests import Request
 
 from app.core.deps import get_sio
 from app.core.errors.openapi import build_error_responses
-from app.core.http import SuccessResponse, ok
+from app.core.http import PaginationMeta, PaginatedResponse, SuccessResponse, ok, ok_paginated
 from app.core.rate_limit import rate_limit
 from app.core.security import require_verified_user
 from app.modules.calls.dependencies import get_calls_service
-from app.modules.calls.schemas import AcceptCallRequest, CallDoc, CallSession, CreateCallRequest
+from app.modules.calls.schemas import (
+    AcceptCallRequest,
+    CallDoc,
+    CallHistoryItem,
+    CallSession,
+    CreateCallRequest,
+)
 from app.modules.calls.service import CallsService
 from app.modules.calls.ws import (
     bind_call_socket,
@@ -25,12 +31,29 @@ from app.modules.calls.ws import (
     join_call_room,
     schedule_call_expiration,
 )
+from app.modules.realtime import emit_message_to_participants
 
 router = APIRouter(
     prefix="/calls",
     tags=["calls"],
     responses=build_error_responses(400, 401, 403, 404, 409, 422, 500),
 )
+
+
+async def _emit_history_message_if_any(
+    sio: socketio.AsyncServer,
+    *,
+    history_message,
+) -> None:
+    if history_message is None:
+        return
+
+    await emit_message_to_participants(
+        sio,
+        sender_id=history_message.sender_id,
+        receiver_id=history_message.receiver_id,
+        payload=history_message.model_dump(mode="json"),
+    )
 
 
 @router.post(
@@ -79,6 +102,36 @@ async def get_active_call(
     return ok(request, data=payload)
 
 
+@router.get(
+    "/history",
+    response_model=PaginatedResponse[list[CallHistoryItem]],
+    dependencies=[Depends(rate_limit("30/minute", scope="call_history"))],
+)
+async def get_call_history(
+    request: Request,
+    limit: int = Query(20, ge=1, le=100),
+    cursor: str | None = Query(None),
+    peer_user_id: str | None = Query(None),
+    user: dict = Depends(require_verified_user),
+    service: CallsService = Depends(get_calls_service),
+):
+    items, next_cursor = await service.list_history(
+        user_id=str(user["_id"]),
+        peer_user_id=peer_user_id,
+        limit=limit,
+        cursor=cursor,
+    )
+    return ok_paginated(
+        request,
+        data=items,
+        meta=PaginationMeta(
+            cursor=cursor,
+            next_cursor=next_cursor,
+            limit=limit,
+        ),
+    )
+
+
 @router.post("/{call_id}/accept", response_model=SuccessResponse[CallSession])
 async def accept_call(
     request: Request,
@@ -121,8 +174,8 @@ async def reject_call(
     user: dict = Depends(require_verified_user),
     service: CallsService = Depends(get_calls_service),
 ):
-    call_doc = await service.reject_call(user_id=str(user["_id"]), call_id=call_id)
-    model = service.to_call_doc(call_doc)
+    result = await service.reject_call(user_id=str(user["_id"]), call_id=call_id)
+    model = result.call
     cancel_call_expiration(call_id)
     cancel_call_reconnect_timeout(call_id)
     await clear_call_bindings(
@@ -133,8 +186,9 @@ async def reject_call(
         sio,
         event="call.rejected",
         service=service,
-        call_doc=call_doc,
+        call_doc=model,
     )
+    await _emit_history_message_if_any(sio, history_message=result.history_message)
     return ok(request, data=model)
 
 
@@ -146,8 +200,8 @@ async def end_call(
     user: dict = Depends(require_verified_user),
     service: CallsService = Depends(get_calls_service),
 ):
-    call_doc = await service.end_call(user_id=str(user["_id"]), call_id=call_id)
-    model = service.to_call_doc(call_doc)
+    result = await service.end_call(user_id=str(user["_id"]), call_id=call_id)
+    model = result.call
     cancel_call_expiration(call_id)
     cancel_call_reconnect_timeout(call_id)
     await clear_call_bindings(
@@ -158,6 +212,7 @@ async def end_call(
         sio,
         event="call.ended",
         service=service,
-        call_doc=call_doc,
+        call_doc=model,
     )
+    await _emit_history_message_if_any(sio, history_message=result.history_message)
     return ok(request, data=model)

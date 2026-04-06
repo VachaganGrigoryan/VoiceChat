@@ -12,6 +12,7 @@ from app.db.mongo import get_db
 from app.infra.storage import get_storage, storage_key_builder, FolderKind
 from app.modules.auth.repository import UsersRepository
 from app.modules.messages.mappers import (
+    normalize_call_payload,
     normalize_message_record,
     to_message_doc,
     to_thread_summary,
@@ -396,6 +397,24 @@ class MessagesService:
             )
 
         if actor_user_id == owner_user_id:
+            if existing.get("type") == "call":
+                hidden = await self.repo.hide_message_for_user(
+                    message_id=message_id,
+                    user_id=actor_user_id,
+                )
+                return MessageDeleteOutcome(
+                    response=DeleteMessageResponse(
+                        message_id=message_id,
+                        conversation_id=hidden["conversation_id"],
+                        actor_user_id=actor_user_id,
+                        deleted_for_everyone=False,
+                        hidden_for_me=True,
+                        deleted_media=False,
+                    ),
+                    sender_id=owner_user_id,
+                    receiver_id=receiver_user_id,
+                )
+
             deleted = await self.repo.hard_delete_owned_message(
                 message_id=message_id,
                 sender_id=actor_user_id,
@@ -566,6 +585,7 @@ class MessagesService:
 
             text = msg.get("text")
             msg_type, media = normalize_message_record(msg)
+            call = normalize_call_payload(message_type=msg_type, call=msg.get("call"))
 
             items.append(
                 ConversationItem(
@@ -585,6 +605,7 @@ class MessagesService:
                         type=msg_type,
                         text=text,
                         media=media,
+                        call=call,
                         status=msg.get("status", "sent"),
                         created_at=msg["created_at"],
                     ),

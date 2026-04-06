@@ -6,6 +6,7 @@ from bson import ObjectId
 
 from app.infra.storage import build_storage_url
 from app.modules.messages.schemas import (
+    CallMeta,
     MessageDoc,
     MessageReactionGroup,
     ReplyPreview,
@@ -20,7 +21,7 @@ def _id(x):
 
 
 def _normalize_message_type(message_type: Any) -> str:
-    if message_type in {"text", "media", "file"}:
+    if message_type in {"text", "media", "file", "call"}:
         return message_type
     return "text"
 
@@ -30,6 +31,8 @@ def _normalize_media(
     message_type: str,
     media: Any,
 ) -> dict[str, Any] | None:
+    if message_type == "call":
+        return None
     if not isinstance(media, dict):
         return None
 
@@ -42,6 +45,27 @@ def _normalize_media(
         normalized_media["key"],
     )
     return normalized_media
+
+
+def normalize_call_payload(
+    *,
+    message_type: str,
+    call: Any,
+) -> CallMeta | None:
+    if message_type != "call" or not isinstance(call, dict):
+        return None
+
+    return CallMeta(
+        call_id=str(call["call_id"]),
+        type=call["type"],
+        status=call["status"],
+        caller_user_id=_id(call["caller_user_id"]),
+        callee_user_id=_id(call["callee_user_id"]),
+        started_at=call["started_at"],
+        answered_at=call.get("answered_at"),
+        ended_at=call.get("ended_at"),
+        duration_ms=max(int(call.get("duration_ms", 0)), 0),
+    )
 
 
 def normalize_message_record(
@@ -64,6 +88,7 @@ def to_message_doc(m: dict[str, Any]) -> MessageDoc:
     is_deleted = message_is_deleted(m)
 
     normalized_type, media = normalize_message_record(m)
+    call = normalize_call_payload(message_type=normalized_type, call=m.get("call"))
 
     reply_preview = m.get("reply_preview")
     if reply_preview is not None:
@@ -95,6 +120,7 @@ def to_message_doc(m: dict[str, Any]) -> MessageDoc:
         type=normalized_type,
         text=m.get("text"),
         media=media,
+        call=call,
         status=m["status"],
         edited_at=m.get("edited_at"),
         delivered_at=m.get("delivered_at"),

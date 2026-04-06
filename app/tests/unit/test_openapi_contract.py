@@ -80,11 +80,13 @@ def test_messages_media_upload_openapi_exposes_new_type_contract():
 def test_message_schemas_expose_normalized_message_and_media_kinds():
     spec = create_app().openapi()
 
+    call_meta = spec["components"]["schemas"]["CallMeta"]
     message_doc = spec["components"]["schemas"]["MessageDoc"]
     media_meta = spec["components"]["schemas"]["MediaMeta"]
     reply_preview = spec["components"]["schemas"]["ReplyPreview"]
+    conversation_last_message = spec["components"]["schemas"]["ConversationLastMessage"]
 
-    assert message_doc["properties"]["type"]["enum"] == ["text", "media", "file"]
+    assert message_doc["properties"]["type"]["enum"] == ["text", "media", "file", "call"]
     assert media_meta["properties"]["kind"]["enum"] == [
         "voice",
         "audio",
@@ -92,7 +94,7 @@ def test_message_schemas_expose_normalized_message_and_media_kinds():
         "video",
         "file",
     ]
-    assert reply_preview["properties"]["type"]["enum"] == ["text", "media", "file"]
+    assert reply_preview["properties"]["type"]["enum"] == ["text", "media", "file", "call"]
     assert reply_preview["properties"]["media_kind"]["anyOf"][0]["enum"] == [
         "voice",
         "audio",
@@ -100,3 +102,20 @@ def test_message_schemas_expose_normalized_message_and_media_kinds():
         "video",
         "file",
     ]
+    assert "call" in message_doc["properties"]
+    assert "call" in conversation_last_message["properties"]
+    assert call_meta["properties"]["status"]["enum"] == [
+        "rejected",
+        "cancelled",
+        "expired",
+        "ended",
+    ]
+
+
+def test_calls_history_route_is_documented_with_paginated_response():
+    spec = create_app().openapi()
+
+    route = spec["paths"]["/calls/history"]["get"]
+    response = route["responses"]["200"]
+
+    assert _schema_ref_name(_json_schema(response)).startswith("PaginatedResponse_")
