@@ -18,7 +18,7 @@ from app.modules.messages.mappers import (
     to_thread_summary,
 )
 from app.modules.messages.media_policy import resolve_media_policy
-from app.modules.messages.repository import MessagesRepository
+from app.modules.messages.repository import MessagesRepository, conversation_id_for
 from app.modules.messages.schemas import (
     ConversationItem,
     ConversationPeer,
@@ -51,6 +51,7 @@ class PingsServiceProto(Protocol):
     async def get_contact_states(
         self, *, viewer_user_id: str, peer_user_ids: list[str]
     ) -> dict[str, Any]: ...
+    async def delete_ping_for_pair(self, *, user_id: str, peer_user_id: str) -> bool: ...
 
 
 class MessagesService:
@@ -525,6 +526,54 @@ class MessagesService:
         )
         return to_message_doc(doc)
 
+    async def _clear_conversation_for_user(
+        self, *, user_id: str, peer_user_id: str
+    ) -> tuple[str, int]:
+        """
+        Hard-deletes own messages (with media cleanup) and soft-hides peer messages.
+        Returns (conversation_id, total_affected).
+        """
+        conv_id = conversation_id_for(user_id, peer_user_id)
+
+        deleted_docs = await self.repo.bulk_hard_delete_own_messages_in_conversation(
+            user_id=user_id,
+            peer_user_id=peer_user_id,
+        )
+        for doc in deleted_docs:
+            media = doc.get("media")
+            if media and media.get("key") and media.get("storage"):
+                await get_storage(media["storage"]).delete(media["key"])
+
+        hidden_count = await self.repo.hide_peer_messages_for_user(
+            user_id=user_id,
+            peer_user_id=peer_user_id,
+        )
+
+        return conv_id, len(deleted_docs) + hidden_count
+
+    async def clear_chat_history(
+        self, *, user_id: str, peer_user_id: str
+    ) -> tuple[str, int]:
+        return await self._clear_conversation_for_user(
+            user_id=user_id,
+            peer_user_id=peer_user_id,
+        )
+
+    async def delete_chat(
+        self, *, user_id: str, peer_user_id: str
+    ) -> tuple[str, int, bool]:
+        conv_id, count = await self._clear_conversation_for_user(
+            user_id=user_id,
+            peer_user_id=peer_user_id,
+        )
+        ping_deleted = False
+        if self.pings_service is not None:
+            ping_deleted = await self.pings_service.delete_ping_for_pair(
+                user_id=user_id,
+                peer_user_id=peer_user_id,
+            )
+        return conv_id, count, ping_deleted
+
     async def list_conversations(
         self,
         *,
@@ -583,6 +632,13 @@ class MessagesService:
 
             avatar = build_user_avatar_payload(peer.get("avatar")) if peer else None
 
+            # A conversation can only exist after an accepted ping. If chat_allowed is
+            # False and ping_status is "none", the ping was deleted — show the peer as
+            # a ghost so the client can display "Deleted Account" until re-pinged.
+            is_ghost = (
+                not contact_state.chat_allowed and contact_state.ping_status == "none"
+            )
+
             text = msg.get("text")
             msg_type, media = normalize_message_record(msg)
             call = normalize_call_payload(message_type=msg_type, call=msg.get("call"))
@@ -592,13 +648,14 @@ class MessagesService:
                     conversation_id=row["_id"],
                     peer_user=ConversationPeer(
                         id=peer_user_id,
-                        username=peer.get("username") if peer else None,
-                        display_name=peer.get("display_name") if peer else None,
-                        avatar=avatar,
-                        is_online=is_online,
+                        username=None if is_ghost else (peer.get("username") if peer else None),
+                        display_name=None if is_ghost else (peer.get("display_name") if peer else None),
+                        avatar=None if is_ghost else avatar,
+                        is_online=False if is_ghost else is_online,
                         can_ping=contact_state.can_ping,
                         chat_allowed=contact_state.chat_allowed,
                         ping_status=contact_state.ping_status,
+                        is_ghost=is_ghost,
                     ),
                     last_message=ConversationLastMessage(
                         id=str(msg["_id"]),

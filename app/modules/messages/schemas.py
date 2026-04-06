@@ -147,6 +147,7 @@ class ConversationPeer(BaseModel):
     can_ping: bool = False
     chat_allowed: bool = False
     ping_status: str = "none"
+    is_ghost: bool = False
 
 
 class ConversationLastMessage(BaseModel):
@@ -157,6 +158,17 @@ class ConversationLastMessage(BaseModel):
     call: CallMeta | None = None
     status: MessageStatus = "sent"
     created_at: datetime
+
+
+class ClearChatResponse(BaseModel):
+    conversation_id: str
+    cleared_count: int
+
+
+class DeleteChatResponse(BaseModel):
+    conversation_id: str
+    cleared_count: int
+    ping_deleted: bool
 
 
 class ConversationItem(BaseModel):

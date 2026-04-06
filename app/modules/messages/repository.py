@@ -878,6 +878,63 @@ class MessagesRepository:
         )
         return res
 
+    async def bulk_hard_delete_own_messages_in_conversation(
+        self,
+        *,
+        user_id: str,
+        peer_user_id: str,
+    ) -> list[dict[str, Any]]:
+        """Hard-deletes all messages sent by user_id in the conversation. Returns deleted docs."""
+        conv_id = conversation_id_for(user_id, peer_user_id)
+        owned = await self.col.find(
+            {
+                "conversation_id": conv_id,
+                "sender_id": _oid(user_id),
+            }
+        ).to_list(length=None)
+
+        if not owned:
+            return []
+
+        owned_ids = [doc["_id"] for doc in owned]
+        await self.col.delete_many({"_id": {"$in": owned_ids}})
+
+        owned_id_strs = [str(oid) for oid in owned_ids]
+        now = datetime.now(UTC)
+        await self.col.update_many(
+            {"reply_to_message_id": {"$in": owned_id_strs}},
+            {
+                "$set": {
+                    "reply_preview.text": None,
+                    "reply_preview.is_deleted": True,
+                    "updated_at": now,
+                }
+            },
+        )
+        return owned
+
+    async def hide_peer_messages_for_user(
+        self,
+        *,
+        user_id: str,
+        peer_user_id: str,
+    ) -> int:
+        """Soft-hides messages received by user_id (sent by peer) in the conversation."""
+        conv_id = conversation_id_for(user_id, peer_user_id)
+        now = datetime.now(UTC)
+        result = await self.col.update_many(
+            {
+                "conversation_id": conv_id,
+                "sender_id": _oid(peer_user_id),
+                "hidden_for_user_ids": {"$ne": user_id},
+            },
+            {
+                "$addToSet": {"hidden_for_user_ids": user_id},
+                "$set": {"updated_at": now},
+            },
+        )
+        return result.modified_count
+
     async def hide_message_for_user(
         self,
         *,
