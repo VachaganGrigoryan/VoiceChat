@@ -18,6 +18,17 @@ async def emit_message_to_receiver(sio: socketio.AsyncServer, receiver_id: str, 
     await emit_to_user(sio, receiver_id, "receive_message", payload)
 
 
+async def emit_message_to_participants(
+    sio: socketio.AsyncServer,
+    *,
+    sender_id: str,
+    receiver_id: str,
+    payload: dict[str, Any],
+) -> None:
+    await emit_to_user(sio, sender_id, "receive_message", payload)
+    await emit_to_user(sio, receiver_id, "receive_message", payload)
+
+
 async def emit_message_status_to_user(sio: socketio.AsyncServer, user_id: str, payload: dict[str, Any]) -> None:
     await emit_to_user(sio, user_id, "message_status", payload)
 

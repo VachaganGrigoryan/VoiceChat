@@ -22,7 +22,7 @@ from app.modules.calls.session_registry import (
     get_call_session_registry,
 )
 from app.modules.realtime.auth import get_socket_user_id
-from app.modules.realtime.emits import emit_to_user
+from app.modules.realtime.emits import emit_message_to_participants, emit_to_user
 
 _expiration_tasks: dict[str, asyncio.Task[None]] = {}
 _reconnect_timeout_tasks: dict[str, asyncio.Task[None]] = {}
@@ -183,18 +183,22 @@ def register_events(sio: socketio.AsyncServer) -> None:
         try:
             payload = CallActionPayload.model_validate(data or {})
             service = get_calls_service()
-            call_doc = await service.end_call(user_id=user_id, call_id=payload.call_id)
+            result = await service.end_call(user_id=user_id, call_id=payload.call_id)
             cancel_call_expiration(payload.call_id)
             cancel_call_reconnect_timeout(payload.call_id)
             await clear_call_bindings(
                 call_id=payload.call_id,
-                participant_user_ids=list(call_doc["participant_user_ids"]),
+                participant_user_ids=list(result.call.participant_user_ids),
             )
             await emit_call_state_event(
                 sio,
                 event="call.ended",
                 service=service,
-                call_doc=call_doc,
+                call_doc=result.call,
+            )
+            await _emit_history_message_if_any(
+                sio,
+                history_message=result.history_message,
             )
         except AppError as exc:
             await _emit_socket_error(sio, sid, exc)
@@ -211,18 +215,22 @@ def register_events(sio: socketio.AsyncServer) -> None:
         try:
             payload = CallActionPayload.model_validate(data or {})
             service = get_calls_service()
-            call_doc = await service.reject_call(user_id=user_id, call_id=payload.call_id)
+            result = await service.reject_call(user_id=user_id, call_id=payload.call_id)
             cancel_call_expiration(payload.call_id)
             cancel_call_reconnect_timeout(payload.call_id)
             await clear_call_bindings(
                 call_id=payload.call_id,
-                participant_user_ids=list(call_doc["participant_user_ids"]),
+                participant_user_ids=list(result.call.participant_user_ids),
             )
             await emit_call_state_event(
                 sio,
                 event="call.rejected",
                 service=service,
-                call_doc=call_doc,
+                call_doc=result.call,
+            )
+            await _emit_history_message_if_any(
+                sio,
+                history_message=result.history_message,
             )
         except AppError as exc:
             await _emit_socket_error(sio, sid, exc)
@@ -333,6 +341,22 @@ async def emit_call_state_event(
         model.callee_user_id,
         event,
         callee_payload.model_dump(mode="json"),
+    )
+
+
+async def _emit_history_message_if_any(
+    sio: socketio.AsyncServer,
+    *,
+    history_message,
+) -> None:
+    if history_message is None:
+        return
+
+    await emit_message_to_participants(
+        sio,
+        sender_id=history_message.sender_id,
+        receiver_id=history_message.receiver_id,
+        payload=history_message.model_dump(mode="json"),
     )
 
 
@@ -572,17 +596,21 @@ async def _expire_call_later(
     try:
         await asyncio.sleep(delay)
         service = get_calls_service()
-        expired = await service.expire_call_if_due(call_id=call_id)
-        if expired is not None:
+        result = await service.expire_call_if_due(call_id=call_id)
+        if result is not None:
             await clear_call_bindings(
                 call_id=call_id,
-                participant_user_ids=list(expired["participant_user_ids"]),
+                participant_user_ids=list(result.call.participant_user_ids),
             )
             await emit_call_state_event(
                 sio,
                 event="call.ended",
                 service=service,
-                call_doc=expired,
+                call_doc=result.call,
+            )
+            await _emit_history_message_if_any(
+                sio,
+                history_message=result.history_message,
             )
     except asyncio.CancelledError:
         raise
@@ -601,17 +629,21 @@ async def _expire_reconnecting_call_later(
     try:
         await asyncio.sleep(delay)
         service = get_calls_service()
-        ended = await service.expire_call_if_due(call_id=call_id)
-        if ended is not None:
+        result = await service.expire_call_if_due(call_id=call_id)
+        if result is not None:
             await clear_call_bindings(
                 call_id=call_id,
-                participant_user_ids=list(ended["participant_user_ids"]),
+                participant_user_ids=list(result.call.participant_user_ids),
             )
             await emit_call_state_event(
                 sio,
                 event="call.ended",
                 service=service,
-                call_doc=ended,
+                call_doc=result.call,
+            )
+            await _emit_history_message_if_any(
+                sio,
+                history_message=result.history_message,
             )
     except asyncio.CancelledError:
         raise

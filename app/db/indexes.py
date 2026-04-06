@@ -77,6 +77,12 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
         [("conversation_id", ASCENDING), ("receiver_id", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)],
         name="ix_messages_conversation_receiver_status_createdAt_desc",
     )
+    await db[COL_MESSAGES].create_index(
+        [("call.call_id", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"type": "call"},
+        name="ux_messages_call_call_id",
+    )
 
     # REFRESH_TOKENS: unique token_hash
     await db[COL_REFRESH_TOKENS].create_index(
@@ -162,6 +168,11 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db[COL_CALLS].create_index(
         [("participant_user_ids", ASCENDING), ("created_at", DESCENDING)],
         name="ix_calls_participant_created_at_desc",
+    )
+    await db[COL_CALLS].create_index(
+        [("participant_user_ids", ASCENDING), ("ended_at", DESCENDING), ("_id", DESCENDING)],
+        partialFilterExpression={"is_live": False},
+        name="ix_calls_participant_ended_at_desc",
     )
 
 

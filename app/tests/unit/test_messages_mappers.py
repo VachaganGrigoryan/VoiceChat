@@ -114,3 +114,48 @@ def test_to_message_doc_uses_canonical_reply_preview_shape():
     assert normalized_message.reply_preview is not None
     assert normalized_message.reply_preview.type == "file"
     assert normalized_message.reply_preview.media_kind == "file"
+
+
+def test_to_message_doc_normalizes_call_payload():
+    message = {
+        "_id": "m4",
+        "conversation_id": "c1",
+        "sender_id": "u1",
+        "receiver_id": "u2",
+        "type": "call",
+        "text": None,
+        "media": None,
+        "call": {
+            "call_id": "call1",
+            "type": "audio",
+            "status": "ended",
+            "caller_user_id": "u1",
+            "callee_user_id": "u2",
+            "started_at": FIXED_NOW,
+            "answered_at": FIXED_NOW,
+            "ended_at": FIXED_NOW,
+            "duration_ms": 0,
+        },
+        "status": "sent",
+        "edited_at": None,
+        "delivered_at": None,
+        "read_at": None,
+        "reply_mode": None,
+        "reply_to_message_id": None,
+        "thread_root_id": None,
+        "reply_preview": None,
+        "is_thread_root": False,
+        "thread_reply_count": 0,
+        "last_thread_reply_at": None,
+        "reactions": [],
+        "hidden_for_user_ids": [],
+        "created_at": FIXED_NOW,
+        "updated_at": FIXED_NOW,
+    }
+
+    normalized_message = to_message_doc(message)
+
+    assert normalized_message.type == "call"
+    assert normalized_message.call is not None
+    assert normalized_message.call.call_id == "call1"
+    assert normalized_message.call.status == "ended"

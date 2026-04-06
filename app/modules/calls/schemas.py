@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 CallType = Literal["audio", "video"]
+CallDirection = Literal["incoming", "outgoing"]
 CallStatus = Literal[
     "ringing",
     "accepted",
@@ -49,6 +50,19 @@ class CallDoc(BaseModel):
     reconnect_deadline_at: datetime | None = None
     disconnected_user_ids: list[str] = Field(default_factory=list)
     is_live: bool = True
+
+
+class CallHistoryItem(BaseModel):
+    id: str
+    peer_user: CallPeerUserSummary
+    direction: CallDirection
+    type: CallType
+    status: Literal["rejected", "cancelled", "expired", "ended"]
+    started_at: datetime
+    answered_at: datetime | None = None
+    ended_at: datetime | None = None
+    duration_ms: int = Field(default=0, ge=0)
+    message_id: str | None = None
 
 
 class CreateCallRequest(BaseModel):

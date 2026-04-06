@@ -1,6 +1,7 @@
 from app.modules.realtime.emits import (
     emit_to_user,
     emit_message_to_receiver,
+    emit_message_to_participants,
     emit_message_status_to_user,
     emit_message_edited,
     emit_message_deleted,
@@ -17,6 +18,7 @@ from app.modules.realtime.emits import (
 __all__ = [
     "emit_to_user",
     "emit_message_to_receiver",
+    "emit_message_to_participants",
     "emit_message_status_to_user",
     "emit_message_edited",
     "emit_message_deleted",

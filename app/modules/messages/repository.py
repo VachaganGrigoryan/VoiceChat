@@ -6,6 +6,7 @@ from typing import Any, Optional
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from app.core.errors import AppError
 from app.core.pagination.cursor import decode_cursor, encode_cursor
@@ -40,6 +41,15 @@ def _truncate_preview_text(value: str | None) -> str | None:
     if len(normalized) <= REPLY_PREVIEW_MAX_TEXT:
         return normalized
     return normalized[: REPLY_PREVIEW_MAX_TEXT - 3].rstrip() + "..."
+
+
+def _call_duration_ms(call_doc: dict[str, Any]) -> int:
+    answered_at = call_doc.get("answered_at")
+    ended_at = call_doc.get("ended_at")
+    if answered_at is None or ended_at is None:
+        return 0
+
+    return max(int((ended_at - answered_at).total_seconds() * 1000), 0)
 
 
 def _build_reply_preview(message: dict[str, Any]) -> dict[str, Any]:
@@ -260,11 +270,15 @@ class MessagesRepository:
         message_type: str,
         text: str | None = None,
         media: dict[str, Any] | None = None,
+        call: dict[str, Any] | None = None,
+        created_at: datetime | None = None,
+        updated_at: datetime | None = None,
     ) -> dict[str, Any]:
         sid = _oid(sender_id)
         rid = _oid(receiver_id)
         conv_id = conversation_id_for(sender_id, receiver_id)
-        now = datetime.now(UTC)
+        created_ts = created_at or datetime.now(UTC)
+        updated_ts = updated_at or created_ts
 
         doc = {
             "conversation_id": conv_id,
@@ -273,6 +287,7 @@ class MessagesRepository:
             "type": message_type,
             "text": text,
             "media": media,
+            "call": call,
             "hidden_for_user_ids": [],
             "status": "sent",
             "edited_at": None,
@@ -286,13 +301,59 @@ class MessagesRepository:
             "thread_reply_count": 0,
             "last_thread_reply_at": None,
             "reactions": [],
-            "created_at": now,
-            "updated_at": now,
+            "created_at": created_ts,
+            "updated_at": updated_ts,
         }
 
         res = await self.col.insert_one(doc)
         doc["_id"] = res.inserted_id
         return doc
+
+    async def find_call_message_by_call_id(self, *, call_id: str) -> dict[str, Any] | None:
+        return await self.col.find_one(
+            {
+                "type": "call",
+                "call.call_id": call_id,
+            }
+        )
+
+    async def create_call_message(
+        self,
+        *,
+        call_doc: dict[str, Any],
+    ) -> dict[str, Any]:
+        terminal_at = (
+            call_doc.get("ended_at")
+            or call_doc.get("updated_at")
+            or call_doc.get("created_at")
+            or datetime.now(UTC)
+        )
+        payload = {
+            "call_id": str(call_doc["_id"]),
+            "type": call_doc["type"],
+            "status": call_doc["status"],
+            "caller_user_id": call_doc["caller_user_id"],
+            "callee_user_id": call_doc["callee_user_id"],
+            "started_at": call_doc["created_at"],
+            "answered_at": call_doc.get("answered_at"),
+            "ended_at": call_doc.get("ended_at"),
+            "duration_ms": max(_call_duration_ms(call_doc), 0),
+        }
+
+        try:
+            return await self.create_message(
+                sender_id=call_doc["caller_user_id"],
+                receiver_id=call_doc["callee_user_id"],
+                message_type="call",
+                call=payload,
+                created_at=terminal_at,
+                updated_at=terminal_at,
+            )
+        except DuplicateKeyError:
+            existing = await self.find_call_message_by_call_id(call_id=payload["call_id"])
+            if existing is not None:
+                return existing
+            raise
 
     async def create_quote_reply(
         self,
@@ -361,6 +422,7 @@ class MessagesRepository:
             "type": message_type,
             "text": text,
             "media": media,
+            "call": None,
             "hidden_for_user_ids": [],
             "status": "sent",
             "edited_at": None,

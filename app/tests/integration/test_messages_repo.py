@@ -1,8 +1,11 @@
+from datetime import UTC, datetime
+
 import pytest
 from bson import ObjectId
 
 from app.core.errors import AppError
 from app.db.mongo import get_db
+from app.db.indexes import ensure_indexes
 from app.modules.messages.repository import MessagesRepository
 
 
@@ -258,3 +261,40 @@ async def test_grouped_reactions_toggle_and_deleted_messages_reject_reactions():
         )
 
     assert exc.value.code == "MESSAGE_NOT_REACTABLE"
+
+
+@pytest.mark.asyncio
+async def test_create_call_message_is_unique_per_call():
+    db = get_db()
+    await ensure_indexes(db)
+    await db["messages"].delete_many({})
+
+    repo = MessagesRepository(db)
+    call_id = str(ObjectId())
+    started_at = datetime.now(UTC)
+
+    call_doc = {
+        "_id": call_id,
+        "caller_user_id": str(ObjectId()),
+        "callee_user_id": str(ObjectId()),
+        "participant_user_ids": [],
+        "type": "audio",
+        "status": "ended",
+        "room_id": f"call:{call_id}",
+        "created_at": started_at,
+        "updated_at": started_at,
+        "answered_at": started_at,
+        "ended_at": started_at,
+        "expires_at": None,
+        "reconnect_deadline_at": None,
+        "disconnected_user_ids": [],
+        "is_live": False,
+    }
+
+    first = await repo.create_call_message(call_doc=call_doc)
+    second = await repo.create_call_message(call_doc=call_doc)
+
+    assert str(first["_id"]) == str(second["_id"])
+    assert first["call"]["call_id"] == call_id
+    count = await db["messages"].count_documents({"type": "call", "call.call_id": call_id})
+    assert count == 1

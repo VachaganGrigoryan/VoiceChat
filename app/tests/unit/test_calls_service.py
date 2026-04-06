@@ -17,6 +17,10 @@ def service():
     pings_service = AsyncMock()
     presence_service = AsyncMock()
     webrtc_service = AsyncMock()
+    messages_repo = AsyncMock()
+
+    repo.list_due_call_ids.return_value = []
+    repo.expire_call_if_due.return_value = None
 
     svc = CallsService(
         repo=repo,
@@ -24,8 +28,17 @@ def service():
         pings_service=pings_service,
         presence_service=presence_service,
         webrtc_service=webrtc_service,
+        messages_repo=messages_repo,
     )
-    return svc, repo, users_repo, pings_service, presence_service, webrtc_service
+    return (
+        svc,
+        repo,
+        users_repo,
+        pings_service,
+        presence_service,
+        webrtc_service,
+        messages_repo,
+    )
 
 
 @pytest.fixture
@@ -52,7 +65,7 @@ def ringing_call_doc():
 
 @pytest.mark.asyncio
 async def test_create_call_rejects_self_call(service):
-    svc, _, _, _, _, _ = service
+    svc, _, _, _, _, _, _ = service
 
     with pytest.raises(AppError) as exc:
         await svc.create_call(
@@ -66,7 +79,7 @@ async def test_create_call_rejects_self_call(service):
 
 @pytest.mark.asyncio
 async def test_create_call_requires_existing_target(service):
-    svc, _, users_repo, _, _, _ = service
+    svc, _, users_repo, _, _, _, _ = service
     users_repo.find_by_id.return_value = None
 
     with pytest.raises(AppError) as exc:
@@ -81,7 +94,7 @@ async def test_create_call_requires_existing_target(service):
 
 @pytest.mark.asyncio
 async def test_create_call_enforces_permission_and_returns_doc(service, ringing_call_doc):
-    svc, repo, users_repo, pings_service, _, _ = service
+    svc, repo, users_repo, pings_service, _, _, _ = service
     users_repo.find_by_id.return_value = {"_id": "u2", "username": "callee"}
     repo.create_call.return_value = ringing_call_doc
 
@@ -98,15 +111,58 @@ async def test_create_call_enforces_permission_and_returns_doc(service, ringing_
 
 @pytest.mark.asyncio
 async def test_end_call_cancels_ringing_call_for_caller(service, ringing_call_doc):
-    svc, repo, _, _, _, _ = service
+    svc, repo, _, _, _, _, messages_repo = service
     cancelled = {**ringing_call_doc, "status": "cancelled", "is_live": False, "ended_at": ringing_call_doc["created_at"]}
+    call_message = {
+        "_id": "507f1f77bcf86cd799439099",
+        "conversation_id": "u1_u2",
+        "sender_id": "u1",
+        "receiver_id": "u2",
+        "type": "call",
+        "text": None,
+        "media": None,
+        "call": {
+            "call_id": "507f1f77bcf86cd799439011",
+            "type": "audio",
+            "status": "cancelled",
+            "caller_user_id": "u1",
+            "callee_user_id": "u2",
+            "started_at": ringing_call_doc["created_at"],
+            "answered_at": None,
+            "ended_at": ringing_call_doc["created_at"],
+            "duration_ms": 0,
+        },
+        "status": "sent",
+        "edited_at": None,
+        "delivered_at": None,
+        "read_at": None,
+        "reply_mode": None,
+        "reply_to_message_id": None,
+        "thread_root_id": None,
+        "reply_preview": None,
+        "is_thread_root": False,
+        "thread_reply_count": 0,
+        "last_thread_reply_at": None,
+        "reactions": [],
+        "hidden_for_user_ids": [],
+        "created_at": ringing_call_doc["created_at"],
+        "updated_at": ringing_call_doc["created_at"],
+    }
     repo.find_by_id.return_value = ringing_call_doc
-    repo.expire_call_if_due.return_value = None
     repo.cancel_call.return_value = cancelled
+    repo.set_history_message_id.return_value = {
+        **cancelled,
+        "history_message_id": "507f1f77bcf86cd799439099",
+    }
+    messages_repo.create_call_message.return_value = call_message
 
     result = await svc.end_call(user_id="u1", call_id="507f1f77bcf86cd799439011")
 
-    assert result["status"] == "cancelled"
+    assert result.call.status == "cancelled"
+    assert result.history_message is not None
+    assert result.history_message.type == "call"
+    assert result.history_message.call is not None
+    assert result.history_message.call.status == "cancelled"
     repo.cancel_call.assert_awaited_once_with(
         call_id="507f1f77bcf86cd799439011",
         caller_user_id="u1",
@@ -115,7 +171,7 @@ async def test_end_call_cancels_ringing_call_for_caller(service, ringing_call_do
 
 @pytest.mark.asyncio
 async def test_mark_active_promotes_connecting_call(service, ringing_call_doc):
-    svc, repo, _, _, _, _ = service
+    svc, repo, _, _, _, _, _ = service
     connecting = {
         **ringing_call_doc,
         "status": "connecting",
@@ -141,7 +197,7 @@ async def test_mark_active_promotes_connecting_call(service, ringing_call_doc):
 
 @pytest.mark.asyncio
 async def test_build_session_uses_webrtc_service_ice_servers(service, ringing_call_doc):
-    svc, _, users_repo, _, presence_service, webrtc_service = service
+    svc, _, users_repo, _, presence_service, webrtc_service, _ = service
     users_repo.find_by_id.return_value = {
         "_id": "u2",
         "username": "callee",
@@ -171,7 +227,7 @@ async def test_build_session_uses_webrtc_service_ice_servers(service, ringing_ca
 
 @pytest.mark.asyncio
 async def test_mark_reconnecting_from_disconnect_sets_deadline(service, ringing_call_doc, monkeypatch):
-    svc, repo, _, _, _, _ = service
+    svc, repo, _, _, _, _, _ = service
     active_call = {
         **ringing_call_doc,
         "status": "active",
@@ -200,8 +256,7 @@ async def test_mark_reconnecting_from_disconnect_sets_deadline(service, ringing_
 
 @pytest.mark.asyncio
 async def test_resume_call_rejects_non_recoverable_state(service, ringing_call_doc):
-    svc, repo, _, _, _, _ = service
-    repo.expire_call_if_due.return_value = None
+    svc, repo, _, _, _, _, _ = service
     repo.find_by_id.return_value = ringing_call_doc
 
     with pytest.raises(AppError) as exc:
@@ -212,7 +267,7 @@ async def test_resume_call_rejects_non_recoverable_state(service, ringing_call_d
 
 @pytest.mark.asyncio
 async def test_resume_call_updates_recoverable_call(service, ringing_call_doc):
-    svc, repo, _, _, _, _ = service
+    svc, repo, _, _, _, _, _ = service
     reconnecting_call = {
         **ringing_call_doc,
         "status": "reconnecting",
@@ -224,7 +279,6 @@ async def test_resume_call_updates_recoverable_call(service, ringing_call_doc):
         **reconnecting_call,
         "disconnected_user_ids": [],
     }
-    repo.expire_call_if_due.return_value = None
     repo.find_by_id.return_value = reconnecting_call
     repo.resume_reconnecting.return_value = resumed_call
 
@@ -235,3 +289,38 @@ async def test_resume_call_updates_recoverable_call(service, ringing_call_doc):
         call_id="507f1f77bcf86cd799439011",
         participant_user_id="u1",
     )
+
+
+@pytest.mark.asyncio
+async def test_list_history_builds_peer_direction_duration_and_message_id(service, ringing_call_doc):
+    svc, repo, users_repo, _, presence_service, _, _ = service
+    terminal_call = {
+        **ringing_call_doc,
+        "status": "ended",
+        "answered_at": datetime(2026, 3, 23, 12, 1, 0, tzinfo=UTC),
+        "ended_at": datetime(2026, 3, 23, 12, 2, 30, tzinfo=UTC),
+        "expires_at": None,
+        "is_live": False,
+        "history_message_id": "507f1f77bcf86cd799439099",
+    }
+    repo.list_history.return_value = ([terminal_call], "next-cursor")
+    users_repo.find_by_ids.return_value = {
+        "u2": {
+            "_id": "u2",
+            "username": "callee",
+            "display_name": "Callee",
+            "avatar": None,
+        }
+    }
+    presence_service.is_online.return_value = True
+
+    items, next_cursor = await svc.list_history(user_id="u1", limit=20)
+
+    assert next_cursor == "next-cursor"
+    assert len(items) == 1
+    item = items[0]
+    assert item.direction == "outgoing"
+    assert item.peer_user.id == "u2"
+    assert item.peer_user.is_online is True
+    assert item.duration_ms == 90000
+    assert item.message_id == "507f1f77bcf86cd799439099"

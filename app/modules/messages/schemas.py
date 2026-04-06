@@ -5,11 +5,12 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-MessageType = Literal["text", "media", "file"]
+MessageType = Literal["text", "media", "file", "call"]
 MediaKind = Literal["voice", "audio", "image", "video", "file"]
 MessageStatus = Literal["sent", "delivered", "read"]
 StorageProvider = Literal["local", "s3"]
 ReplyMode = Literal["quote", "thread"]
+CallMessageStatus = Literal["rejected", "cancelled", "expired", "ended"]
 
 
 class MediaMeta(BaseModel):
@@ -20,6 +21,18 @@ class MediaMeta(BaseModel):
     mime: str
     size_bytes: int = Field(ge=0)
     duration_ms: Optional[int] = Field(default=None, ge=0)
+
+
+class CallMeta(BaseModel):
+    call_id: str
+    type: Literal["audio", "video"]
+    status: CallMessageStatus
+    caller_user_id: str
+    callee_user_id: str
+    started_at: datetime
+    answered_at: datetime | None = None
+    ended_at: datetime | None = None
+    duration_ms: int = Field(default=0, ge=0)
 
 
 class ReplyPreview(BaseModel):
@@ -47,6 +60,7 @@ class MessageDoc(BaseModel):
     type: MessageType = "text"
     text: Optional[str] = None
     media: Optional[MediaMeta] = None
+    call: Optional[CallMeta] = None
 
     status: MessageStatus = "sent"
     edited_at: Optional[datetime] = None
@@ -140,6 +154,7 @@ class ConversationLastMessage(BaseModel):
     type: MessageType
     text: str | None = None
     media: MediaMeta | None = None
+    call: CallMeta | None = None
     status: MessageStatus = "sent"
     created_at: datetime
 

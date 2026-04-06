@@ -4,6 +4,7 @@ from app.db.mongo import get_db
 from app.modules.auth.repository import UsersRepository
 from app.modules.calls.repository import CallsRepository
 from app.modules.calls.service import CallsService
+from app.modules.messages.repository import MessagesRepository
 from app.modules.pings.repository import PingsRepository
 from app.modules.pings.service import PingsService
 from app.modules.realtime.presence import get_presence_backend
@@ -27,4 +28,5 @@ def get_calls_service() -> CallsService:
         pings_service=pings_service,
         presence_service=presence,
         webrtc_service=get_webrtc_service(),
+        messages_repo=MessagesRepository(db),
     )

@@ -9,8 +9,10 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from app.core.errors import AppError
+from app.core.pagination.cursor import decode_cursor, encode_cursor
 from app.db.indexes import COL_CALLS
 from app.modules.calls.schemas import CallType
+from app.modules.calls.state import TERMINAL_CALL_STATUSES
 
 _MISSING = object()
 
@@ -53,6 +55,7 @@ class CallsRepository:
             "reconnect_deadline_at": None,
             "disconnected_user_ids": [],
             "is_live": True,
+            "history_message_id": None,
         }
 
         try:
@@ -135,6 +138,27 @@ class CallsRepository:
         )
         return int(expired_result.modified_count + reconnect_result.modified_count)
 
+    async def list_due_call_ids(self, *, now: datetime | None = None) -> list[str]:
+        current_time = now or datetime.now(UTC)
+        cursor = self.col.find(
+            {
+                "is_live": True,
+                "$or": [
+                    {
+                        "status": "ringing",
+                        "expires_at": {"$lte": current_time},
+                    },
+                    {
+                        "status": "reconnecting",
+                        "reconnect_deadline_at": {"$lte": current_time},
+                    },
+                ],
+            },
+            projection={"_id": 1},
+        )
+        docs = await cursor.to_list(length=None)
+        return [str(doc["_id"]) for doc in docs]
+
     async def expire_call_if_due(
         self,
         *,
@@ -181,6 +205,18 @@ class CallsRepository:
                     "disconnected_user_ids": [],
                 }
             },
+            return_document=ReturnDocument.AFTER,
+        )
+
+    async def set_history_message_id(
+        self,
+        *,
+        call_id: str,
+        history_message_id: str,
+    ) -> dict[str, Any] | None:
+        return await self.col.find_one_and_update(
+            {"_id": _oid(call_id)},
+            {"$set": {"history_message_id": history_message_id}},
             return_document=ReturnDocument.AFTER,
         )
 
@@ -368,3 +404,61 @@ class CallsRepository:
             {"$set": update_fields},
             return_document=ReturnDocument.AFTER,
         )
+
+    async def list_history(
+        self,
+        *,
+        user_id: str,
+        peer_user_id: str | None = None,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        if limit < 1 or limit > 100:
+            raise AppError(
+                code="INVALID_LIMIT",
+                message="limit must be between 1 and 100",
+                status_code=400,
+            )
+
+        query: dict[str, Any] = {
+            "participant_user_ids": user_id,
+            "status": {"$in": sorted(TERMINAL_CALL_STATUSES)},
+            "ended_at": {"$ne": None},
+        }
+        if peer_user_id is not None:
+            query["participant_user_ids"] = {"$all": [user_id, peer_user_id]}
+
+        if cursor:
+            cursor_data = decode_cursor(
+                cursor,
+                required_fields={"ended_at", "call_id"},
+            )
+            cursor_ended_at = cursor_data["ended_at"]
+            cursor_call_id = str(cursor_data["call_id"])
+            query["$or"] = [
+                {"ended_at": {"$lt": cursor_ended_at}},
+                {
+                    "$and": [
+                        {"ended_at": cursor_ended_at},
+                        {"_id": {"$lt": _oid(cursor_call_id)}},
+                    ]
+                },
+            ]
+
+        items = await (
+            self.col.find(query)
+            .sort([("ended_at", -1), ("_id", -1)])
+            .limit(limit + 1)
+            .to_list(length=limit + 1)
+        )
+
+        next_cursor: str | None = None
+        if len(items) > limit:
+            last_visible = items[limit - 1]
+            next_cursor = encode_cursor(
+                ended_at=last_visible["ended_at"],
+                call_id=str(last_visible["_id"]),
+            )
+            items = items[:limit]
+
+        return items, next_cursor
