@@ -26,6 +26,8 @@ from app.modules.messages.schemas import (
     DeleteMessageResponse,
     AddReactionRequest,
     ThreadSummary,
+    ClearChatResponse,
+    DeleteChatResponse,
 )
 from app.modules.messages.service import MessagesService
 from app.modules.realtime import (
@@ -232,6 +234,47 @@ async def mark_conversation_read(
         peer_user_id=user_id,
     )
     return ok(request, data={"updated_count": updated})
+
+
+@router.delete(
+    "/conversations/{user_id}/messages",
+    response_model=SuccessResponse[ClearChatResponse],
+)
+async def clear_chat_history(
+    request: Request,
+    user_id: str,
+    user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
+):
+    conv_id, count = await service.clear_chat_history(
+        user_id=str(user["_id"]),
+        peer_user_id=user_id,
+    )
+    return ok(request, data=ClearChatResponse(conversation_id=conv_id, cleared_count=count))
+
+
+@router.delete(
+    "/conversations/{user_id}",
+    response_model=SuccessResponse[DeleteChatResponse],
+)
+async def delete_chat(
+    request: Request,
+    user_id: str,
+    user: dict = Depends(require_verified_user),
+    service: MessagesService = Depends(get_messages_service),
+):
+    conv_id, count, ping_deleted = await service.delete_chat(
+        user_id=str(user["_id"]),
+        peer_user_id=user_id,
+    )
+    return ok(
+        request,
+        data=DeleteChatResponse(
+            conversation_id=conv_id,
+            cleared_count=count,
+            ping_deleted=ping_deleted,
+        ),
+    )
 
 
 @router.get(

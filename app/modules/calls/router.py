@@ -17,6 +17,7 @@ from app.modules.calls.schemas import (
     CallDoc,
     CallHistoryItem,
     CallSession,
+    ClearCallHistoryResponse,
     CreateCallRequest,
 )
 from app.modules.calls.service import CallsService
@@ -128,6 +129,30 @@ async def get_call_history(
             cursor=cursor,
             next_cursor=next_cursor,
             limit=limit,
+        ),
+    )
+
+
+@router.delete(
+    "/history",
+    response_model=SuccessResponse[ClearCallHistoryResponse],
+    dependencies=[Depends(rate_limit("10/minute", scope="call_history_clear"))],
+)
+async def clear_call_history(
+    request: Request,
+    peer_user_id: str | None = Query(None),
+    user: dict = Depends(require_verified_user),
+    service: CallsService = Depends(get_calls_service),
+):
+    deleted_count, hidden_count = await service.clear_call_history(
+        user_id=str(user["_id"]),
+        peer_user_id=peer_user_id,
+    )
+    return ok(
+        request,
+        data=ClearCallHistoryResponse(
+            deleted_count=deleted_count,
+            hidden_count=hidden_count,
         ),
     )
 

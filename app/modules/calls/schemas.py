@@ -65,6 +65,11 @@ class CallHistoryItem(BaseModel):
     message_id: str | None = None
 
 
+class ClearCallHistoryResponse(BaseModel):
+    deleted_count: int
+    hidden_count: int
+
+
 class CreateCallRequest(BaseModel):
     callee_user_id: str = Field(min_length=1)
     type: CallType
