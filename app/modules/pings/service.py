@@ -161,6 +161,9 @@ class PingsService:
         )
         return self._to_ping_response(doc)
 
+    async def delete_ping_for_pair(self, *, user_id: str, peer_user_id: str) -> bool:
+        return await self.pings_repo.delete_pair(user_a=user_id, user_b=peer_user_id)
+
     async def list_blocked(self, *, user_id: str):
         docs = await self.pings_repo.list_blocked(user_id=user_id)
         return [self._to_ping_response(doc) for doc in docs]

@@ -74,6 +74,26 @@ class CallsService:
         self.webrtc_service = webrtc_service
         self.messages_repo = messages_repo
 
+    async def clear_call_history(
+        self,
+        *,
+        user_id: str,
+        peer_user_id: str | None = None,
+    ) -> tuple[int, int]:
+        """
+        Hard-deletes own call records (caller) and soft-hides peer call records (callee).
+        Returns (deleted_count, hidden_count).
+        """
+        deleted_count = await self.repo.hard_delete_own_calls_in_history(
+            user_id=user_id,
+            peer_user_id=peer_user_id,
+        )
+        hidden_count = await self.repo.hide_peer_calls_for_user(
+            user_id=user_id,
+            peer_user_id=peer_user_id,
+        )
+        return deleted_count, hidden_count
+
     async def expire_stale_calls(self) -> int:
         due_call_ids = await self.repo.list_due_call_ids()
         expired_count = 0

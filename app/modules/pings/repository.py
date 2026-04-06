@@ -276,6 +276,10 @@ class PingsRepository:
             raise AppError(code="PAIR_NOT_BLOCKED", message="Pair is not blocked by this user", status_code=400)
         return res
 
+    async def delete_pair(self, *, user_a: str, user_b: str) -> bool:
+        result = await self.col.delete_one({"pair_id": pair_id_for(user_a, user_b)})
+        return result.deleted_count > 0
+
     async def list_blocked(self, *, user_id: str) -> list[dict[str, Any]]:
         return await self.col.find(
             {
