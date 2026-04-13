@@ -21,7 +21,35 @@ def _oid(value: str) -> ObjectId:
     try:
         return ObjectId(value)
     except Exception as exc:
-        raise AppError(code="INVALID_ID", message="Invalid id", status_code=400) from exc
+        raise AppError(
+            code="INVALID_ID", message="Invalid id", status_code=400
+        ) from exc
+
+
+def _build_participant_states(
+    *,
+    caller_user_id: str,
+    callee_user_id: str,
+    call_type: CallType,
+    now: datetime,
+) -> dict[str, dict[str, Any]]:
+    video_enabled = call_type == "video"
+    return {
+        caller_user_id: {
+            "role": "caller",
+            "join_state": "waiting",
+            "audio_enabled": True,
+            "video_enabled": video_enabled,
+            "updated_at": now,
+        },
+        callee_user_id: {
+            "role": "callee",
+            "join_state": "waiting",
+            "audio_enabled": True,
+            "video_enabled": video_enabled,
+            "updated_at": now,
+        },
+    }
 
 
 class CallsRepository:
@@ -54,6 +82,12 @@ class CallsRepository:
             "expires_at": expires_at,
             "reconnect_deadline_at": None,
             "disconnected_user_ids": [],
+            "participant_states": _build_participant_states(
+                caller_user_id=caller_user_id,
+                callee_user_id=callee_user_id,
+                call_type=call_type,
+                now=now,
+            ),
             "hidden_for_user_ids": [],
             "is_live": True,
             "history_message_id": None,
@@ -221,7 +255,47 @@ class CallsRepository:
             return_document=ReturnDocument.AFTER,
         )
 
-    async def accept_call(self, *, call_id: str, callee_user_id: str) -> dict[str, Any] | None:
+    async def update_participant_state(
+        self,
+        *,
+        call_id: str,
+        participant_user_id: str,
+        join_state: str | object = _MISSING,
+        audio_enabled: bool | object = _MISSING,
+        video_enabled: bool | object = _MISSING,
+    ) -> dict[str, Any] | None:
+        now = datetime.now(UTC)
+        update_fields: dict[str, Any] = {
+            "updated_at": now,
+            f"participant_states.{participant_user_id}.updated_at": now,
+        }
+
+        if join_state is not _MISSING:
+            update_fields[f"participant_states.{participant_user_id}.join_state"] = (
+                join_state
+            )
+        if audio_enabled is not _MISSING:
+            update_fields[f"participant_states.{participant_user_id}.audio_enabled"] = (
+                audio_enabled
+            )
+        if video_enabled is not _MISSING:
+            update_fields[f"participant_states.{participant_user_id}.video_enabled"] = (
+                video_enabled
+            )
+
+        return await self.col.find_one_and_update(
+            {
+                "_id": _oid(call_id),
+                "participant_user_ids": participant_user_id,
+                "is_live": True,
+            },
+            {"$set": update_fields},
+            return_document=ReturnDocument.AFTER,
+        )
+
+    async def accept_call(
+        self, *, call_id: str, callee_user_id: str
+    ) -> dict[str, Any] | None:
         now = datetime.now(UTC)
         return await self._transition_status(
             call_id=call_id,
@@ -238,7 +312,9 @@ class CallsRepository:
             disconnected_user_ids=[],
         )
 
-    async def reject_call(self, *, call_id: str, callee_user_id: str) -> dict[str, Any] | None:
+    async def reject_call(
+        self, *, call_id: str, callee_user_id: str
+    ) -> dict[str, Any] | None:
         now = datetime.now(UTC)
         return await self._transition_status(
             call_id=call_id,
@@ -255,7 +331,9 @@ class CallsRepository:
             disconnected_user_ids=[],
         )
 
-    async def cancel_call(self, *, call_id: str, caller_user_id: str) -> dict[str, Any] | None:
+    async def cancel_call(
+        self, *, call_id: str, caller_user_id: str
+    ) -> dict[str, Any] | None:
         now = datetime.now(UTC)
         return await self._transition_status(
             call_id=call_id,
@@ -272,7 +350,9 @@ class CallsRepository:
             disconnected_user_ids=[],
         )
 
-    async def end_call(self, *, call_id: str, participant_user_id: str) -> dict[str, Any] | None:
+    async def end_call(
+        self, *, call_id: str, participant_user_id: str
+    ) -> dict[str, Any] | None:
         now = datetime.now(UTC)
         return await self._transition_status(
             call_id=call_id,
@@ -286,10 +366,12 @@ class CallsRepository:
             disconnected_user_ids=[],
         )
 
-    async def set_connecting(self, *, call_id: str, caller_user_id: str) -> dict[str, Any] | None:
+    async def set_connecting(
+        self, *, call_id: str, caller_user_id: str
+    ) -> dict[str, Any] | None:
         return await self._transition_status(
             call_id=call_id,
-            expected_statuses=("accepted", "reconnecting"),
+            expected_statuses=("accepted", "active", "reconnecting"),
             next_status="connecting",
             is_live=True,
             extra_filter={"caller_user_id": caller_user_id},
@@ -297,7 +379,9 @@ class CallsRepository:
             disconnected_user_ids=[],
         )
 
-    async def set_active(self, *, call_id: str, participant_user_id: str) -> dict[str, Any] | None:
+    async def set_active(
+        self, *, call_id: str, participant_user_id: str
+    ) -> dict[str, Any] | None:
         return await self._transition_status(
             call_id=call_id,
             expected_statuses=("connecting",),
@@ -328,6 +412,8 @@ class CallsRepository:
                     "status": "reconnecting",
                     "updated_at": now,
                     "reconnect_deadline_at": reconnect_deadline_at,
+                    f"participant_states.{participant_user_id}.join_state": "disconnected",
+                    f"participant_states.{participant_user_id}.updated_at": now,
                 },
                 "$addToSet": {
                     "disconnected_user_ids": participant_user_id,
@@ -353,12 +439,30 @@ class CallsRepository:
             {
                 "$set": {
                     "updated_at": now,
+                    f"participant_states.{participant_user_id}.join_state": "joined",
+                    f"participant_states.{participant_user_id}.updated_at": now,
                 },
                 "$pull": {
                     "disconnected_user_ids": participant_user_id,
                 },
             },
             return_document=ReturnDocument.AFTER,
+        )
+
+    async def set_connecting_after_resume(
+        self, *, call_id: str, participant_user_id: str
+    ) -> dict[str, Any] | None:
+        return await self._transition_status(
+            call_id=call_id,
+            expected_statuses=("reconnecting",),
+            next_status="connecting",
+            is_live=True,
+            extra_filter={
+                "participant_user_ids": participant_user_id,
+                "disconnected_user_ids": [],
+            },
+            reconnect_deadline_at=None,
+            disconnected_user_ids=[],
         )
 
     async def _transition_status(
