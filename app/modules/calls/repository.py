@@ -371,7 +371,7 @@ class CallsRepository:
     ) -> dict[str, Any] | None:
         return await self._transition_status(
             call_id=call_id,
-            expected_statuses=("accepted", "reconnecting"),
+            expected_statuses=("accepted", "active", "reconnecting"),
             next_status="connecting",
             is_live=True,
             extra_filter={"caller_user_id": caller_user_id},
@@ -447,6 +447,22 @@ class CallsRepository:
                 },
             },
             return_document=ReturnDocument.AFTER,
+        )
+
+    async def set_connecting_after_resume(
+        self, *, call_id: str, participant_user_id: str
+    ) -> dict[str, Any] | None:
+        return await self._transition_status(
+            call_id=call_id,
+            expected_statuses=("reconnecting",),
+            next_status="connecting",
+            is_live=True,
+            extra_filter={
+                "participant_user_ids": participant_user_id,
+                "disconnected_user_ids": [],
+            },
+            reconnect_deadline_at=None,
+            disconnected_user_ids=[],
         )
 
     async def _transition_status(

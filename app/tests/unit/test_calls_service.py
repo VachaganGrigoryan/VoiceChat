@@ -256,6 +256,56 @@ async def test_mark_active_promotes_connecting_call(service, ringing_call_doc):
 
 
 @pytest.mark.asyncio
+async def test_start_connecting_transitions_active_call_for_recovery_offer(
+    service, ringing_call_doc
+):
+    svc, repo, _, _, _, _, _ = service
+    active_call = {
+        **ringing_call_doc,
+        "status": "active",
+        "expires_at": None,
+        "answered_at": ringing_call_doc["created_at"],
+    }
+    connecting_call = {
+        **active_call,
+        "status": "connecting",
+    }
+    repo.find_by_id.return_value = active_call
+    repo.set_connecting.return_value = connecting_call
+
+    result = await svc.start_connecting(
+        user_id="u1", call_id="507f1f77bcf86cd799439011"
+    )
+
+    assert result["status"] == "connecting"
+    repo.set_connecting.assert_awaited_once_with(
+        call_id="507f1f77bcf86cd799439011",
+        caller_user_id="u1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_start_connecting_is_idempotent_when_call_already_connecting(
+    service, ringing_call_doc
+):
+    svc, repo, _, _, _, _, _ = service
+    connecting_call = {
+        **ringing_call_doc,
+        "status": "connecting",
+        "expires_at": None,
+        "answered_at": ringing_call_doc["created_at"],
+    }
+    repo.find_by_id.return_value = connecting_call
+
+    result = await svc.start_connecting(
+        user_id="u1", call_id="507f1f77bcf86cd799439011"
+    )
+
+    assert result == connecting_call
+    repo.set_connecting.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_mark_participant_joined_updates_live_call(service, ringing_call_doc):
     svc, repo, _, _, _, _, _ = service
     accepted = {
@@ -467,16 +517,58 @@ async def test_resume_call_updates_recoverable_call(service, ringing_call_doc):
         **reconnecting_call,
         "disconnected_user_ids": [],
     }
+    connecting_call = {
+        **resumed_call,
+        "status": "connecting",
+        "reconnect_deadline_at": None,
+    }
     repo.find_by_id.return_value = reconnecting_call
     repo.resume_reconnecting.return_value = resumed_call
+    repo.set_connecting_after_resume.return_value = connecting_call
 
     result = await svc.resume_call(user_id="u1", call_id="507f1f77bcf86cd799439011")
 
+    assert result["status"] == "connecting"
     assert result["disconnected_user_ids"] == []
     repo.resume_reconnecting.assert_awaited_once_with(
         call_id="507f1f77bcf86cd799439011",
         participant_user_id="u1",
     )
+    repo.set_connecting_after_resume.assert_awaited_once_with(
+        call_id="507f1f77bcf86cd799439011",
+        participant_user_id="u1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_resume_call_transitions_to_connecting_when_everyone_is_back(
+    service, ringing_call_doc
+):
+    svc, repo, _, _, _, _, _ = service
+    reconnecting_call = {
+        **ringing_call_doc,
+        "status": "reconnecting",
+        "expires_at": None,
+        "reconnect_deadline_at": datetime.now(UTC),
+        "disconnected_user_ids": ["u1"],
+    }
+    resumed_call = {
+        **reconnecting_call,
+        "disconnected_user_ids": [],
+    }
+    connecting_call = {
+        **resumed_call,
+        "status": "connecting",
+        "reconnect_deadline_at": None,
+    }
+    repo.find_by_id.return_value = reconnecting_call
+    repo.resume_reconnecting.return_value = resumed_call
+    repo.set_connecting_after_resume.return_value = connecting_call
+
+    result = await svc.resume_call(user_id="u1", call_id="507f1f77bcf86cd799439011")
+
+    assert result["status"] == "connecting"
+    assert result["reconnect_deadline_at"] is None
 
 
 @pytest.mark.asyncio
@@ -514,6 +606,11 @@ async def test_resume_call_preserves_media_state(service, ringing_call_doc):
     }
     repo.find_by_id.return_value = reconnecting_call
     repo.resume_reconnecting.return_value = resumed_call
+    repo.set_connecting_after_resume.return_value = {
+        **resumed_call,
+        "status": "connecting",
+        "reconnect_deadline_at": None,
+    }
 
     result = await svc.resume_call(user_id="u1", call_id="507f1f77bcf86cd799439011")
 

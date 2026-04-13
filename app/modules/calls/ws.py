@@ -406,23 +406,6 @@ def register_events(sio: socketio.AsyncServer) -> None:
         try:
             payload = CallActionPayload.model_validate(data or {})
             service = get_calls_service()
-            current_call = await service.get_participant_call(
-                user_id=user_id, call_id=payload.call_id
-            )
-            model = service.to_call_doc(current_call)
-            registry = get_call_session_registry()
-            connection_count = await registry.get_connection_count(
-                call_id=model.id,
-                user_id=user_id,
-            )
-
-            if connection_count > 0 and user_id not in model.disconnected_user_ids:
-                raise AppError(
-                    code="CALL_NOT_RECOVERABLE",
-                    message="Call is already bound to another active socket",
-                    status_code=409,
-                )
-
             call_doc = await service.resume_call(
                 user_id=user_id, call_id=payload.call_id
             )
@@ -439,6 +422,8 @@ def register_events(sio: socketio.AsyncServer) -> None:
                     call_id=payload.call_id,
                     reconnect_deadline_at=call_doc.get("reconnect_deadline_at"),
                 )
+            else:
+                cancel_call_reconnect_timeout(payload.call_id)
             await emit_call_state_event(
                 sio,
                 event="call.resumed",

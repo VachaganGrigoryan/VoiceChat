@@ -294,8 +294,12 @@ class CallsService:
 
         self._raise_if_expired(current)
         ensure_status_in(
-            current["status"], allowed_statuses=("accepted", "reconnecting")
+            current["status"],
+            allowed_statuses=("accepted", "active", "connecting", "reconnecting"),
         )
+
+        if current["status"] == "connecting":
+            return current
 
         updated = await self.repo.set_connecting(
             call_id=call_id, caller_user_id=user_id
@@ -396,6 +400,23 @@ class CallsService:
             participant_user_id=user_id,
         )
         if updated is not None:
+            if (
+                updated.get("status") == "reconnecting"
+                and not updated.get("disconnected_user_ids")
+            ):
+                connecting = await self.repo.set_connecting_after_resume(
+                    call_id=call_id,
+                    participant_user_id=user_id,
+                )
+                if connecting is not None:
+                    return connecting
+
+                refreshed = await self.repo.find_by_id(call_id)
+                if (
+                    refreshed is not None
+                    and user_id in refreshed.get("participant_user_ids", [])
+                ):
+                    return refreshed
             return updated
         return await self._reload_after_conflict(user_id=user_id, call_id=call_id)
 

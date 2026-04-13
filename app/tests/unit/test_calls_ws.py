@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -169,4 +169,40 @@ async def test_call_media_state_emits_update_for_real_change(monkeypatch):
         {"call_id": "507f1f77bcf86cd799439011", "audio_enabled": False},
     )
 
+    participant_updated.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_call_resume_allows_replacement_socket_and_cancels_timeout(monkeypatch):
+    sio = _FakeSio()
+    ws.register_events(sio)
+    service = _build_service()
+    resumed_call = _build_repo_call(status="connecting", join_state="joined")
+
+    service.resume_call = AsyncMock(return_value=resumed_call)  # type: ignore[attr-defined]
+
+    bind = AsyncMock()
+    emit_state = AsyncMock()
+    participant_updated = AsyncMock()
+    cancel_timeout = Mock()
+    schedule_timeout = Mock()
+
+    monkeypatch.setattr(ws, "get_socket_user_id", AsyncMock(return_value="u1"))
+    monkeypatch.setattr(ws, "get_calls_service", lambda: service)
+    monkeypatch.setattr(ws, "_bind_socket_to_call_room", bind)
+    monkeypatch.setattr(ws, "emit_call_state_event", emit_state)
+    monkeypatch.setattr(ws, "emit_call_participant_updated_event", participant_updated)
+    monkeypatch.setattr(ws, "cancel_call_reconnect_timeout", cancel_timeout)
+    monkeypatch.setattr(ws, "schedule_call_reconnect_timeout", schedule_timeout)
+
+    await sio.handlers["call.resume"]("sid-2", {"call_id": "507f1f77bcf86cd799439011"})
+
+    service.resume_call.assert_awaited_once_with(
+        user_id="u1",
+        call_id="507f1f77bcf86cd799439011",
+    )
+    bind.assert_awaited_once()
+    cancel_timeout.assert_called_once_with("507f1f77bcf86cd799439011")
+    schedule_timeout.assert_not_called()
+    emit_state.assert_awaited_once()
     participant_updated.assert_awaited_once()
