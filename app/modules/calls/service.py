@@ -12,6 +12,8 @@ from app.modules.calls.schemas import (
     CallDirection,
     CallDoc,
     CallHistoryItem,
+    CallParticipantJoinState,
+    CallParticipantState,
     CallPeerUserSummary,
     CallSession,
     CallStatus,
@@ -47,7 +49,9 @@ class WebRTCServiceProto(Protocol):
 
 
 class MessagesRepositoryProto(Protocol):
-    async def create_call_message(self, *, call_doc: dict[str, Any]) -> dict[str, Any]: ...
+    async def create_call_message(
+        self, *, call_doc: dict[str, Any]
+    ) -> dict[str, Any]: ...
 
 
 @dataclass
@@ -110,7 +114,9 @@ class CallsService:
             statuses=RECOVERABLE_CALL_STATUSES,
         )
 
-    async def get_participant_call(self, *, user_id: str, call_id: str) -> dict[str, Any]:
+    async def get_participant_call(
+        self, *, user_id: str, call_id: str
+    ) -> dict[str, Any]:
         await self.expire_stale_calls()
         return await self._get_participant_call(user_id=user_id, call_id=call_id)
 
@@ -148,7 +154,9 @@ class CallsService:
             )
         )
         users_task = asyncio.create_task(self.users_repo.find_by_ids(peer_user_ids))
-        presence_task = asyncio.create_task(self._get_presence_map(user_ids=peer_user_ids))
+        presence_task = asyncio.create_task(
+            self._get_presence_map(user_ids=peer_user_ids)
+        )
         users_by_id, online_by_id = await asyncio.gather(users_task, presence_task)
 
         items = [
@@ -180,14 +188,18 @@ class CallsService:
 
         target = await self.users_repo.find_by_id(callee_user_id)
         if not target:
-            raise AppError(code="USER_NOT_FOUND", message="User not found", status_code=404)
+            raise AppError(
+                code="USER_NOT_FOUND", message="User not found", status_code=404
+            )
 
         await self.pings_service.ensure_can_message(
             sender_id=caller_user_id,
             receiver_id=callee_user_id,
         )
 
-        expires_at = datetime.now(UTC) + timedelta(seconds=settings.call_ring_timeout_seconds)
+        expires_at = datetime.now(UTC) + timedelta(
+            seconds=settings.call_ring_timeout_seconds
+        )
         return await self.repo.create_call(
             caller_user_id=caller_user_id,
             callee_user_id=callee_user_id,
@@ -211,7 +223,12 @@ class CallsService:
 
         updated = await self.repo.accept_call(call_id=call_id, callee_user_id=user_id)
         if updated is not None:
-            return updated
+            joined = await self.repo.update_participant_state(
+                call_id=call_id,
+                participant_user_id=user_id,
+                join_state="joined",
+            )
+            return joined or updated
         return await self._reload_after_conflict(user_id=user_id, call_id=call_id)
 
     async def reject_call(self, *, user_id: str, call_id: str) -> CallTerminalResult:
@@ -243,13 +260,19 @@ class CallsService:
 
         if status == "ringing":
             if user_id == current["caller_user_id"]:
-                updated = await self.repo.cancel_call(call_id=call_id, caller_user_id=user_id)
+                updated = await self.repo.cancel_call(
+                    call_id=call_id, caller_user_id=user_id
+                )
             elif user_id == current["callee_user_id"]:
-                updated = await self.repo.reject_call(call_id=call_id, callee_user_id=user_id)
+                updated = await self.repo.reject_call(
+                    call_id=call_id, callee_user_id=user_id
+                )
             else:
                 updated = None
         elif status in {"accepted", "connecting", "active", "reconnecting"}:
-            updated = await self.repo.end_call(call_id=call_id, participant_user_id=user_id)
+            updated = await self.repo.end_call(
+                call_id=call_id, participant_user_id=user_id
+            )
         else:
             updated = None
 
@@ -270,14 +293,20 @@ class CallsService:
             )
 
         self._raise_if_expired(current)
-        ensure_status_in(current["status"], allowed_statuses=("accepted", "reconnecting"))
+        ensure_status_in(
+            current["status"], allowed_statuses=("accepted", "reconnecting")
+        )
 
-        updated = await self.repo.set_connecting(call_id=call_id, caller_user_id=user_id)
+        updated = await self.repo.set_connecting(
+            call_id=call_id, caller_user_id=user_id
+        )
         if updated is not None:
             return updated
         return await self._reload_after_conflict(user_id=user_id, call_id=call_id)
 
-    async def ensure_answer_allowed(self, *, user_id: str, call_id: str) -> dict[str, Any]:
+    async def ensure_answer_allowed(
+        self, *, user_id: str, call_id: str
+    ) -> dict[str, Any]:
         await self.expire_stale_calls()
         current = await self._get_participant_call(user_id=user_id, call_id=call_id)
 
@@ -292,7 +321,9 @@ class CallsService:
         ensure_status_in(current["status"], allowed_statuses=("connecting",))
         return current
 
-    async def ensure_ice_candidate_allowed(self, *, user_id: str, call_id: str) -> dict[str, Any]:
+    async def ensure_ice_candidate_allowed(
+        self, *, user_id: str, call_id: str
+    ) -> dict[str, Any]:
         await self.expire_stale_calls()
         current = await self._get_participant_call(user_id=user_id, call_id=call_id)
 
@@ -310,7 +341,9 @@ class CallsService:
 
         ensure_status_in(current["status"], allowed_statuses=("connecting",))
 
-        updated = await self.repo.set_active(call_id=call_id, participant_user_id=user_id)
+        updated = await self.repo.set_active(
+            call_id=call_id, participant_user_id=user_id
+        )
         if updated is not None:
             return updated
         return await self._reload_after_conflict(user_id=user_id, call_id=call_id)
@@ -331,7 +364,9 @@ class CallsService:
         if current["status"] not in RECOVERABLE_CALL_STATUSES:
             return None
 
-        deadline = datetime.now(UTC) + timedelta(seconds=settings.call_reconnect_grace_seconds)
+        deadline = datetime.now(UTC) + timedelta(
+            seconds=settings.call_reconnect_grace_seconds
+        )
         updated = await self.repo.mark_reconnecting(
             call_id=call_id,
             participant_user_id=user_id,
@@ -364,6 +399,87 @@ class CallsService:
             return updated
         return await self._reload_after_conflict(user_id=user_id, call_id=call_id)
 
+    async def mark_participant_joined(
+        self, *, user_id: str, call_id: str
+    ) -> dict[str, Any]:
+        await self.expire_stale_calls()
+        current = await self._get_participant_call(user_id=user_id, call_id=call_id)
+
+        self._raise_if_expired(current)
+        ensure_status_in(
+            current["status"],
+            allowed_statuses=tuple(LIVE_CALL_STATUSES),
+            message="Call is not live",
+        )
+
+        participant_state = self.to_call_doc(current).participant_states[user_id]
+        if participant_state.join_state == "joined":
+            return current
+
+        updated = await self.repo.update_participant_state(
+            call_id=call_id,
+            participant_user_id=user_id,
+            join_state="joined",
+        )
+        if updated is not None:
+            return updated
+        return await self._reload_after_conflict(user_id=user_id, call_id=call_id)
+
+    async def update_media_state(
+        self,
+        *,
+        user_id: str,
+        call_id: str,
+        audio_enabled: bool | None = None,
+        video_enabled: bool | None = None,
+    ) -> dict[str, Any]:
+        if audio_enabled is None and video_enabled is None:
+            raise AppError(
+                code="INVALID_CALL_MEDIA_STATE",
+                message="At least one media state field is required",
+                status_code=400,
+            )
+
+        await self.expire_stale_calls()
+        current = await self._get_participant_call(user_id=user_id, call_id=call_id)
+
+        self._raise_if_expired(current)
+        ensure_status_in(
+            current["status"],
+            allowed_statuses=tuple(LIVE_CALL_STATUSES),
+            message="Call is not live",
+        )
+
+        if current["type"] == "audio" and video_enabled is True:
+            raise AppError(
+                code="INVALID_CALL_MEDIA_STATE",
+                message="Video cannot be enabled for an audio call",
+                status_code=409,
+            )
+
+        participant_state = self.to_call_doc(current).participant_states[user_id]
+        if (
+            audio_enabled is None or audio_enabled == participant_state.audio_enabled
+        ) and (
+            video_enabled is None or video_enabled == participant_state.video_enabled
+        ):
+            return current
+
+        update_kwargs: dict[str, Any] = {}
+        if audio_enabled is not None:
+            update_kwargs["audio_enabled"] = audio_enabled
+        if video_enabled is not None:
+            update_kwargs["video_enabled"] = video_enabled
+
+        updated = await self.repo.update_participant_state(
+            call_id=call_id,
+            participant_user_id=user_id,
+            **update_kwargs,
+        )
+        if updated is not None:
+            return updated
+        return await self._reload_after_conflict(user_id=user_id, call_id=call_id)
+
     async def expire_call_if_due(self, *, call_id: str) -> CallTerminalResult | None:
         return await self._expire_call_if_due_with_history(call_id=call_id)
 
@@ -391,6 +507,8 @@ class CallsService:
         if isinstance(doc, CallDoc):
             return doc
 
+        participant_states = self._normalize_participant_states(doc)
+
         return CallDoc(
             id=str(doc["_id"]),
             caller_user_id=doc["caller_user_id"],
@@ -406,17 +524,24 @@ class CallsService:
             expires_at=doc.get("expires_at"),
             reconnect_deadline_at=doc.get("reconnect_deadline_at"),
             disconnected_user_ids=list(doc.get("disconnected_user_ids") or []),
+            participant_states=participant_states,
             is_live=bool(doc.get("is_live", False)),
         )
 
-    async def _get_participant_call(self, *, user_id: str, call_id: str) -> dict[str, Any]:
+    async def _get_participant_call(
+        self, *, user_id: str, call_id: str
+    ) -> dict[str, Any]:
         await self._expire_call_if_due_with_history(call_id=call_id)
         call = await self.repo.find_by_id(call_id)
         if not call or user_id not in call.get("participant_user_ids", []):
-            raise AppError(code="CALL_NOT_FOUND", message="Call not found", status_code=404)
+            raise AppError(
+                code="CALL_NOT_FOUND", message="Call not found", status_code=404
+            )
         return call
 
-    async def _reload_after_conflict(self, *, user_id: str, call_id: str) -> dict[str, Any]:
+    async def _reload_after_conflict(
+        self, *, user_id: str, call_id: str
+    ) -> dict[str, Any]:
         current = await self._get_participant_call(user_id=user_id, call_id=call_id)
         self._raise_if_expired(current)
         raise AppError(
@@ -435,20 +560,26 @@ class CallsService:
             return None
         return await self._build_terminal_result(expired)
 
-    async def _build_terminal_result(self, call_doc: dict[str, Any]) -> CallTerminalResult:
+    async def _build_terminal_result(
+        self, call_doc: dict[str, Any]
+    ) -> CallTerminalResult:
         history_message = await self._ensure_history_message(call_doc=call_doc)
         return CallTerminalResult(
             call=self.to_call_doc(call_doc),
             history_message=history_message,
         )
 
-    async def _ensure_history_message(self, *, call_doc: dict[str, Any]) -> MessageDoc | None:
+    async def _ensure_history_message(
+        self, *, call_doc: dict[str, Any]
+    ) -> MessageDoc | None:
         if call_doc.get("status") not in TERMINAL_CALL_STATUSES:
             return None
         if self.messages_repo is None:
             return None
 
-        history_message_doc = await self.messages_repo.create_call_message(call_doc=call_doc)
+        history_message_doc = await self.messages_repo.create_call_message(
+            call_doc=call_doc
+        )
         history_message_id = str(history_message_doc["_id"])
         if call_doc.get("history_message_id") != history_message_id:
             await self.repo.set_history_message_id(
@@ -467,12 +598,99 @@ class CallsService:
                 status_code=409,
             )
 
+    def _normalize_participant_states(
+        self,
+        call_doc: dict[str, Any],
+    ) -> dict[str, CallParticipantState]:
+        defaults = self._default_participant_states(call_doc)
+        raw_states = call_doc.get("participant_states") or {}
+
+        for user_id, raw_state in raw_states.items():
+            if user_id not in defaults:
+                continue
+
+            payload = (
+                raw_state.model_dump()
+                if isinstance(raw_state, CallParticipantState)
+                else dict(raw_state)
+            )
+            payload.setdefault("updated_at", defaults[user_id].updated_at)
+            payload.setdefault("role", defaults[user_id].role)
+            payload.setdefault("join_state", defaults[user_id].join_state)
+            payload.setdefault("audio_enabled", defaults[user_id].audio_enabled)
+            payload.setdefault("video_enabled", defaults[user_id].video_enabled)
+            defaults[user_id] = CallParticipantState.model_validate(payload)
+
+        return defaults
+
+    def _default_participant_states(
+        self,
+        call_doc: dict[str, Any],
+    ) -> dict[str, CallParticipantState]:
+        timestamp = (
+            call_doc.get("updated_at")
+            or call_doc.get("created_at")
+            or datetime.now(UTC)
+        )
+        call_type = call_doc["type"]
+        status = call_doc["status"]
+        disconnected_user_ids = set(call_doc.get("disconnected_user_ids") or [])
+        caller_user_id = call_doc["caller_user_id"]
+        callee_user_id = call_doc["callee_user_id"]
+
+        return {
+            caller_user_id: CallParticipantState(
+                role="caller",
+                join_state=self._infer_join_state(
+                    status=status,
+                    role="caller",
+                    user_id=caller_user_id,
+                    disconnected_user_ids=disconnected_user_ids,
+                ),
+                audio_enabled=True,
+                video_enabled=call_type == "video",
+                updated_at=timestamp,
+            ),
+            callee_user_id: CallParticipantState(
+                role="callee",
+                join_state=self._infer_join_state(
+                    status=status,
+                    role="callee",
+                    user_id=callee_user_id,
+                    disconnected_user_ids=disconnected_user_ids,
+                ),
+                audio_enabled=True,
+                video_enabled=call_type == "video",
+                updated_at=timestamp,
+            ),
+        }
+
+    def _infer_join_state(
+        self,
+        *,
+        status: CallStatus,
+        role: str,
+        user_id: str,
+        disconnected_user_ids: set[str],
+    ) -> CallParticipantJoinState:
+        if user_id in disconnected_user_ids:
+            return "disconnected"
+        if status == "ringing":
+            return "waiting"
+        if status == "accepted":
+            return "joined" if role == "callee" else "waiting"
+        if status in {"connecting", "active", "reconnecting"}:
+            return "joined"
+        return "waiting"
+
     def _peer_user_id(self, *, call: CallDoc, viewer_user_id: str) -> str:
         if viewer_user_id == call.caller_user_id:
             return call.callee_user_id
         return call.caller_user_id
 
-    def _peer_user_id_from_doc(self, *, call_doc: dict[str, Any], viewer_user_id: str) -> str:
+    def _peer_user_id_from_doc(
+        self, *, call_doc: dict[str, Any], viewer_user_id: str
+    ) -> str:
         if viewer_user_id == call_doc["caller_user_id"]:
             return call_doc["callee_user_id"]
         return call_doc["caller_user_id"]

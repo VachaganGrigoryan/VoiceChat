@@ -86,7 +86,12 @@ def test_message_schemas_expose_normalized_message_and_media_kinds():
     reply_preview = spec["components"]["schemas"]["ReplyPreview"]
     conversation_last_message = spec["components"]["schemas"]["ConversationLastMessage"]
 
-    assert message_doc["properties"]["type"]["enum"] == ["text", "media", "file", "call"]
+    assert message_doc["properties"]["type"]["enum"] == [
+        "text",
+        "media",
+        "file",
+        "call",
+    ]
     assert media_meta["properties"]["kind"]["enum"] == [
         "voice",
         "audio",
@@ -94,7 +99,12 @@ def test_message_schemas_expose_normalized_message_and_media_kinds():
         "video",
         "file",
     ]
-    assert reply_preview["properties"]["type"]["enum"] == ["text", "media", "file", "call"]
+    assert reply_preview["properties"]["type"]["enum"] == [
+        "text",
+        "media",
+        "file",
+        "call",
+    ]
     assert reply_preview["properties"]["media_kind"]["anyOf"][0]["enum"] == [
         "voice",
         "audio",
@@ -119,3 +129,18 @@ def test_calls_history_route_is_documented_with_paginated_response():
     response = route["responses"]["200"]
 
     assert _schema_ref_name(_json_schema(response)).startswith("PaginatedResponse_")
+
+
+def test_call_schemas_expose_participant_state_contract():
+    spec = create_app().openapi()
+
+    call_doc = spec["components"]["schemas"]["CallDoc"]
+    participant_state = spec["components"]["schemas"]["CallParticipantState"]
+
+    assert "participant_states" in call_doc["properties"]
+    assert participant_state["properties"]["role"]["enum"] == ["caller", "callee"]
+    assert participant_state["properties"]["join_state"]["enum"] == [
+        "waiting",
+        "joined",
+        "disconnected",
+    ]

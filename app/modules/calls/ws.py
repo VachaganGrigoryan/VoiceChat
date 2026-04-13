@@ -15,20 +15,67 @@ from app.modules.calls.schemas import (
     CallAnswerPayload,
     CallDoc,
     CallIceCandidatePayload,
+    CallMediaStatePayload,
     CallOfferPayload,
+    CallParticipantUpdatedEvent,
 )
 from app.modules.calls.session_registry import (
     close_call_session_registry,
     get_call_session_registry,
 )
 from app.modules.realtime.auth import get_socket_user_id
-from app.modules.realtime.emits import emit_message_to_participants, emit_to_user
+from app.modules.realtime.emits import (
+    emit_message_to_participants,
+    emit_to_user,
+    user_room,
+)
 
 _expiration_tasks: dict[str, asyncio.Task[None]] = {}
 _reconnect_timeout_tasks: dict[str, asyncio.Task[None]] = {}
 
 
 def register_events(sio: socketio.AsyncServer) -> None:
+    @sio.on("call.join")
+    async def handle_call_join(sid: str, data: dict[str, Any] | None):
+        user_id = await get_socket_user_id(sio, sid)
+        if not user_id:
+            return
+
+        try:
+            payload = CallActionPayload.model_validate(data or {})
+            service = get_calls_service()
+            current_call = await service.get_participant_call(
+                user_id=user_id, call_id=payload.call_id
+            )
+            join_state = (
+                service.to_call_doc(current_call).participant_states[user_id].join_state
+            )
+            await _bind_socket_to_call_room(
+                sio,
+                socket_id=sid,
+                room_id=current_call["room_id"],
+                call_id=payload.call_id,
+                user_id=user_id,
+            )
+            call_doc = await service.mark_participant_joined(
+                user_id=user_id, call_id=payload.call_id
+            )
+            if join_state != "joined":
+                await emit_call_participant_updated_event(
+                    sio,
+                    service=service,
+                    call_doc=call_doc,
+                    actor_user_id=user_id,
+                    reason="joined",
+                    skip_actor_socket_id=sid,
+                )
+        except AppError as exc:
+            await _emit_socket_error(sio, sid, exc)
+            return
+        except Exception:
+            await _emit_invalid_payload(sio, sid, message="`call_id` is required")
+            return
+
     @sio.on("call.offer")
     async def handle_call_offer(sid: str, data: dict[str, Any] | None):
         user_id = await get_socket_user_id(sio, sid)
@@ -38,7 +85,12 @@ def register_events(sio: socketio.AsyncServer) -> None:
         try:
             payload = CallOfferPayload.model_validate(data or {})
             service = get_calls_service()
-            call_doc = await service.start_connecting(user_id=user_id, call_id=payload.call_id)
+            call_doc = await service.start_connecting(
+                user_id=user_id, call_id=payload.call_id
+            )
+            join_state = (
+                service.to_call_doc(call_doc).participant_states[user_id].join_state
+            )
             await _bind_socket_to_call_room(
                 sio,
                 socket_id=sid,
@@ -46,12 +98,26 @@ def register_events(sio: socketio.AsyncServer) -> None:
                 call_id=payload.call_id,
                 user_id=user_id,
             )
+            if join_state != "joined":
+                call_doc = await service.mark_participant_joined(
+                    user_id=user_id, call_id=payload.call_id
+                )
+                await emit_call_participant_updated_event(
+                    sio,
+                    service=service,
+                    call_doc=call_doc,
+                    actor_user_id=user_id,
+                    reason="joined",
+                    skip_actor_socket_id=sid,
+                )
             cancel_call_reconnect_timeout(payload.call_id)
         except AppError as exc:
             await _emit_socket_error(sio, sid, exc)
             return
         except Exception:
-            await _emit_invalid_payload(sio, sid, message="`call_id` and `sdp` are required")
+            await _emit_invalid_payload(
+                sio, sid, message="`call_id` and `sdp` are required"
+            )
             return
 
         await sio.emit(
@@ -76,7 +142,12 @@ def register_events(sio: socketio.AsyncServer) -> None:
         try:
             payload = CallAnswerPayload.model_validate(data or {})
             service = get_calls_service()
-            call_doc = await service.ensure_answer_allowed(user_id=user_id, call_id=payload.call_id)
+            call_doc = await service.ensure_answer_allowed(
+                user_id=user_id, call_id=payload.call_id
+            )
+            join_state = (
+                service.to_call_doc(call_doc).participant_states[user_id].join_state
+            )
             await _bind_socket_to_call_room(
                 sio,
                 socket_id=sid,
@@ -84,11 +155,25 @@ def register_events(sio: socketio.AsyncServer) -> None:
                 call_id=payload.call_id,
                 user_id=user_id,
             )
+            if join_state != "joined":
+                call_doc = await service.mark_participant_joined(
+                    user_id=user_id, call_id=payload.call_id
+                )
+                await emit_call_participant_updated_event(
+                    sio,
+                    service=service,
+                    call_doc=call_doc,
+                    actor_user_id=user_id,
+                    reason="joined",
+                    skip_actor_socket_id=sid,
+                )
         except AppError as exc:
             await _emit_socket_error(sio, sid, exc)
             return
         except Exception:
-            await _emit_invalid_payload(sio, sid, message="`call_id` and `sdp` are required")
+            await _emit_invalid_payload(
+                sio, sid, message="`call_id` and `sdp` are required"
+            )
             return
 
         await sio.emit(
@@ -117,6 +202,9 @@ def register_events(sio: socketio.AsyncServer) -> None:
                 user_id=user_id,
                 call_id=payload.call_id,
             )
+            join_state = (
+                service.to_call_doc(call_doc).participant_states[user_id].join_state
+            )
             await _bind_socket_to_call_room(
                 sio,
                 socket_id=sid,
@@ -124,11 +212,25 @@ def register_events(sio: socketio.AsyncServer) -> None:
                 call_id=payload.call_id,
                 user_id=user_id,
             )
+            if join_state != "joined":
+                call_doc = await service.mark_participant_joined(
+                    user_id=user_id, call_id=payload.call_id
+                )
+                await emit_call_participant_updated_event(
+                    sio,
+                    service=service,
+                    call_doc=call_doc,
+                    actor_user_id=user_id,
+                    reason="joined",
+                    skip_actor_socket_id=sid,
+                )
         except AppError as exc:
             await _emit_socket_error(sio, sid, exc)
             return
         except Exception:
-            await _emit_invalid_payload(sio, sid, message="`call_id` and `candidate` are required")
+            await _emit_invalid_payload(
+                sio, sid, message="`call_id` and `candidate` are required"
+            )
             return
 
         await sio.emit(
@@ -144,6 +246,61 @@ def register_events(sio: socketio.AsyncServer) -> None:
             skip_sid=sid,
         )
 
+    @sio.on("call.media_state")
+    async def handle_call_media_state(sid: str, data: dict[str, Any] | None):
+        user_id = await get_socket_user_id(sio, sid)
+        if not user_id:
+            return
+
+        try:
+            payload = CallMediaStatePayload.model_validate(data or {})
+            service = get_calls_service()
+            current_call = await service.get_participant_call(
+                user_id=user_id, call_id=payload.call_id
+            )
+            current_state = service.to_call_doc(current_call).participant_states[
+                user_id
+            ]
+            has_change = (
+                payload.audio_enabled is not None
+                and payload.audio_enabled != current_state.audio_enabled
+            ) or (
+                payload.video_enabled is not None
+                and payload.video_enabled != current_state.video_enabled
+            )
+            call_doc = await service.update_media_state(
+                user_id=user_id,
+                call_id=payload.call_id,
+                audio_enabled=payload.audio_enabled,
+                video_enabled=payload.video_enabled,
+            )
+            await _bind_socket_to_call_room(
+                sio,
+                socket_id=sid,
+                room_id=call_doc["room_id"],
+                call_id=payload.call_id,
+                user_id=user_id,
+            )
+            if has_change:
+                await emit_call_participant_updated_event(
+                    sio,
+                    service=service,
+                    call_doc=call_doc,
+                    actor_user_id=user_id,
+                    reason="media_updated",
+                    skip_actor_socket_id=sid,
+                )
+        except AppError as exc:
+            await _emit_socket_error(sio, sid, exc)
+            return
+        except Exception:
+            await _emit_invalid_payload(
+                sio,
+                sid,
+                message="`call_id` and at least one media state field are required",
+            )
+            return
+
     @sio.on("call.connected")
     async def handle_call_connected(sid: str, data: dict[str, Any] | None):
         user_id = await get_socket_user_id(sio, sid)
@@ -153,7 +310,9 @@ def register_events(sio: socketio.AsyncServer) -> None:
         try:
             payload = CallActionPayload.model_validate(data or {})
             service = get_calls_service()
-            call_doc = await service.mark_active(user_id=user_id, call_id=payload.call_id)
+            call_doc = await service.mark_active(
+                user_id=user_id, call_id=payload.call_id
+            )
             await _bind_socket_to_call_room(
                 sio,
                 socket_id=sid,
@@ -247,7 +406,9 @@ def register_events(sio: socketio.AsyncServer) -> None:
         try:
             payload = CallActionPayload.model_validate(data or {})
             service = get_calls_service()
-            current_call = await service.get_participant_call(user_id=user_id, call_id=payload.call_id)
+            current_call = await service.get_participant_call(
+                user_id=user_id, call_id=payload.call_id
+            )
             model = service.to_call_doc(current_call)
             registry = get_call_session_registry()
             connection_count = await registry.get_connection_count(
@@ -262,7 +423,9 @@ def register_events(sio: socketio.AsyncServer) -> None:
                     status_code=409,
                 )
 
-            call_doc = await service.resume_call(user_id=user_id, call_id=payload.call_id)
+            call_doc = await service.resume_call(
+                user_id=user_id, call_id=payload.call_id
+            )
             await _bind_socket_to_call_room(
                 sio,
                 socket_id=sid,
@@ -282,6 +445,14 @@ def register_events(sio: socketio.AsyncServer) -> None:
                 service=service,
                 call_doc=call_doc,
                 include_ice_servers=True,
+            )
+            await emit_call_participant_updated_event(
+                sio,
+                service=service,
+                call_doc=call_doc,
+                actor_user_id=user_id,
+                reason="resumed",
+                skip_actor_socket_id=sid,
             )
         except AppError as exc:
             await _emit_socket_error(sio, sid, exc)
@@ -341,6 +512,71 @@ async def emit_call_state_event(
         model.callee_user_id,
         event,
         callee_payload.model_dump(mode="json"),
+    )
+
+
+async def emit_call_participant_updated_event(
+    sio: socketio.AsyncServer,
+    *,
+    service,
+    call_doc: dict[str, Any] | CallDoc,
+    actor_user_id: str,
+    reason: str,
+    skip_actor_socket_id: str | None = None,
+) -> None:
+    model = service.to_call_doc(call_doc)
+    caller_session = await service.build_session(
+        call_doc=model,
+        viewer_user_id=model.caller_user_id,
+        include_ice_servers=False,
+    )
+    callee_session = await service.build_session(
+        call_doc=model,
+        viewer_user_id=model.callee_user_id,
+        include_ice_servers=False,
+    )
+
+    caller_payload = CallParticipantUpdatedEvent(
+        call=caller_session.call,
+        peer_user=caller_session.peer_user,
+        ice_servers=caller_session.ice_servers,
+        actor_user_id=actor_user_id,
+        reason=reason,
+    ).model_dump(mode="json")
+    callee_payload = CallParticipantUpdatedEvent(
+        call=callee_session.call,
+        peer_user=callee_session.peer_user,
+        ice_servers=callee_session.ice_servers,
+        actor_user_id=actor_user_id,
+        reason=reason,
+    ).model_dump(mode="json")
+
+    if actor_user_id == model.caller_user_id:
+        await sio.emit(
+            "call.participant_updated",
+            jsonable_encoder(caller_payload),
+            room=user_room(model.caller_user_id),
+            skip_sid=skip_actor_socket_id,
+        )
+        await emit_to_user(
+            sio,
+            model.callee_user_id,
+            "call.participant_updated",
+            callee_payload,
+        )
+        return
+
+    await emit_to_user(
+        sio,
+        model.caller_user_id,
+        "call.participant_updated",
+        caller_payload,
+    )
+    await sio.emit(
+        "call.participant_updated",
+        jsonable_encoder(callee_payload),
+        room=user_room(model.callee_user_id),
+        skip_sid=skip_actor_socket_id,
     )
 
 
@@ -443,6 +679,13 @@ async def handle_call_socket_disconnect(
             call_id=model.id,
             reconnect_deadline_at=model.reconnect_deadline_at,
         )
+        await emit_call_participant_updated_event(
+            sio,
+            service=service,
+            call_doc=model,
+            actor_user_id=user_id,
+            reason="disconnected",
+        )
         await emit_call_state_event(
             sio,
             event="call.reconnecting",
@@ -500,7 +743,9 @@ async def clear_call_bindings(
     participant_user_ids: list[str],
 ) -> None:
     registry = get_call_session_registry()
-    await registry.clear_call(call_id=call_id, participant_user_ids=participant_user_ids)
+    await registry.clear_call(
+        call_id=call_id, participant_user_ids=participant_user_ids
+    )
 
 
 def schedule_call_expiration(
@@ -581,7 +826,9 @@ async def _should_offer_recovery(call_doc: CallDoc, *, user_id: str) -> bool:
         return True
 
     registry = get_call_session_registry()
-    connection_count = await registry.get_connection_count(call_id=call_doc.id, user_id=user_id)
+    connection_count = await registry.get_connection_count(
+        call_id=call_doc.id, user_id=user_id
+    )
     return connection_count == 0
 
 
@@ -651,7 +898,9 @@ async def _expire_reconnecting_call_later(
         _reconnect_timeout_tasks.pop(call_id, None)
 
 
-async def _emit_socket_error(sio: socketio.AsyncServer, sid: str, exc: AppError) -> None:
+async def _emit_socket_error(
+    sio: socketio.AsyncServer, sid: str, exc: AppError
+) -> None:
     await sio.emit(
         "error",
         {"code": exc.code, "message": exc.message},

@@ -25,6 +25,7 @@ Calls provide 1:1 WebRTC signaling for audio and video calls. Media stays peer-t
   `call`, `peer_user`, and `ice_servers`.
 - `GET /calls/active` returns `CallSession | null`.
 - Reject and end return the updated `CallDoc`.
+- `CallDoc` now includes `participant_states`, keyed by participant user id.
 
 ## Call Statuses
 
@@ -45,6 +46,8 @@ Client to server:
 - `call.offer`
 - `call.answer`
 - `call.ice_candidate`
+- `call.join`
+- `call.media_state`
 - `call.connected`
 - `call.hangup`
 - `call.reject`
@@ -59,10 +62,23 @@ Server to client:
 - `call.offer`
 - `call.answer`
 - `call.ice_candidate`
+- `call.participant_updated`
 - `call.connected`
 - `call.reconnecting`
 - `call.resumed`
 - `call.ended`
+
+## Participant State
+
+- `participant_states` is a map keyed by participant user id.
+- Each participant state includes:
+  `role`, `join_state`, `audio_enabled`, `video_enabled`, and `updated_at`.
+- `join_state` values:
+  `waiting`, `joined`, `disconnected`.
+- `call.participant_updated` reuses the `CallSession` payload shape and adds:
+  `actor_user_id` and `reason`.
+- `reason` values:
+  `joined`, `media_updated`, `disconnected`, `resumed`.
 
 ## Notes
 
@@ -70,8 +86,11 @@ Server to client:
 - A user can only participate in one live call at a time.
 - Offline users can still be called; unanswered calls expire after `CALL_RING_TIMEOUT_SECONDS`.
 - Active calls survive page refresh through a short reconnect grace window. A refreshed client should fetch `GET /calls/active` or wait for `call.recovery_available`, then emit `call.resume` and renegotiate WebRTC.
+- `GET /calls/active` is the authoritative recovery snapshot for both call lifecycle and participant mic/camera/join state.
 - If a participant does not reclaim a disconnected call before `CALL_RECONNECT_GRACE_SECONDS`, the backend ends the call and releases the live-call lock.
 - `call.connected` is required so the backend can promote `connecting` calls to `active`.
+- `call.join` lets a client explicitly bind its socket to the call room and publish `join_state=joined`.
+- `call.media_state` persists mic/camera state and broadcasts it to the peer and the actor's other sockets.
 - SDP and ICE candidates are relayed in realtime only and are not persisted.
 - `reconnect_deadline_at` and `disconnected_user_ids` are included in the call payload so clients can show reconnect UI and countdown state.
 - `CALL_SESSION_BACKEND` defaults to `memory`; use `redis` if you need cross-worker socket binding recovery.
