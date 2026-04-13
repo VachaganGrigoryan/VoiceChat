@@ -59,6 +59,22 @@ def ringing_call_doc():
         "expires_at": now,
         "reconnect_deadline_at": None,
         "disconnected_user_ids": [],
+        "participant_states": {
+            "u1": {
+                "role": "caller",
+                "join_state": "waiting",
+                "audio_enabled": True,
+                "video_enabled": False,
+                "updated_at": now,
+            },
+            "u2": {
+                "role": "callee",
+                "join_state": "waiting",
+                "audio_enabled": True,
+                "video_enabled": False,
+                "updated_at": now,
+            },
+        },
         "is_live": True,
     }
 
@@ -93,7 +109,9 @@ async def test_create_call_requires_existing_target(service):
 
 
 @pytest.mark.asyncio
-async def test_create_call_enforces_permission_and_returns_doc(service, ringing_call_doc):
+async def test_create_call_enforces_permission_and_returns_doc(
+    service, ringing_call_doc
+):
     svc, repo, users_repo, pings_service, _, _, _ = service
     users_repo.find_by_id.return_value = {"_id": "u2", "username": "callee"}
     repo.create_call.return_value = ringing_call_doc
@@ -105,14 +123,56 @@ async def test_create_call_enforces_permission_and_returns_doc(service, ringing_
     )
 
     assert result["status"] == "ringing"
-    pings_service.ensure_can_message.assert_awaited_once_with(sender_id="u1", receiver_id="u2")
+    assert result["participant_states"]["u1"]["audio_enabled"] is True
+    assert result["participant_states"]["u2"]["join_state"] == "waiting"
+    pings_service.ensure_can_message.assert_awaited_once_with(
+        sender_id="u1", receiver_id="u2"
+    )
     repo.create_call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_accept_call_marks_callee_joined(service, ringing_call_doc):
+    svc, repo, _, _, _, _, _ = service
+    accepted = {
+        **ringing_call_doc,
+        "status": "accepted",
+        "answered_at": ringing_call_doc["created_at"],
+        "expires_at": None,
+    }
+    accepted_joined = {
+        **accepted,
+        "participant_states": {
+            **accepted["participant_states"],
+            "u2": {
+                **accepted["participant_states"]["u2"],
+                "join_state": "joined",
+            },
+        },
+    }
+    repo.find_by_id.return_value = ringing_call_doc
+    repo.accept_call.return_value = accepted
+    repo.update_participant_state.return_value = accepted_joined
+
+    result = await svc.accept_call(user_id="u2", call_id="507f1f77bcf86cd799439011")
+
+    assert result["participant_states"]["u2"]["join_state"] == "joined"
+    repo.update_participant_state.assert_awaited_once_with(
+        call_id="507f1f77bcf86cd799439011",
+        participant_user_id="u2",
+        join_state="joined",
+    )
 
 
 @pytest.mark.asyncio
 async def test_end_call_cancels_ringing_call_for_caller(service, ringing_call_doc):
     svc, repo, _, _, _, _, messages_repo = service
-    cancelled = {**ringing_call_doc, "status": "cancelled", "is_live": False, "ended_at": ringing_call_doc["created_at"]}
+    cancelled = {
+        **ringing_call_doc,
+        "status": "cancelled",
+        "is_live": False,
+        "ended_at": ringing_call_doc["created_at"],
+    }
     call_message = {
         "_id": "507f1f77bcf86cd799439099",
         "conversation_id": "u1_u2",
@@ -196,6 +256,182 @@ async def test_mark_active_promotes_connecting_call(service, ringing_call_doc):
 
 
 @pytest.mark.asyncio
+async def test_start_connecting_transitions_active_call_for_recovery_offer(
+    service, ringing_call_doc
+):
+    svc, repo, _, _, _, _, _ = service
+    active_call = {
+        **ringing_call_doc,
+        "status": "active",
+        "expires_at": None,
+        "answered_at": ringing_call_doc["created_at"],
+    }
+    connecting_call = {
+        **active_call,
+        "status": "connecting",
+    }
+    repo.find_by_id.return_value = active_call
+    repo.set_connecting.return_value = connecting_call
+
+    result = await svc.start_connecting(
+        user_id="u1", call_id="507f1f77bcf86cd799439011"
+    )
+
+    assert result["status"] == "connecting"
+    repo.set_connecting.assert_awaited_once_with(
+        call_id="507f1f77bcf86cd799439011",
+        caller_user_id="u1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_start_connecting_is_idempotent_when_call_already_connecting(
+    service, ringing_call_doc
+):
+    svc, repo, _, _, _, _, _ = service
+    connecting_call = {
+        **ringing_call_doc,
+        "status": "connecting",
+        "expires_at": None,
+        "answered_at": ringing_call_doc["created_at"],
+    }
+    repo.find_by_id.return_value = connecting_call
+
+    result = await svc.start_connecting(
+        user_id="u1", call_id="507f1f77bcf86cd799439011"
+    )
+
+    assert result == connecting_call
+    repo.set_connecting.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_mark_participant_joined_updates_live_call(service, ringing_call_doc):
+    svc, repo, _, _, _, _, _ = service
+    accepted = {
+        **ringing_call_doc,
+        "status": "accepted",
+        "answered_at": ringing_call_doc["created_at"],
+        "expires_at": None,
+    }
+    joined = {
+        **accepted,
+        "participant_states": {
+            **accepted["participant_states"],
+            "u1": {
+                **accepted["participant_states"]["u1"],
+                "join_state": "joined",
+            },
+        },
+    }
+    repo.find_by_id.return_value = accepted
+    repo.update_participant_state.return_value = joined
+
+    result = await svc.mark_participant_joined(
+        user_id="u1",
+        call_id="507f1f77bcf86cd799439011",
+    )
+
+    assert result["participant_states"]["u1"]["join_state"] == "joined"
+    repo.update_participant_state.assert_awaited_once_with(
+        call_id="507f1f77bcf86cd799439011",
+        participant_user_id="u1",
+        join_state="joined",
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_media_state_updates_audio_flag(service, ringing_call_doc):
+    svc, repo, _, _, _, _, _ = service
+    active_call = {
+        **ringing_call_doc,
+        "status": "active",
+        "expires_at": None,
+        "answered_at": ringing_call_doc["created_at"],
+        "participant_states": {
+            **ringing_call_doc["participant_states"],
+            "u1": {
+                **ringing_call_doc["participant_states"]["u1"],
+                "join_state": "joined",
+            },
+            "u2": {
+                **ringing_call_doc["participant_states"]["u2"],
+                "join_state": "joined",
+            },
+        },
+    }
+    updated_call = {
+        **active_call,
+        "participant_states": {
+            **active_call["participant_states"],
+            "u1": {
+                **active_call["participant_states"]["u1"],
+                "audio_enabled": False,
+            },
+        },
+    }
+    repo.find_by_id.return_value = active_call
+    repo.update_participant_state.return_value = updated_call
+
+    result = await svc.update_media_state(
+        user_id="u1",
+        call_id="507f1f77bcf86cd799439011",
+        audio_enabled=False,
+    )
+
+    assert result["participant_states"]["u1"]["audio_enabled"] is False
+    repo.update_participant_state.assert_awaited_once_with(
+        call_id="507f1f77bcf86cd799439011",
+        participant_user_id="u1",
+        audio_enabled=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_media_state_rejects_video_enable_for_audio_call(
+    service, ringing_call_doc
+):
+    svc, repo, _, _, _, _, _ = service
+    active_call = {
+        **ringing_call_doc,
+        "status": "active",
+        "expires_at": None,
+        "answered_at": ringing_call_doc["created_at"],
+    }
+    repo.find_by_id.return_value = active_call
+
+    with pytest.raises(AppError) as exc:
+        await svc.update_media_state(
+            user_id="u1",
+            call_id="507f1f77bcf86cd799439011",
+            video_enabled=True,
+        )
+
+    assert exc.value.code == "INVALID_CALL_MEDIA_STATE"
+
+
+@pytest.mark.asyncio
+async def test_update_media_state_rejects_terminal_call(service, ringing_call_doc):
+    svc, repo, _, _, _, _, _ = service
+    ended_call = {
+        **ringing_call_doc,
+        "status": "ended",
+        "ended_at": ringing_call_doc["created_at"],
+        "is_live": False,
+    }
+    repo.find_by_id.return_value = ended_call
+
+    with pytest.raises(AppError) as exc:
+        await svc.update_media_state(
+            user_id="u1",
+            call_id="507f1f77bcf86cd799439011",
+            audio_enabled=False,
+        )
+
+    assert exc.value.code == "INVALID_CALL_STATE"
+
+
+@pytest.mark.asyncio
 async def test_build_session_uses_webrtc_service_ice_servers(service, ringing_call_doc):
     svc, _, users_repo, _, presence_service, webrtc_service, _ = service
     users_repo.find_by_id.return_value = {
@@ -226,7 +462,9 @@ async def test_build_session_uses_webrtc_service_ice_servers(service, ringing_ca
 
 
 @pytest.mark.asyncio
-async def test_mark_reconnecting_from_disconnect_sets_deadline(service, ringing_call_doc, monkeypatch):
+async def test_mark_reconnecting_from_disconnect_sets_deadline(
+    service, ringing_call_doc, monkeypatch
+):
     svc, repo, _, _, _, _, _ = service
     active_call = {
         **ringing_call_doc,
@@ -279,20 +517,139 @@ async def test_resume_call_updates_recoverable_call(service, ringing_call_doc):
         **reconnecting_call,
         "disconnected_user_ids": [],
     }
+    connecting_call = {
+        **resumed_call,
+        "status": "connecting",
+        "reconnect_deadline_at": None,
+    }
     repo.find_by_id.return_value = reconnecting_call
     repo.resume_reconnecting.return_value = resumed_call
+    repo.set_connecting_after_resume.return_value = connecting_call
 
     result = await svc.resume_call(user_id="u1", call_id="507f1f77bcf86cd799439011")
 
+    assert result["status"] == "connecting"
     assert result["disconnected_user_ids"] == []
     repo.resume_reconnecting.assert_awaited_once_with(
+        call_id="507f1f77bcf86cd799439011",
+        participant_user_id="u1",
+    )
+    repo.set_connecting_after_resume.assert_awaited_once_with(
         call_id="507f1f77bcf86cd799439011",
         participant_user_id="u1",
     )
 
 
 @pytest.mark.asyncio
-async def test_list_history_builds_peer_direction_duration_and_message_id(service, ringing_call_doc):
+async def test_resume_call_transitions_to_connecting_when_everyone_is_back(
+    service, ringing_call_doc
+):
+    svc, repo, _, _, _, _, _ = service
+    reconnecting_call = {
+        **ringing_call_doc,
+        "status": "reconnecting",
+        "expires_at": None,
+        "reconnect_deadline_at": datetime.now(UTC),
+        "disconnected_user_ids": ["u1"],
+    }
+    resumed_call = {
+        **reconnecting_call,
+        "disconnected_user_ids": [],
+    }
+    connecting_call = {
+        **resumed_call,
+        "status": "connecting",
+        "reconnect_deadline_at": None,
+    }
+    repo.find_by_id.return_value = reconnecting_call
+    repo.resume_reconnecting.return_value = resumed_call
+    repo.set_connecting_after_resume.return_value = connecting_call
+
+    result = await svc.resume_call(user_id="u1", call_id="507f1f77bcf86cd799439011")
+
+    assert result["status"] == "connecting"
+    assert result["reconnect_deadline_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_resume_call_preserves_media_state(service, ringing_call_doc):
+    svc, repo, _, _, _, _, _ = service
+    reconnecting_call = {
+        **ringing_call_doc,
+        "status": "reconnecting",
+        "expires_at": None,
+        "reconnect_deadline_at": datetime.now(UTC),
+        "disconnected_user_ids": ["u1"],
+        "participant_states": {
+            **ringing_call_doc["participant_states"],
+            "u1": {
+                **ringing_call_doc["participant_states"]["u1"],
+                "join_state": "disconnected",
+                "audio_enabled": False,
+            },
+            "u2": {
+                **ringing_call_doc["participant_states"]["u2"],
+                "join_state": "joined",
+            },
+        },
+    }
+    resumed_call = {
+        **reconnecting_call,
+        "disconnected_user_ids": [],
+        "participant_states": {
+            **reconnecting_call["participant_states"],
+            "u1": {
+                **reconnecting_call["participant_states"]["u1"],
+                "join_state": "joined",
+            },
+        },
+    }
+    repo.find_by_id.return_value = reconnecting_call
+    repo.resume_reconnecting.return_value = resumed_call
+    repo.set_connecting_after_resume.return_value = {
+        **resumed_call,
+        "status": "connecting",
+        "reconnect_deadline_at": None,
+    }
+
+    result = await svc.resume_call(user_id="u1", call_id="507f1f77bcf86cd799439011")
+
+    assert result["participant_states"]["u1"]["audio_enabled"] is False
+    assert result["participant_states"]["u1"]["join_state"] == "joined"
+
+
+def test_to_call_doc_infers_participant_states_for_legacy_call(service):
+    svc, _, _, _, _, _, _ = service
+    now = datetime(2026, 3, 23, 12, 0, 0, tzinfo=UTC)
+    legacy_call = {
+        "_id": "507f1f77bcf86cd799439011",
+        "caller_user_id": "u1",
+        "callee_user_id": "u2",
+        "participant_user_ids": ["u1", "u2"],
+        "type": "video",
+        "status": "accepted",
+        "room_id": "call:507f1f77bcf86cd799439011",
+        "created_at": now,
+        "updated_at": now,
+        "answered_at": now,
+        "ended_at": None,
+        "expires_at": None,
+        "reconnect_deadline_at": None,
+        "disconnected_user_ids": [],
+        "is_live": True,
+    }
+
+    model = svc.to_call_doc(legacy_call)
+
+    assert model.participant_states["u1"].join_state == "waiting"
+    assert model.participant_states["u2"].join_state == "joined"
+    assert model.participant_states["u1"].video_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_list_history_builds_peer_direction_duration_and_message_id(
+    service, ringing_call_doc
+):
     svc, repo, users_repo, _, presence_service, _, _ = service
     terminal_call = {
         **ringing_call_doc,
