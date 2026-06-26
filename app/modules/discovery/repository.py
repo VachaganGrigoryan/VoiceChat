@@ -3,72 +3,78 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo import DESCENDING
+from beanie.operators import Eq, Inc, Set
 
-from app.core.errors import AppError
-from app.db.indexes import COL_DISCOVERY_TOKENS
-
-
-def _oid(value: str) -> ObjectId:
-    try:
-        return ObjectId(value)
-    except Exception as exc:
-        raise AppError(code="INVALID_ID", message="Invalid id", status_code=400) from exc
+from app.db.models import DiscoveryTokenDocument
+from app.db.object_id import parse_object_id as _oid
+from app.db.repository import BaseRepository
 
 
-class DiscoveryTokensRepository:
-    def __init__(self, db: AsyncIOMotorDatabase):
-        self.col = db[COL_DISCOVERY_TOKENS]
+class DiscoveryTokensRepository(BaseRepository[DiscoveryTokenDocument]):
+    model = DiscoveryTokenDocument
 
     async def deactivate_active_codes_for_user(self, *, user_id: str) -> None:
-        await self.col.update_many(
-            {
-                "user_id": user_id,
-                "type": "code",
-                "is_active": True,
-            },
-            {
-                "$set": {
-                    "is_active": False,
-                    "updated_at": datetime.now(UTC),
+        await DiscoveryTokenDocument.find(
+            DiscoveryTokenDocument.user_id == user_id,
+            DiscoveryTokenDocument.type == "code",
+            Eq(DiscoveryTokenDocument.is_active, True),
+        ).update(
+            Set(
+                {
+                    DiscoveryTokenDocument.is_active: False,
+                    DiscoveryTokenDocument.updated_at: datetime.now(UTC),
                 }
-            },
+            )
         )
 
-    async def create_token(self, doc: dict[str, Any]) -> dict[str, Any]:
-        result = await self.col.insert_one(doc)
-        doc["_id"] = result.inserted_id
-        return doc
+    async def create_token(self, doc: dict[str, Any]) -> DiscoveryTokenDocument:
+        token = DiscoveryTokenDocument(**doc)
+        await token.insert()
+        return token
 
-    async def find_active_by_hash(self, *, token_hash: str, token_type: str) -> dict[str, Any] | None:
-        return await self.col.find_one(
-            {
-                "token_hash": token_hash,
-                "type": token_type,
-                "is_active": True,
-            }
+    async def find_active_by_hash(
+        self, *, token_hash: str, token_type: str
+    ) -> DiscoveryTokenDocument | None:
+        return await DiscoveryTokenDocument.find_one(
+            DiscoveryTokenDocument.token_hash == token_hash,
+            DiscoveryTokenDocument.type == token_type,
+            Eq(DiscoveryTokenDocument.is_active, True),
         )
 
     async def increment_use(self, *, token_id: str, now: datetime) -> None:
-        await self.col.update_one(
-            {"_id": _oid(token_id)},
-            {
-                "$inc": {"use_count": 1},
-                "$set": {"used_at": now, "updated_at": now},
-            },
+        await DiscoveryTokenDocument.find(
+            DiscoveryTokenDocument.id == _oid(token_id)
+        ).update(
+            Inc({DiscoveryTokenDocument.use_count: 1}),
+            Set(
+                {
+                    DiscoveryTokenDocument.used_at: now,
+                    DiscoveryTokenDocument.updated_at: now,
+                }
+            ),
         )
 
-    async def list_by_user_id(self, *, user_id: str, token_type: str | None = None) -> list[dict[str, Any]]:
-        query: dict[str, Any] = {"user_id": user_id}
+    async def list_by_user_id(
+        self, *, user_id: str, token_type: str | None = None
+    ) -> list[DiscoveryTokenDocument]:
+        conditions: list[Any] = [DiscoveryTokenDocument.user_id == user_id]
         if token_type:
-            query["type"] = token_type
-        cursor = self.col.find(query).sort("created_at", DESCENDING)
-        return await cursor.to_list(length=100)
+            conditions.append(DiscoveryTokenDocument.type == token_type)
+        return (
+            await DiscoveryTokenDocument.find(*conditions)
+            .sort("-created_at")
+            .limit(100)
+            .to_list()
+        )
 
     async def deactivate_token(self, *, token_id: str) -> None:
-        await self.col.update_one(
-            {"_id": _oid(token_id)},
-            {"$set": {"is_active": False, "updated_at": datetime.now(UTC)}},
+        await DiscoveryTokenDocument.find(
+            DiscoveryTokenDocument.id == _oid(token_id)
+        ).update(
+            Set(
+                {
+                    DiscoveryTokenDocument.is_active: False,
+                    DiscoveryTokenDocument.updated_at: datetime.now(UTC),
+                }
+            )
         )

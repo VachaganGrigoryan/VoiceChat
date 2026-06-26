@@ -1,4 +1,3 @@
-from app.db.mongo import get_db
 from app.modules.auth.refresh_repository import RefreshTokensRepository
 from app.modules.auth.repository import UsersRepository
 from app.modules.auth.service import AuthService
@@ -8,11 +7,9 @@ from app.modules.verification.repository import VerificationCodesRepository
 
 
 def get_passkey_service() -> PasskeyService:
-    db = get_db()
-
-    users_repo = UsersRepository(db)
-    codes_repo = VerificationCodesRepository(db)
-    refresh_repo = RefreshTokensRepository(db)
+    users_repo = UsersRepository()
+    codes_repo = VerificationCodesRepository()
+    refresh_repo = RefreshTokensRepository()
 
     auth_service = AuthService(
         users=users_repo,
@@ -21,8 +18,8 @@ def get_passkey_service() -> PasskeyService:
     )
 
     return PasskeyService(
-        passkeys_repo=PasskeysRepository(db),
-        challenges_repo=PasskeyChallengesRepository(db),
+        passkeys_repo=PasskeysRepository(),
+        challenges_repo=PasskeyChallengesRepository(),
         users_repo=users_repo,
         auth_service=auth_service,
     )

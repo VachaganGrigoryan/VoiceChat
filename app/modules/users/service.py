@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from bson import ObjectId
 from fastapi import UploadFile
 
 from app.core.errors import AppError
+from app.db.models import UserDocument
 from app.modules.auth.repository import UsersRepository
 from app.modules.auth.username import is_valid_username, normalize_username
 from app.modules.pings.repository import PingsRepository
@@ -36,6 +38,14 @@ def _strip_or_none(value: str | None) -> str | None:
     return value or None
 
 
+def _doc_value(doc: object, key: str, default: Any = None) -> Any:
+    if isinstance(doc, dict):
+        value = doc.get("_id", default) if key == "id" else doc.get(key, default)
+    else:
+        value = getattr(doc, key, default)
+    return str(value) if isinstance(value, ObjectId) else value
+
+
 class UsersService:
     def __init__(
         self,
@@ -50,7 +60,9 @@ class UsersService:
     async def get_me(self, *, user_id: str) -> UserProfileResponse:
         user = await self.users.find_by_id(user_id)
         if not user:
-            raise AppError(code="USER_NOT_FOUND", message="User not found", status_code=404)
+            raise AppError(
+                code="USER_NOT_FOUND", message="User not found", status_code=404
+            )
 
         return self._to_profile_response(user)
 
@@ -62,7 +74,9 @@ class UsersService:
     ) -> SelectedUserProfileResponse:
         user = await self.users.find_by_id(selected_user_id)
         if not user:
-            raise AppError(code="USER_NOT_FOUND", message="User not found", status_code=404)
+            raise AppError(
+                code="USER_NOT_FOUND", message="User not found", status_code=404
+            )
 
         if current_user_id != selected_user_id:
             has_access = await self.pings.has_accepted_permission(
@@ -109,7 +123,7 @@ class UsersService:
             )
 
         existing = await self.users.find_by_username(username_n)
-        if existing and str(existing["_id"]) != user_id:
+        if existing and _doc_value(existing, "id") != user_id:
             raise AppError(
                 code="USERNAME_TAKEN",
                 message="Username already taken",
@@ -127,7 +141,9 @@ class UsersService:
     ) -> UserProfileResponse:
         user = await self.users.find_by_id(user_id)
         if not user:
-            raise AppError(code="USER_NOT_FOUND", message="User not found", status_code=404)
+            raise AppError(
+                code="USER_NOT_FOUND", message="User not found", status_code=404
+            )
 
         content_type = (file.content_type or "").lower().strip()
         content = await self._read_avatar_bytes(file)
@@ -150,13 +166,13 @@ class UsersService:
             "size_bytes": stored.size_bytes,
         }
 
-        previous_avatar = user.get("avatar")
+        previous_avatar = _doc_value(user, "avatar")
         updated = await self.users.update_avatar(user_id=user_id, avatar=avatar)
 
         # best-effort cleanup of previous avatar
         if previous_avatar and isinstance(previous_avatar, dict):
             prev_key = previous_avatar.get("key")
-            if prev_key and prev_key != avatar.key:
+            if prev_key and prev_key != avatar["key"]:
                 try:
                     await storage.delete(prev_key)
                 except Exception:
@@ -167,9 +183,11 @@ class UsersService:
     async def delete_avatar(self, *, user_id: str) -> UserProfileResponse:
         user = await self.users.find_by_id(user_id)
         if not user:
-            raise AppError(code="USER_NOT_FOUND", message="User not found", status_code=404)
+            raise AppError(
+                code="USER_NOT_FOUND", message="User not found", status_code=404
+            )
 
-        avatar = user.get("avatar")
+        avatar = _doc_value(user, "avatar")
 
         if avatar and isinstance(avatar, dict):
             key = avatar.get("key")
@@ -183,32 +201,38 @@ class UsersService:
         updated = await self.users.update_avatar(user_id=user_id, avatar=None)
         return self._to_profile_response(updated)
 
-    def _to_profile_response(self, user: dict[str, Any]) -> UserProfileResponse:
+    def _to_profile_response(self, user: UserDocument) -> UserProfileResponse:
         return UserProfileResponse(
-            id=str(user["_id"]),
-            email=user["email"],
-            is_verified=bool(user.get("is_verified", False)),
-            username=user.get("username", ""),
-            display_name=user.get("display_name"),
-            bio=user.get("bio"),
-            avatar=build_user_avatar_payload(user.get("avatar")),
-            is_private=bool(user.get("is_private", False)),
-            default_discovery_enabled=bool(user.get("default_discovery_enabled", True)),
-            last_seen_at=user.get("last_seen_at"),
-            username_updated_at=user.get("username_updated_at"),
-            created_at=user["created_at"],
-            updated_at=user["updated_at"],
+            id=_doc_value(user, "id", ""),
+            email=_doc_value(user, "email"),
+            is_verified=_doc_value(user, "is_verified"),
+            username=_doc_value(user, "username"),
+            display_name=_doc_value(user, "display_name"),
+            bio=_doc_value(user, "bio"),
+            avatar=build_user_avatar_payload(_doc_value(user, "avatar")),
+            is_private=_doc_value(user, "is_private"),
+            default_discovery_enabled=_doc_value(user, "default_discovery_enabled"),
+            last_seen_at=_doc_value(user, "last_seen_at"),
+            username_updated_at=_doc_value(user, "username_updated_at"),
+            created_at=_doc_value(user, "created_at"),
+            updated_at=_doc_value(user, "updated_at"),
         )
 
-    async def _to_selected_profile_response(self, user: dict[str, Any]) -> SelectedUserProfileResponse:
-        user_id = str(user["_id"])
-        is_online = await self.presence_service.is_online(user_id) if self.presence_service else False
+    async def _to_selected_profile_response(
+        self, user: UserDocument
+    ) -> SelectedUserProfileResponse:
+        user_id = _doc_value(user, "id", "")
+        is_online = (
+            await self.presence_service.is_online(user_id)
+            if self.presence_service
+            else False
+        )
         return SelectedUserProfileResponse(
             id=user_id,
-            username=user.get("username", ""),
-            display_name=user.get("display_name"),
-            bio=user.get("bio"),
-            avatar=build_user_avatar_payload(user.get("avatar")),
+            username=_doc_value(user, "username"),
+            display_name=_doc_value(user, "display_name"),
+            bio=_doc_value(user, "bio"),
+            avatar=build_user_avatar_payload(_doc_value(user, "avatar")),
             is_online=is_online,
         )
 

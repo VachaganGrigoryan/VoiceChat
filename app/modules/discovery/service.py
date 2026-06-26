@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 
+from app.db.models import UserDocument
 from app.modules.discovery.schemas import (
     CreateInviteLinkResponse,
     DiscoveryUserSummary,
@@ -22,8 +23,10 @@ from app.modules.users.avatar import build_user_avatar_payload
 
 
 class UsersRepositoryProto(Protocol):
-    async def find_by_id(self, user_id: str) -> dict[str, Any] | None: ...
-    async def find_by_username_prefix(self, q: str, limit: int) -> list[dict[str, Any]]: ...
+    async def find_by_id(self, user_id: str) -> UserDocument | None: ...
+    async def find_by_username_prefix(
+        self, q: str, limit: int
+    ) -> list[UserDocument]: ...
 
 
 class PresenceServiceProto(Protocol):
@@ -31,7 +34,9 @@ class PresenceServiceProto(Protocol):
 
 
 class PingsServiceProto(Protocol):
-    async def get_contact_state(self, *, viewer_user_id: str, peer_user_id: str) -> Any: ...
+    async def get_contact_state(
+        self, *, viewer_user_id: str, peer_user_id: str
+    ) -> Any: ...
 
 
 @dataclass(slots=True)
@@ -93,7 +98,7 @@ class DiscoveryService:
 
         return RegenerateCodeResponse(
             code=raw,
-            token_preview=doc["token_preview"],
+            token_preview=doc.token_preview,
             expires_at=expires_at,
         )
 
@@ -133,7 +138,9 @@ class DiscoveryService:
             max_uses=max_uses,
         )
 
-    async def resolve_code(self, *, code: str, requester_user_id: str | None = None) -> DiscoveryUserSummary:
+    async def resolve_code(
+        self, *, code: str, requester_user_id: str | None = None
+    ) -> DiscoveryUserSummary:
         return await self._resolve_token(
             raw_token=code,
             token_type="code",
@@ -141,7 +148,9 @@ class DiscoveryService:
             requester_user_id=requester_user_id,
         )
 
-    async def resolve_link(self, *, token: str, requester_user_id: str | None = None) -> DiscoveryUserSummary:
+    async def resolve_link(
+        self, *, token: str, requester_user_id: str | None = None
+    ) -> DiscoveryUserSummary:
         return await self._resolve_token(
             raw_token=token,
             token_type="link",
@@ -149,7 +158,9 @@ class DiscoveryService:
             requester_user_id=requester_user_id,
         )
 
-    async def search_users(self, *, q: str, requester_user_id: str, limit: int = 20) -> list[DiscoveryUserSummary]:
+    async def search_users(
+        self, *, q: str, requester_user_id: str, limit: int = 20
+    ) -> list[DiscoveryUserSummary]:
         query = q.strip().lower()
         if not query:
             return []
@@ -158,13 +169,15 @@ class DiscoveryService:
 
         result: list[DiscoveryUserSummary] = []
         for user in users:
-            if user.get("is_private", False):
+            if user.is_private:
                 continue
-            if user.get("default_discovery_enabled", True) is False:
+            if user.default_discovery_enabled is False:
                 continue
 
             result.append(
-                await self._to_summary(user, discovered_via="username", requester_user_id=requester_user_id)
+                await self._to_summary(
+                    user, discovered_via="username", requester_user_id=requester_user_id
+                )
             )
 
         return result
@@ -179,22 +192,24 @@ class DiscoveryService:
     ) -> DiscoveryUserSummary:
         now = datetime.now(UTC)
         token_hash = hash_token(raw_token)
-        doc = await self.repo.find_active_by_hash(token_hash=token_hash, token_type=token_type)
+        doc = await self.repo.find_active_by_hash(
+            token_hash=token_hash, token_type=token_type
+        )
         if not doc:
             raise HTTPException(status_code=404, detail="Invalid discovery token")
 
-        expires_at = ensure_utc(doc.get("expires_at"))
+        expires_at = ensure_utc(doc.expires_at)
         if expires_at and expires_at < now:
             raise HTTPException(status_code=400, detail="Discovery token expired")
 
-        max_uses = doc.get("max_uses")
-        use_count = int(doc.get("use_count", 0))
+        max_uses = doc.max_uses
+        use_count = int(doc.use_count)
         if max_uses is not None and use_count >= max_uses:
             raise HTTPException(status_code=400, detail="Discovery token exhausted")
 
-        await self.repo.increment_use(token_id=str(doc["_id"]), now=now)
+        await self.repo.increment_use(token_id=doc.str_id, now=now)
 
-        user = await self.users_repo.find_by_id(doc["user_id"])
+        user = await self.users_repo.find_by_id(doc.user_id)
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
@@ -206,13 +221,17 @@ class DiscoveryService:
 
     async def _to_summary(
         self,
-        user: dict[str, Any],
+        user: UserDocument,
         *,
         discovered_via: str,
         requester_user_id: str,
     ) -> DiscoveryUserSummary:
-        user_id = str(user["_id"])
-        online = await self.presence_service.is_online(user_id) if self.presence_service else False
+        user_id = user.str_id
+        online = (
+            await self.presence_service.is_online(user_id)
+            if self.presence_service
+            else False
+        )
 
         contact_state = await self.pings_service.get_contact_state(
             viewer_user_id=requester_user_id,
@@ -221,9 +240,9 @@ class DiscoveryService:
 
         return DiscoveryUserSummary(
             id=user_id,
-            username=user.get("username", ""),
-            display_name=user.get("display_name"),
-            avatar=build_user_avatar_payload(user.get("avatar")),
+            username=user.username,
+            display_name=user.display_name,
+            avatar=build_user_avatar_payload(user.avatar),
             is_online=online,
             can_ping=contact_state.can_ping,
             chat_allowed=contact_state.chat_allowed,

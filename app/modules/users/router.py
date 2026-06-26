@@ -6,7 +6,6 @@ from starlette.requests import Request
 from app.core.errors.openapi import build_error_responses
 from app.core.http import SuccessResponse, ok
 from app.core.security import get_current_user_id
-from app.db.mongo import get_db
 from app.modules.auth.repository import UsersRepository
 from app.modules.pings.repository import PingsRepository
 from app.modules.realtime.presence.factory import get_presence_backend
@@ -27,10 +26,9 @@ router = APIRouter(
 
 
 def get_users_service() -> UsersService:
-    db = get_db()
     return UsersService(
-        UsersRepository(db),
-        PingsRepository(db),
+        UsersRepository(),
+        PingsRepository(),
         get_presence_backend(),
     )
 

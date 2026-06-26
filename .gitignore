@@ -3,7 +3,11 @@ __pycache__/
 *.pyc
 .env
 uploads/
+uploads_test/
 .pytest_cache
 .mypy_cache
 .ruff_cache
 node_modules
+
+
+AGENTS.md

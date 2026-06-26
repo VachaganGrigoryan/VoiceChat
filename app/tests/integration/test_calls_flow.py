@@ -89,8 +89,12 @@ async def test_call_accept_offer_answer_connected_and_end_flow(live_client):
 
     assert health.status_code == 200
 
-    caller, caller_tokens = await _create_verified_user_and_tokens("caller-calls@test.com")
-    callee, callee_tokens = await _create_verified_user_and_tokens("callee-calls@test.com")
+    caller, caller_tokens = await _create_verified_user_and_tokens(
+        "caller-calls@test.com"
+    )
+    callee, callee_tokens = await _create_verified_user_and_tokens(
+        "callee-calls@test.com"
+    )
     caller_id = str(caller["_id"])
     callee_id = str(callee["_id"])
     await _grant_chat_permission(caller_id, callee_id)
@@ -289,6 +293,104 @@ async def test_call_accept_offer_answer_connected_and_end_flow(live_client):
 
 
 @pytest.mark.asyncio
+async def test_call_join_and_media_state_sync_to_peer_and_active_snapshot(live_client):
+    try:
+        health = await live_client.get("/health/live")
+    except Exception:
+        pytest.skip("Live server is not running on http://api_test:8000")
+
+    assert health.status_code == 200
+
+    caller, caller_tokens = await _create_verified_user_and_tokens(
+        "caller-media@test.com"
+    )
+    callee, callee_tokens = await _create_verified_user_and_tokens(
+        "callee-media@test.com"
+    )
+    caller_id = str(caller["_id"])
+    callee_id = str(callee["_id"])
+    await _grant_chat_permission(caller_id, callee_id)
+
+    caller_sio = await _connect_socket(caller_tokens["access_token"])
+    callee_sio = await _connect_socket(callee_tokens["access_token"])
+
+    participant_updates: list[dict] = []
+    participant_update_event = asyncio.Event()
+
+    @callee_sio.on("call.participant_updated")
+    async def on_participant_updated(data):
+        participant_updates.append(data)
+        participant_update_event.set()
+
+    try:
+        create_res = await live_client.post(
+            "/calls",
+            headers=_auth_header(caller_tokens["access_token"]),
+            json={"callee_user_id": callee_id, "type": "audio"},
+        )
+        assert create_res.status_code == 201, create_res.text
+        create_call = create_res.json()["data"]["call"]
+        call_id = create_call["id"]
+        assert create_call["participant_states"][caller_id]["join_state"] == "waiting"
+        assert create_call["participant_states"][callee_id]["audio_enabled"] is True
+        assert create_call["participant_states"][callee_id]["video_enabled"] is False
+
+        accept_res = await live_client.post(
+            f"/calls/{call_id}/accept",
+            headers=_auth_header(callee_tokens["access_token"]),
+            json={"socket_id": callee_sio.get_sid("/")},
+        )
+        assert accept_res.status_code == 200, accept_res.text
+        accepted_call = accept_res.json()["data"]["call"]
+        assert accepted_call["participant_states"][callee_id]["join_state"] == "joined"
+
+        await caller_sio.emit("call.join", {"call_id": call_id})
+        await asyncio.wait_for(participant_update_event.wait(), timeout=5)
+        join_update = participant_updates[-1]
+        assert join_update["reason"] == "joined"
+        assert join_update["actor_user_id"] == caller_id
+        assert (
+            join_update["call"]["participant_states"][caller_id]["join_state"]
+            == "joined"
+        )
+
+        participant_update_event.clear()
+        await caller_sio.emit(
+            "call.media_state",
+            {"call_id": call_id, "audio_enabled": False},
+        )
+        await asyncio.wait_for(participant_update_event.wait(), timeout=5)
+        media_update = participant_updates[-1]
+        assert media_update["reason"] == "media_updated"
+        assert media_update["actor_user_id"] == caller_id
+        assert (
+            media_update["call"]["participant_states"][caller_id]["audio_enabled"]
+            is False
+        )
+
+        active_res = await live_client.get(
+            "/calls/active",
+            headers=_auth_header(callee_tokens["access_token"]),
+        )
+        assert active_res.status_code == 200, active_res.text
+        active_call = active_res.json()["data"]["call"]
+        assert active_call["id"] == call_id
+        assert active_call["participant_states"][caller_id]["audio_enabled"] is False
+        assert active_call["participant_states"][callee_id]["join_state"] == "joined"
+
+        end_res = await live_client.post(
+            f"/calls/{call_id}/end",
+            headers=_auth_header(caller_tokens["access_token"]),
+        )
+        assert end_res.status_code == 200, end_res.text
+    finally:
+        for sio in (caller_sio, callee_sio):
+            if sio.connected:
+                await asyncio.wait_for(sio.disconnect(), timeout=3)
+        await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
 async def test_call_recovery_after_socket_refresh(live_client):
     try:
         health = await live_client.get("/health/live")
@@ -297,8 +399,12 @@ async def test_call_recovery_after_socket_refresh(live_client):
 
     assert health.status_code == 200
 
-    caller, caller_tokens = await _create_verified_user_and_tokens("caller-recovery@test.com")
-    callee, callee_tokens = await _create_verified_user_and_tokens("callee-recovery@test.com")
+    caller, caller_tokens = await _create_verified_user_and_tokens(
+        "caller-recovery@test.com"
+    )
+    callee, callee_tokens = await _create_verified_user_and_tokens(
+        "callee-recovery@test.com"
+    )
     caller_id = str(caller["_id"])
     callee_id = str(callee["_id"])
     await _grant_chat_permission(caller_id, callee_id)
@@ -458,8 +564,12 @@ async def test_call_reject_flow_emits_rejected(live_client):
 
     assert health.status_code == 200
 
-    caller, caller_tokens = await _create_verified_user_and_tokens("caller-reject@test.com")
-    callee, callee_tokens = await _create_verified_user_and_tokens("callee-reject@test.com")
+    caller, caller_tokens = await _create_verified_user_and_tokens(
+        "caller-reject@test.com"
+    )
+    callee, callee_tokens = await _create_verified_user_and_tokens(
+        "callee-reject@test.com"
+    )
     caller_id = str(caller["_id"])
     callee_id = str(callee["_id"])
     await _grant_chat_permission(caller_id, callee_id)
@@ -546,8 +656,12 @@ async def test_multi_device_accept_only_routes_offer_to_accepted_socket(live_cli
 
     assert health.status_code == 200
 
-    caller, caller_tokens = await _create_verified_user_and_tokens("caller-multi@test.com")
-    callee, callee_tokens = await _create_verified_user_and_tokens("callee-multi@test.com")
+    caller, caller_tokens = await _create_verified_user_and_tokens(
+        "caller-multi@test.com"
+    )
+    callee, callee_tokens = await _create_verified_user_and_tokens(
+        "callee-multi@test.com"
+    )
     caller_id = str(caller["_id"])
     callee_id = str(callee["_id"])
     await _grant_chat_permission(caller_id, callee_id)
@@ -631,8 +745,12 @@ async def test_second_live_call_returns_busy_conflict(live_client):
 
     assert health.status_code == 200
 
-    caller_a, caller_a_tokens = await _create_verified_user_and_tokens("caller-a@test.com")
-    caller_b, caller_b_tokens = await _create_verified_user_and_tokens("caller-b@test.com")
+    caller_a, caller_a_tokens = await _create_verified_user_and_tokens(
+        "caller-a@test.com"
+    )
+    caller_b, caller_b_tokens = await _create_verified_user_and_tokens(
+        "caller-b@test.com"
+    )
     callee, _ = await _create_verified_user_and_tokens("callee-busy@test.com")
 
     caller_a_id = str(caller_a["_id"])
@@ -667,7 +785,9 @@ async def test_second_live_call_returns_busy_conflict(live_client):
 
 @pytest.mark.asyncio
 async def test_ringing_call_cancel_creates_call_message_and_history(inprocess_client):
-    caller, caller_tokens = await _create_verified_user_and_tokens("caller-cancel@test.com")
+    caller, caller_tokens = await _create_verified_user_and_tokens(
+        "caller-cancel@test.com"
+    )
     callee, _ = await _create_verified_user_and_tokens("callee-cancel@test.com")
     caller_id = str(caller["_id"])
     callee_id = str(callee["_id"])
@@ -708,10 +828,14 @@ async def test_ringing_call_cancel_creates_call_message_and_history(inprocess_cl
 
 
 @pytest.mark.asyncio
-async def test_expired_call_creates_call_message_and_history(inprocess_client, monkeypatch):
+async def test_expired_call_creates_call_message_and_history(
+    inprocess_client, monkeypatch
+):
     monkeypatch.setattr(settings, "call_ring_timeout_seconds", 0)
 
-    caller, caller_tokens = await _create_verified_user_and_tokens("caller-expired@test.com")
+    caller, caller_tokens = await _create_verified_user_and_tokens(
+        "caller-expired@test.com"
+    )
     callee, _ = await _create_verified_user_and_tokens("callee-expired@test.com")
     caller_id = str(caller["_id"])
     callee_id = str(callee["_id"])
@@ -748,8 +872,12 @@ async def test_expired_call_creates_call_message_and_history(inprocess_client, m
 
 
 @pytest.mark.asyncio
-async def test_old_terminal_call_appears_in_history_without_message_id(inprocess_client):
-    caller, caller_tokens = await _create_verified_user_and_tokens("caller-old-history@test.com")
+async def test_old_terminal_call_appears_in_history_without_message_id(
+    inprocess_client,
+):
+    caller, caller_tokens = await _create_verified_user_and_tokens(
+        "caller-old-history@test.com"
+    )
     callee, _ = await _create_verified_user_and_tokens("callee-old-history@test.com")
 
     call_id = ObjectId()

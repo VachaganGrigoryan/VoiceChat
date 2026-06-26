@@ -120,18 +120,16 @@ async def accept_ping(
 
     doc = await service.pings_repo.find_by_id(ping.id)
     if doc:
-        payload = await service.to_realtime_payload(
-            doc, incoming_for=doc["from_user_id"]
-        )
+        payload = await service.to_realtime_payload(doc, incoming_for=doc.from_user_id)
         await emit_ping_accepted(
             sio,
-            to_user_id=doc["from_user_id"],
+            to_user_id=doc.from_user_id,
             payload=payload,
         )
         await emit_chat_permission_updated(
             sio,
-            user_a=doc["from_user_id"],
-            user_b=doc["to_user_id"],
+            user_a=doc.from_user_id,
+            user_b=doc.to_user_id,
             allowed=True,
         )
 
@@ -149,12 +147,10 @@ async def decline_ping(
     ping = await service.decline_ping(user_id=user_id, ping_id=ping_id)
     doc = await service.pings_repo.find_by_id(ping.id)
     if doc:
-        payload = await service.to_realtime_payload(
-            doc, incoming_for=doc["from_user_id"]
-        )
+        payload = await service.to_realtime_payload(doc, incoming_for=doc.from_user_id)
         await emit_ping_declined(
             sio,
-            to_user_id=doc["from_user_id"],
+            to_user_id=doc.from_user_id,
             payload=payload,
         )
 
@@ -172,8 +168,8 @@ async def cancel_ping(
     ping = await service.cancel_ping(user_id=user_id, ping_id=ping_id)
     doc = await service.pings_repo.find_by_id(ping.id)
     if doc:
-        payload = await service.to_realtime_payload(doc, incoming_for=doc["to_user_id"])
-        await emit_ping_cancelled(sio, to_user_id=doc["to_user_id"], payload=payload)
+        payload = await service.to_realtime_payload(doc, incoming_for=doc.to_user_id)
+        await emit_ping_cancelled(sio, to_user_id=doc.to_user_id, payload=payload)
     return ok(request, data=ping)
 
 

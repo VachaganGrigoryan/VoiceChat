@@ -24,7 +24,6 @@ from app.modules.auth.methods import (
 from app.modules.auth.repository import UsersRepository
 from app.modules.verification.repository import VerificationCodesRepository
 
-
 AUTH_CHALLENGE_PURPOSE = "auth"
 AUTH_CODE_TTL_MINUTES = 10
 MAX_ATTEMPTS = 5
@@ -131,7 +130,9 @@ class AuthService:
 
         refresh_token = generate_refresh_token()
         refresh_hash = hash_refresh_token(refresh_token)
-        expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_expire_days)
+        expires_at = datetime.now(UTC) + timedelta(
+            days=settings.refresh_token_expire_days
+        )
 
         await self.refresh_tokens.create_token(
             user_id=user_id,
@@ -163,9 +164,13 @@ class AuthService:
             purposes=[AUTH_CHALLENGE_PURPOSE],
         )
         if not code_doc:
-            raise AppError(code="CODE_INVALID", message="Verification code is invalid or expired", status_code=400)
+            raise AppError(
+                code="CODE_INVALID",
+                message="Verification code is invalid or expired",
+                status_code=400,
+            )
 
-        attempts = await self.codes.increment_attempts(str(code_doc["_id"]))
+        attempts = await self.codes.increment_attempts(code_doc.str_id)
         if attempts > MAX_ATTEMPTS:
             await self.codes.delete_by_user_method_and_purpose(
                 user_id=finish.user_id,
@@ -178,8 +183,12 @@ class AuthService:
                 status_code=429,
             )
 
-        if not verify_auth_code(finish.identifier, code, code_doc["code_hash"]):
-            raise AppError(code="CODE_INVALID", message="Verification code is invalid", status_code=400)
+        if not verify_auth_code(finish.identifier, code, code_doc.code_hash):
+            raise AppError(
+                code="CODE_INVALID",
+                message="Verification code is invalid",
+                status_code=400,
+            )
 
         await handler.on_success(finish=finish)
         await self.codes.delete_by_user_method_and_purpose(
@@ -201,12 +210,14 @@ class AuthService:
 
         existing = await self.refresh_tokens.find_any_by_hash(token_hash=token_hash)
         if not existing:
-            raise AppError(code="UNAUTHORIZED", message="Invalid refresh token", status_code=401)
+            raise AppError(
+                code="UNAUTHORIZED", message="Invalid refresh token", status_code=401
+            )
 
         # Reuse detection: token exists but is no longer active
         active = await self.refresh_tokens.find_active_by_hash(token_hash=token_hash)
         if not active:
-            user_id = str(existing["user_id"])
+            user_id = str(existing.user_id)
             await self.refresh_tokens.revoke_all_for_user(user_id=user_id)
             raise AppError(
                 code="UNAUTHORIZED",
@@ -214,7 +225,7 @@ class AuthService:
                 status_code=401,
             )
 
-        user_id = str(active["user_id"])
+        user_id = str(active.user_id)
 
         new_refresh_token = generate_refresh_token()
         new_refresh_hash = hash_refresh_token(new_refresh_token)
@@ -225,7 +236,9 @@ class AuthService:
         )
 
         access_token = create_access_token(subject=user_id)
-        expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_expire_days)
+        expires_at = datetime.now(UTC) + timedelta(
+            days=settings.refresh_token_expire_days
+        )
 
         await self.refresh_tokens.create_token(
             user_id=user_id,

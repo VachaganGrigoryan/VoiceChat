@@ -1,0 +1,30 @@
+# Virtualenvs / local interpreters (must NOT leak into the image or override
+# the system-installed deps the container relies on)
+.venv/
+venv/
+env/
+
+# VCS & local tooling
+.git/
+.gitignore
+.idea/
+.vscode/
+.claude/
+.codex/
+
+# Python caches / build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets / env files (provided at runtime via compose env_file / bind mount)
+.env
+.env.*
+
+# Local data / OS cruft
+uploads/
+*.log
+.DS_Store

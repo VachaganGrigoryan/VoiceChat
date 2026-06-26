@@ -65,11 +65,11 @@ async def upload_media(
     reply_mode: Optional[Literal["quote", "thread"]] = Form(None),
     reply_to_message_id: Optional[str] = Form(None),
     file: UploadFile = File(...),
-    user: dict = Depends(require_verified_user),
+    user=Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
     result = await service.upload_media_message(
-        sender_id=str(user["_id"]),
+        sender_id=user.str_id,
         receiver_id=receiver_id,
         message_type=type,
         media_kind=media_kind,
@@ -117,11 +117,11 @@ async def send_text(
     request: Request,
     sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
     body: SendTextMessageRequest,
-    user: dict = Depends(require_verified_user),
+    user=Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
     result = await service.send_text_message(
-        sender_id=str(user["_id"]),
+        sender_id=user.str_id,
         receiver_id=body.receiver_id,
         text=body.text,
         reply_mode=body.reply_mode,
@@ -169,11 +169,11 @@ async def history(
     user_id: str,
     limit: int = Query(20, ge=1, le=100),
     cursor: Optional[str] = Query(None),
-    user: dict = Depends(require_verified_user),
+    user=Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
     items, next_cursor = await service.get_history(
-        user_id=str(user["_id"]),
+        user_id=user.str_id,
         peer_user_id=user_id,
         limit=limit,
         cursor=cursor,
@@ -199,11 +199,11 @@ async def conversations(
     request: Request,
     limit: int = Query(50, ge=1, le=100),
     cursor: Optional[str] = Query(None),
-    user: dict = Depends(require_verified_user),
+    user=Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
     items, next_cursor = await service.list_conversations(
-        user_id=str(user["_id"]),
+        user_id=user.str_id,
         limit=limit,
         cursor=cursor,
     )
@@ -226,11 +226,11 @@ async def conversations(
 async def mark_conversation_read(
     request: Request,
     user_id: str,
-    user: dict = Depends(require_verified_user),
+    user=Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
     updated = await service.mark_conversation_read(
-        receiver_id=str(user["_id"]),
+        receiver_id=user.str_id,
         peer_user_id=user_id,
     )
     return ok(request, data={"updated_count": updated})
@@ -243,14 +243,16 @@ async def mark_conversation_read(
 async def clear_chat_history(
     request: Request,
     user_id: str,
-    user: dict = Depends(require_verified_user),
+    user=Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
     conv_id, count = await service.clear_chat_history(
-        user_id=str(user["_id"]),
+        user_id=user.str_id,
         peer_user_id=user_id,
     )
-    return ok(request, data=ClearChatResponse(conversation_id=conv_id, cleared_count=count))
+    return ok(
+        request, data=ClearChatResponse(conversation_id=conv_id, cleared_count=count)
+    )
 
 
 @router.delete(
@@ -260,11 +262,11 @@ async def clear_chat_history(
 async def delete_chat(
     request: Request,
     user_id: str,
-    user: dict = Depends(require_verified_user),
+    user=Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
     conv_id, count, ping_deleted = await service.delete_chat(
-        user_id=str(user["_id"]),
+        user_id=user.str_id,
         peer_user_id=user_id,
     )
     return ok(
@@ -284,12 +286,12 @@ async def delete_chat(
 async def get_thread(
     request: Request,
     message_id: str,
-    user: dict = Depends(require_verified_user),
+    user=Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
     items = await service.get_thread(
         message_id=message_id,
-        user_id=str(user["_id"]),
+        user_id=user.str_id,
     )
     return ok(request, data=items)
 
@@ -301,12 +303,12 @@ async def get_thread(
 async def get_thread_summary(
     request: Request,
     message_id: str,
-    user: dict = Depends(require_verified_user),
+    user=Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
     summary = await service.get_thread_summary(
         message_id=message_id,
-        user_id=str(user["_id"]),
+        user_id=user.str_id,
     )
     return ok(request, data=summary)
 
@@ -320,12 +322,12 @@ async def add_reaction(
     message_id: str,
     body: AddReactionRequest,
     sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-    user: dict = Depends(require_verified_user),
+    user=Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
     message = await service.add_reaction(
         message_id=message_id,
-        user_id=str(user["_id"]),
+        user_id=user.str_id,
         emoji=body.emoji,
     )
     await emit_message_reacted(
@@ -353,12 +355,12 @@ async def remove_reaction(
     message_id: str,
     emoji: str,
     sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-    user: dict = Depends(require_verified_user),
+    user=Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
     message = await service.remove_reaction(
         message_id=message_id,
-        user_id=str(user["_id"]),
+        user_id=user.str_id,
         emoji=emoji,
     )
     await emit_message_reacted(
@@ -385,12 +387,12 @@ async def mark_delivered(
     request: Request,
     message_id: str,
     sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-    user: dict = Depends(require_verified_user),
+    user=Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
     message = await service.mark_delivered(
         message_id=message_id,
-        receiver_id=str(user["_id"]),
+        receiver_id=user.str_id,
     )
     await emit_message_status_to_user(
         sio,
@@ -413,12 +415,12 @@ async def mark_read(
     request: Request,
     message_id: str,
     sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-    user: dict = Depends(require_verified_user),
+    user=Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
     message = await service.mark_read(
         message_id=message_id,
-        receiver_id=str(user["_id"]),
+        receiver_id=user.str_id,
     )
     await emit_message_status_to_user(
         sio,
@@ -443,12 +445,12 @@ async def edit_message(
     message_id: str,
     body: EditMessageRequest,
     sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-    user: dict = Depends(require_verified_user),
+    user=Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
     message = await service.edit_text_message(
         message_id=message_id,
-        sender_id=str(user["_id"]),
+        sender_id=user.str_id,
         text=body.text,
     )
     await emit_message_edited(
@@ -468,12 +470,12 @@ async def delete_message(
     request: Request,
     message_id: str,
     sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-    user: dict = Depends(require_verified_user),
+    user=Depends(require_verified_user),
     service: MessagesService = Depends(get_messages_service),
 ):
     outcome = await service.delete_message(
         message_id=message_id,
-        actor_user_id=str(user["_id"]),
+        actor_user_id=user.str_id,
     )
 
     payload = outcome.response.model_dump(mode="json")
@@ -487,7 +489,7 @@ async def delete_message(
     else:
         await emit_to_user(
             sio,
-            user_id=str(user["_id"]),
+            user_id=user.str_id,
             event="message_deleted",
             payload=payload,
         )

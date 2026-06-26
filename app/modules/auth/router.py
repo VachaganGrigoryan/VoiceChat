@@ -6,7 +6,6 @@ from starlette.requests import Request
 from app.core.http import ok, SuccessResponse
 from app.core.errors.openapi import build_error_responses
 from app.core.rate_limit import rate_limit
-from app.db.mongo import get_db
 from app.modules.auth.schemas import (
     StartAuthRequest,
     AuthChallengeResponse,
@@ -35,11 +34,10 @@ router = APIRouter(
     dependencies=[Depends(rate_limit("10/15 minutes", scope="auth_start"))],
 )
 async def start_auth(request: Request, body: StartAuthRequest):
-    db = get_db()
     service = AuthService(
-        UsersRepository(db),
-        VerificationCodesRepository(db),
-        RefreshTokensRepository(db),
+        UsersRepository(),
+        VerificationCodesRepository(),
+        RefreshTokensRepository(),
     )
     result = await service.start_auth(
         method=body.method,
@@ -54,11 +52,10 @@ async def start_auth(request: Request, body: StartAuthRequest):
     dependencies=[Depends(rate_limit("10/15 minutes", scope="auth_finish"))],
 )
 async def finish_auth(request: Request, body: FinishAuthRequest):
-    db = get_db()
     service = AuthService(
-        UsersRepository(db),
-        VerificationCodesRepository(db),
-        RefreshTokensRepository(db),
+        UsersRepository(),
+        VerificationCodesRepository(),
+        RefreshTokensRepository(),
     )
     result = await service.finish_auth(
         method=body.method,
@@ -73,11 +70,10 @@ async def finish_auth(request: Request, body: FinishAuthRequest):
     response_model=SuccessResponse[TokenPairResponse],
 )
 async def refresh(request: Request, body: RefreshRequest):
-    db = get_db()
     service = AuthService(
-        UsersRepository(db),
-        VerificationCodesRepository(db),
-        RefreshTokensRepository(db),
+        UsersRepository(),
+        VerificationCodesRepository(),
+        RefreshTokensRepository(),
     )
 
     result = await service.refresh(
@@ -93,11 +89,10 @@ async def refresh(request: Request, body: RefreshRequest):
     response_model=SuccessResponse[MessageResponse],
 )
 async def logout(request: Request, body: LogoutRequest):
-    db = get_db()
     service = AuthService(
-        UsersRepository(db),
-        VerificationCodesRepository(db),
-        RefreshTokensRepository(db),
+        UsersRepository(),
+        VerificationCodesRepository(),
+        RefreshTokensRepository(),
     )
 
     result = await service.logout(refresh_token=body.refresh_token)
