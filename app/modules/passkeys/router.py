@@ -8,6 +8,7 @@ from starlette.requests import Request
 from app.core.errors.openapi import build_error_responses
 from app.core.http import SuccessResponse, ok
 from app.core.security import get_current_user
+from app.db.models import UserDocument
 from app.modules.passkeys.schemas import (
     AuthTokensResponse,
     LoginPasskeyFinishRequest,
@@ -35,10 +36,10 @@ router = APIRouter(
 async def start_registration(
     request: Request,
     payload: RegisterPasskeyStartRequest,
-    current_user: dict[str, Any] = Depends(get_current_user),
+    current_user: UserDocument = Depends(get_current_user),
     service: PasskeyService = Depends(get_passkey_service),
 ) -> Any:
-    user_id = str(current_user.get("_id") or current_user["id"])
+    user_id = current_user.str_id
     options = await service.start_registration(
         user_id=user_id, nickname=payload.nickname
     )
@@ -49,10 +50,10 @@ async def start_registration(
 async def finish_registration(
     request: Request,
     payload: RegisterPasskeyFinishRequest,
-    current_user: dict[str, Any] = Depends(get_current_user),
+    current_user: UserDocument = Depends(get_current_user),
     service: PasskeyService = Depends(get_passkey_service),
 ) -> Any:
-    user_id = str(current_user.get("_id") or current_user["id"])
+    user_id = current_user.str_id
     passkey = await service.finish_registration(
         user_id=user_id,
         credential=payload.credential,
@@ -88,10 +89,10 @@ async def finish_login(
 @router.get("", response_model=SuccessResponse[list[PasskeyResponse]])
 async def list_passkeys(
     request: Request,
-    current_user: dict[str, Any] = Depends(get_current_user),
+    current_user: UserDocument = Depends(get_current_user),
     service: PasskeyService = Depends(get_passkey_service),
 ) -> Any:
-    user_id = str(current_user.get("_id") or current_user["id"])
+    user_id = current_user.str_id
     return ok(request, data=await service.list_passkeys(user_id=user_id))
 
 
@@ -103,9 +104,9 @@ async def list_passkeys(
 async def delete_passkey(
     request: Request,
     credential_id: str,
-    current_user: dict[str, Any] = Depends(get_current_user),
+    current_user: UserDocument = Depends(get_current_user),
     service: PasskeyService = Depends(get_passkey_service),
 ) -> Any:
-    user_id = str(current_user.get("_id") or current_user["id"])
+    user_id = current_user.str_id
     deleted = await service.delete_passkey(user_id=user_id, credential_id=credential_id)
     return ok(request, data=PasskeyDeleteResult(deleted=deleted))

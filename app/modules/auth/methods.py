@@ -6,7 +6,9 @@ from typing import Awaitable, Callable, Protocol
 from app.modules.auth.repository import UsersRepository
 
 AUTH_METHOD_EMAIL = "email"
-AUTH_CHALLENGE_MESSAGE = "If the identifier can be used, a verification code has been sent."
+AUTH_CHALLENGE_MESSAGE = (
+    "If the identifier can be used, a verification code has been sent."
+)
 
 
 @dataclass(slots=True)
@@ -55,7 +57,7 @@ class EmailAuthMethodHandler:
         return AuthStartContext(
             method=self.method,
             identifier=normalized,
-            user_id=str(user["_id"]),
+            user_id=user.str_id,
             message=AUTH_CHALLENGE_MESSAGE,
         )
 
@@ -68,8 +70,8 @@ class EmailAuthMethodHandler:
         return AuthFinishContext(
             method=self.method,
             identifier=normalized,
-            user_id=str(user["_id"]),
-            should_mark_verified=not bool(user.get("is_verified")),
+            user_id=user.str_id,
+            should_mark_verified=not user.is_verified,
         )
 
     async def deliver_code(self, *, identifier: str, code: str) -> None:

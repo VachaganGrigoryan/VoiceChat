@@ -4,10 +4,11 @@ import os
 
 os.environ["ENV_FILE"] = ".env.test"
 
-from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import AsyncMongoClient
 
 from app.core.config import settings
 from app.core.rate_limit.limiter import rate_limiter
+from app.db.init import init_database
 from app.db.mongo import connect_mongo, disconnect_mongo
 from app.factory import create_app
 from app.socket import create_socket_server, register_socket_events
@@ -24,6 +25,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/1")
 @pytest_asyncio.fixture(scope="function", autouse=True)
 async def app_lifecycle():
     await connect_mongo()
+    await init_database()
     yield
     await disconnect_mongo()
 
@@ -61,7 +63,7 @@ TEST_COLLECTIONS = [
 
 @pytest_asyncio.fixture(autouse=True)
 async def clean_db():
-    client = AsyncIOMotorClient(settings.mongo_uri)
+    client: AsyncMongoClient = AsyncMongoClient(settings.mongo_uri)
     db = client[settings.mongo_db]
 
     for name in TEST_COLLECTIONS:
@@ -72,7 +74,7 @@ async def clean_db():
     for name in TEST_COLLECTIONS:
         await db[name].delete_many({})
 
-    client.close()
+    await client.close()
 
 
 @pytest_asyncio.fixture(scope="function")

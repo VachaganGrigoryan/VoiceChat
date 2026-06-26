@@ -122,9 +122,9 @@ async def test_create_call_enforces_permission_and_returns_doc(
         call_type="audio",
     )
 
-    assert result["status"] == "ringing"
-    assert result["participant_states"]["u1"]["audio_enabled"] is True
-    assert result["participant_states"]["u2"]["join_state"] == "waiting"
+    assert result.status == "ringing"
+    assert result.participant_states["u1"].audio_enabled is True
+    assert result.participant_states["u2"].join_state == "waiting"
     pings_service.ensure_can_message.assert_awaited_once_with(
         sender_id="u1", receiver_id="u2"
     )
@@ -156,7 +156,7 @@ async def test_accept_call_marks_callee_joined(service, ringing_call_doc):
 
     result = await svc.accept_call(user_id="u2", call_id="507f1f77bcf86cd799439011")
 
-    assert result["participant_states"]["u2"]["join_state"] == "joined"
+    assert result.participant_states["u2"].join_state == "joined"
     repo.update_participant_state.assert_awaited_once_with(
         call_id="507f1f77bcf86cd799439011",
         participant_user_id="u2",
@@ -248,7 +248,7 @@ async def test_mark_active_promotes_connecting_call(service, ringing_call_doc):
 
     result = await svc.mark_active(user_id="u1", call_id="507f1f77bcf86cd799439011")
 
-    assert result["status"] == "active"
+    assert result.status == "active"
     repo.set_active.assert_awaited_once_with(
         call_id="507f1f77bcf86cd799439011",
         participant_user_id="u1",
@@ -277,7 +277,7 @@ async def test_start_connecting_transitions_active_call_for_recovery_offer(
         user_id="u1", call_id="507f1f77bcf86cd799439011"
     )
 
-    assert result["status"] == "connecting"
+    assert result.status == "connecting"
     repo.set_connecting.assert_awaited_once_with(
         call_id="507f1f77bcf86cd799439011",
         caller_user_id="u1",
@@ -301,7 +301,8 @@ async def test_start_connecting_is_idempotent_when_call_already_connecting(
         user_id="u1", call_id="507f1f77bcf86cd799439011"
     )
 
-    assert result == connecting_call
+    assert result.status == "connecting"
+    assert result.str_id == "507f1f77bcf86cd799439011"
     repo.set_connecting.assert_not_awaited()
 
 
@@ -332,7 +333,7 @@ async def test_mark_participant_joined_updates_live_call(service, ringing_call_d
         call_id="507f1f77bcf86cd799439011",
     )
 
-    assert result["participant_states"]["u1"]["join_state"] == "joined"
+    assert result.participant_states["u1"].join_state == "joined"
     repo.update_participant_state.assert_awaited_once_with(
         call_id="507f1f77bcf86cd799439011",
         participant_user_id="u1",
@@ -379,7 +380,7 @@ async def test_update_media_state_updates_audio_flag(service, ringing_call_doc):
         audio_enabled=False,
     )
 
-    assert result["participant_states"]["u1"]["audio_enabled"] is False
+    assert result.participant_states["u1"].audio_enabled is False
     repo.update_participant_state.assert_awaited_once_with(
         call_id="507f1f77bcf86cd799439011",
         participant_user_id="u1",
@@ -486,7 +487,7 @@ async def test_mark_reconnecting_from_disconnect_sets_deadline(
         call_id="507f1f77bcf86cd799439011",
     )
 
-    assert result["status"] == "reconnecting"
+    assert result.status == "reconnecting"
     repo.mark_reconnecting.assert_awaited_once()
     deadline = repo.mark_reconnecting.await_args.kwargs["reconnect_deadline_at"]
     assert deadline > datetime.now(UTC)
@@ -528,8 +529,8 @@ async def test_resume_call_updates_recoverable_call(service, ringing_call_doc):
 
     result = await svc.resume_call(user_id="u1", call_id="507f1f77bcf86cd799439011")
 
-    assert result["status"] == "connecting"
-    assert result["disconnected_user_ids"] == []
+    assert result.status == "connecting"
+    assert result.disconnected_user_ids == []
     repo.resume_reconnecting.assert_awaited_once_with(
         call_id="507f1f77bcf86cd799439011",
         participant_user_id="u1",
@@ -567,8 +568,8 @@ async def test_resume_call_transitions_to_connecting_when_everyone_is_back(
 
     result = await svc.resume_call(user_id="u1", call_id="507f1f77bcf86cd799439011")
 
-    assert result["status"] == "connecting"
-    assert result["reconnect_deadline_at"] is None
+    assert result.status == "connecting"
+    assert result.reconnect_deadline_at is None
 
 
 @pytest.mark.asyncio
@@ -614,8 +615,8 @@ async def test_resume_call_preserves_media_state(service, ringing_call_doc):
 
     result = await svc.resume_call(user_id="u1", call_id="507f1f77bcf86cd799439011")
 
-    assert result["participant_states"]["u1"]["audio_enabled"] is False
-    assert result["participant_states"]["u1"]["join_state"] == "joined"
+    assert result.participant_states["u1"].audio_enabled is False
+    assert result.participant_states["u1"].join_state == "joined"
 
 
 def test_to_call_doc_infers_participant_states_for_legacy_call(service):

@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.db.object_id import StrId
+
 CallType = Literal["audio", "video"]
 CallDirection = Literal["incoming", "outgoing"]
 CallParticipantRole = Literal["caller", "callee"]
@@ -26,7 +28,7 @@ CallStatus = Literal[
 
 
 class CallPeerUserSummary(BaseModel):
-    id: str
+    id: StrId
     username: str = ""
     display_name: str | None = None
     avatar: dict | None = None
@@ -48,10 +50,10 @@ class CallParticipantState(BaseModel):
 
 
 class CallDoc(BaseModel):
-    id: str
-    caller_user_id: str
-    callee_user_id: str
-    participant_user_ids: list[str] = Field(min_length=2, max_length=2)
+    id: StrId
+    caller_user_id: StrId
+    callee_user_id: StrId
+    participant_user_ids: list[StrId] = Field(min_length=2, max_length=2)
     type: CallType
     status: CallStatus
     room_id: str
@@ -61,13 +63,13 @@ class CallDoc(BaseModel):
     ended_at: datetime | None = None
     expires_at: datetime | None = None
     reconnect_deadline_at: datetime | None = None
-    disconnected_user_ids: list[str] = Field(default_factory=list)
+    disconnected_user_ids: list[StrId] = Field(default_factory=list)
     participant_states: dict[str, CallParticipantState] = Field(default_factory=dict)
     is_live: bool = True
 
 
 class CallHistoryItem(BaseModel):
-    id: str
+    id: StrId
     peer_user: CallPeerUserSummary
     direction: CallDirection
     type: CallType
@@ -76,7 +78,7 @@ class CallHistoryItem(BaseModel):
     answered_at: datetime | None = None
     ended_at: datetime | None = None
     duration_ms: int = Field(default=0, ge=0)
-    message_id: str | None = None
+    message_id: StrId | None = None
 
 
 class ClearCallHistoryResponse(BaseModel):
@@ -130,5 +132,5 @@ class CallParticipantUpdatedEvent(BaseModel):
     call: CallDoc
     peer_user: CallPeerUserSummary
     ice_servers: list[IceServer] = Field(default_factory=list)
-    actor_user_id: str
+    actor_user_id: StrId
     reason: CallParticipantUpdateReason

@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.db.object_id import StrId
+
 PingStatus = Literal["pending", "accepted", "declined", "cancelled", "expired", "blocked"]
 PingStatusView = Literal["none", "incoming_pending", "outgoing_pending", "accepted", "declined"]
 
@@ -18,9 +20,9 @@ class PeerActionRequest(BaseModel):
 
 
 class PingResponse(BaseModel):
-    id: str
-    from_user_id: str
-    to_user_id: str
+    id: StrId
+    from_user_id: StrId
+    to_user_id: StrId
     status: PingStatus
     created_at: datetime
     updated_at: datetime
@@ -28,7 +30,7 @@ class PingResponse(BaseModel):
 
 
 class PeerUserSummary(BaseModel):
-    id: str
+    id: StrId
     username: str
     display_name: str | None = None
     avatar: dict | None = None

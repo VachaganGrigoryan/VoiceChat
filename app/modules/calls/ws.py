@@ -34,6 +34,12 @@ _expiration_tasks: dict[str, asyncio.Task[None]] = {}
 _reconnect_timeout_tasks: dict[str, asyncio.Task[None]] = {}
 
 
+def _call_value(call_doc: object, key: str, default: Any = None) -> Any:
+    if isinstance(call_doc, dict):
+        return call_doc.get(key, default)
+    return getattr(call_doc, key, default)
+
+
 def register_events(sio: socketio.AsyncServer) -> None:
     @sio.on("call.join")
     async def handle_call_join(sid: str, data: dict[str, Any] | None):
@@ -53,7 +59,7 @@ def register_events(sio: socketio.AsyncServer) -> None:
             await _bind_socket_to_call_room(
                 sio,
                 socket_id=sid,
-                room_id=current_call["room_id"],
+                room_id=_call_value(current_call, "room_id"),
                 call_id=payload.call_id,
                 user_id=user_id,
             )
@@ -94,7 +100,7 @@ def register_events(sio: socketio.AsyncServer) -> None:
             await _bind_socket_to_call_room(
                 sio,
                 socket_id=sid,
-                room_id=call_doc["room_id"],
+                room_id=_call_value(call_doc, "room_id"),
                 call_id=payload.call_id,
                 user_id=user_id,
             )
@@ -129,7 +135,7 @@ def register_events(sio: socketio.AsyncServer) -> None:
                     "sdp": payload.sdp,
                 }
             ),
-            room=call_doc["room_id"],
+            room=_call_value(call_doc, "room_id"),
             skip_sid=sid,
         )
 
@@ -151,7 +157,7 @@ def register_events(sio: socketio.AsyncServer) -> None:
             await _bind_socket_to_call_room(
                 sio,
                 socket_id=sid,
-                room_id=call_doc["room_id"],
+                room_id=_call_value(call_doc, "room_id"),
                 call_id=payload.call_id,
                 user_id=user_id,
             )
@@ -185,7 +191,7 @@ def register_events(sio: socketio.AsyncServer) -> None:
                     "sdp": payload.sdp,
                 }
             ),
-            room=call_doc["room_id"],
+            room=_call_value(call_doc, "room_id"),
             skip_sid=sid,
         )
 
@@ -208,7 +214,7 @@ def register_events(sio: socketio.AsyncServer) -> None:
             await _bind_socket_to_call_room(
                 sio,
                 socket_id=sid,
-                room_id=call_doc["room_id"],
+                room_id=_call_value(call_doc, "room_id"),
                 call_id=payload.call_id,
                 user_id=user_id,
             )
@@ -242,7 +248,7 @@ def register_events(sio: socketio.AsyncServer) -> None:
                     "candidate": payload.candidate,
                 }
             ),
-            room=call_doc["room_id"],
+            room=_call_value(call_doc, "room_id"),
             skip_sid=sid,
         )
 
@@ -277,7 +283,7 @@ def register_events(sio: socketio.AsyncServer) -> None:
             await _bind_socket_to_call_room(
                 sio,
                 socket_id=sid,
-                room_id=call_doc["room_id"],
+                room_id=_call_value(call_doc, "room_id"),
                 call_id=payload.call_id,
                 user_id=user_id,
             )
@@ -316,7 +322,7 @@ def register_events(sio: socketio.AsyncServer) -> None:
             await _bind_socket_to_call_room(
                 sio,
                 socket_id=sid,
-                room_id=call_doc["room_id"],
+                room_id=_call_value(call_doc, "room_id"),
                 call_id=payload.call_id,
                 user_id=user_id,
             )
@@ -412,15 +418,17 @@ def register_events(sio: socketio.AsyncServer) -> None:
             await _bind_socket_to_call_room(
                 sio,
                 socket_id=sid,
-                room_id=call_doc["room_id"],
+                room_id=_call_value(call_doc, "room_id"),
                 call_id=payload.call_id,
                 user_id=user_id,
             )
-            if call_doc.get("status") == "reconnecting":
+            if _call_value(call_doc, "status") == "reconnecting":
                 schedule_call_reconnect_timeout(
                     sio,
                     call_id=payload.call_id,
-                    reconnect_deadline_at=call_doc.get("reconnect_deadline_at"),
+                    reconnect_deadline_at=_call_value(
+                        call_doc, "reconnect_deadline_at"
+                    ),
                 )
             else:
                 cancel_call_reconnect_timeout(payload.call_id)

@@ -4,26 +4,17 @@ from datetime import UTC, datetime
 from typing import Any, Iterable
 
 from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from app.core.errors import AppError
 from app.core.pagination.cursor import decode_cursor, encode_cursor
-from app.db.indexes import COL_CALLS
+from app.db.models import CallDocument
+from app.db.object_id import parse_object_id as _oid
+from app.db.repository import BaseRepository
 from app.modules.calls.schemas import CallType
 from app.modules.calls.state import TERMINAL_CALL_STATUSES
 
 _MISSING = object()
-
-
-def _oid(value: str) -> ObjectId:
-    try:
-        return ObjectId(value)
-    except Exception as exc:
-        raise AppError(
-            code="INVALID_ID", message="Invalid id", status_code=400
-        ) from exc
 
 
 def _build_participant_states(
@@ -52,9 +43,8 @@ def _build_participant_states(
     }
 
 
-class CallsRepository:
-    def __init__(self, db: AsyncIOMotorDatabase):
-        self.col = db[COL_CALLS]
+class CallsRepository(BaseRepository[CallDocument]):
+    model = CallDocument
 
     async def create_call(
         self,
@@ -63,38 +53,32 @@ class CallsRepository:
         callee_user_id: str,
         call_type: CallType,
         expires_at: datetime,
-    ) -> dict[str, Any]:
+    ) -> CallDocument:
         now = datetime.now(UTC)
         call_id = ObjectId()
 
-        doc = {
-            "_id": call_id,
-            "caller_user_id": caller_user_id,
-            "callee_user_id": callee_user_id,
-            "participant_user_ids": [caller_user_id, callee_user_id],
-            "type": call_type,
-            "status": "ringing",
-            "room_id": f"call:{call_id}",
-            "created_at": now,
-            "updated_at": now,
-            "answered_at": None,
-            "ended_at": None,
-            "expires_at": expires_at,
-            "reconnect_deadline_at": None,
-            "disconnected_user_ids": [],
-            "participant_states": _build_participant_states(
+        doc = CallDocument(
+            id=call_id,
+            caller_user_id=caller_user_id,
+            callee_user_id=callee_user_id,
+            participant_user_ids=[caller_user_id, callee_user_id],
+            type=call_type,
+            status="ringing",
+            room_id=f"call:{call_id}",
+            created_at=now,
+            updated_at=now,
+            expires_at=expires_at,
+            participant_states=_build_participant_states(
                 caller_user_id=caller_user_id,
                 callee_user_id=callee_user_id,
                 call_type=call_type,
                 now=now,
             ),
-            "hidden_for_user_ids": [],
-            "is_live": True,
-            "history_message_id": None,
-        }
+        )
 
         try:
-            await self.col.insert_one(doc)
+            await doc.insert()
+            return doc
         except DuplicateKeyError as exc:
             raise AppError(
                 code="CALL_BUSY",
@@ -102,42 +86,40 @@ class CallsRepository:
                 status_code=409,
             ) from exc
 
-        return doc
-
-    async def find_by_id(self, call_id: str) -> dict[str, Any] | None:
-        return await self.col.find_one({"_id": _oid(call_id)})
+    async def find_by_id(self, call_id: str) -> CallDocument | None:
+        return await self.get_by_id(call_id)
 
     async def find_live_call_for_user(
         self,
         *,
         user_id: str,
         statuses: Iterable[str],
-    ) -> dict[str, Any] | None:
-        return await self.col.find_one(
-            {
-                "participant_user_ids": user_id,
-                "status": {"$in": list(statuses)},
-                "is_live": True,
-            },
-            sort=[("updated_at", -1), ("_id", -1)],
+    ) -> CallDocument | None:
+        return (
+            await CallDocument.find(
+                {
+                    "participant_user_ids": user_id,
+                    "status": {"$in": list(statuses)},
+                    "is_live": True,
+                }
+            )
+            .sort("-updated_at", "-_id")
+            .first_or_none()
         )
 
     async def find_live_calls(
         self,
         *,
         statuses: Iterable[str],
-    ) -> list[dict[str, Any]]:
-        cursor = self.col.find(
-            {
-                "status": {"$in": list(statuses)},
-                "is_live": True,
-            }
-        )
-        return await cursor.to_list(length=None)
+    ) -> list[CallDocument]:
+        return await CallDocument.find(
+            {"status": {"$in": list(statuses)}, "is_live": True}
+        ).to_list()
 
     async def expire_stale_calls(self, *, now: datetime | None = None) -> int:
         current_time = now or datetime.now(UTC)
-        expired_result = await self.col.update_many(
+        col = self.raw
+        expired_result = await col.update_many(
             {
                 "status": "ringing",
                 "is_live": True,
@@ -154,7 +136,7 @@ class CallsRepository:
                 }
             },
         )
-        reconnect_result = await self.col.update_many(
+        reconnect_result = await col.update_many(
             {
                 "status": "reconnecting",
                 "is_live": True,
@@ -175,14 +157,11 @@ class CallsRepository:
 
     async def list_due_call_ids(self, *, now: datetime | None = None) -> list[str]:
         current_time = now or datetime.now(UTC)
-        cursor = self.col.find(
+        cursor = self.raw.find(
             {
                 "is_live": True,
                 "$or": [
-                    {
-                        "status": "ringing",
-                        "expires_at": {"$lte": current_time},
-                    },
+                    {"status": "ringing", "expires_at": {"$lte": current_time}},
                     {
                         "status": "reconnecting",
                         "reconnect_deadline_at": {"$lte": current_time},
@@ -199,9 +178,9 @@ class CallsRepository:
         *,
         call_id: str,
         now: datetime | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> CallDocument | None:
         current_time = now or datetime.now(UTC)
-        expired = await self.col.find_one_and_update(
+        expired = await self.find_one_and_update(
             {
                 "_id": _oid(call_id),
                 "status": "ringing",
@@ -218,12 +197,11 @@ class CallsRepository:
                     "disconnected_user_ids": [],
                 }
             },
-            return_document=ReturnDocument.AFTER,
         )
         if expired is not None:
             return expired
 
-        return await self.col.find_one_and_update(
+        return await self.find_one_and_update(
             {
                 "_id": _oid(call_id),
                 "status": "reconnecting",
@@ -240,7 +218,6 @@ class CallsRepository:
                     "disconnected_user_ids": [],
                 }
             },
-            return_document=ReturnDocument.AFTER,
         )
 
     async def set_history_message_id(
@@ -248,11 +225,10 @@ class CallsRepository:
         *,
         call_id: str,
         history_message_id: str,
-    ) -> dict[str, Any] | None:
-        return await self.col.find_one_and_update(
+    ) -> CallDocument | None:
+        return await self.find_one_and_update(
             {"_id": _oid(call_id)},
             {"$set": {"history_message_id": history_message_id}},
-            return_document=ReturnDocument.AFTER,
         )
 
     async def update_participant_state(
@@ -263,7 +239,7 @@ class CallsRepository:
         join_state: str | object = _MISSING,
         audio_enabled: bool | object = _MISSING,
         video_enabled: bool | object = _MISSING,
-    ) -> dict[str, Any] | None:
+    ) -> CallDocument | None:
         now = datetime.now(UTC)
         update_fields: dict[str, Any] = {
             "updated_at": now,
@@ -283,19 +259,18 @@ class CallsRepository:
                 video_enabled
             )
 
-        return await self.col.find_one_and_update(
+        return await self.find_one_and_update(
             {
                 "_id": _oid(call_id),
                 "participant_user_ids": participant_user_id,
                 "is_live": True,
             },
             {"$set": update_fields},
-            return_document=ReturnDocument.AFTER,
         )
 
     async def accept_call(
         self, *, call_id: str, callee_user_id: str
-    ) -> dict[str, Any] | None:
+    ) -> CallDocument | None:
         now = datetime.now(UTC)
         return await self._transition_status(
             call_id=call_id,
@@ -314,7 +289,7 @@ class CallsRepository:
 
     async def reject_call(
         self, *, call_id: str, callee_user_id: str
-    ) -> dict[str, Any] | None:
+    ) -> CallDocument | None:
         now = datetime.now(UTC)
         return await self._transition_status(
             call_id=call_id,
@@ -333,7 +308,7 @@ class CallsRepository:
 
     async def cancel_call(
         self, *, call_id: str, caller_user_id: str
-    ) -> dict[str, Any] | None:
+    ) -> CallDocument | None:
         now = datetime.now(UTC)
         return await self._transition_status(
             call_id=call_id,
@@ -352,7 +327,7 @@ class CallsRepository:
 
     async def end_call(
         self, *, call_id: str, participant_user_id: str
-    ) -> dict[str, Any] | None:
+    ) -> CallDocument | None:
         now = datetime.now(UTC)
         return await self._transition_status(
             call_id=call_id,
@@ -368,7 +343,7 @@ class CallsRepository:
 
     async def set_connecting(
         self, *, call_id: str, caller_user_id: str
-    ) -> dict[str, Any] | None:
+    ) -> CallDocument | None:
         return await self._transition_status(
             call_id=call_id,
             expected_statuses=("accepted", "active", "reconnecting"),
@@ -381,7 +356,7 @@ class CallsRepository:
 
     async def set_active(
         self, *, call_id: str, participant_user_id: str
-    ) -> dict[str, Any] | None:
+    ) -> CallDocument | None:
         return await self._transition_status(
             call_id=call_id,
             expected_statuses=("connecting",),
@@ -398,9 +373,9 @@ class CallsRepository:
         call_id: str,
         participant_user_id: str,
         reconnect_deadline_at: datetime,
-    ) -> dict[str, Any] | None:
+    ) -> CallDocument | None:
         now = datetime.now(UTC)
-        return await self.col.find_one_and_update(
+        return await self.find_one_and_update(
             {
                 "_id": _oid(call_id),
                 "status": {"$in": ["accepted", "connecting", "active", "reconnecting"]},
@@ -415,11 +390,8 @@ class CallsRepository:
                     f"participant_states.{participant_user_id}.join_state": "disconnected",
                     f"participant_states.{participant_user_id}.updated_at": now,
                 },
-                "$addToSet": {
-                    "disconnected_user_ids": participant_user_id,
-                },
+                "$addToSet": {"disconnected_user_ids": participant_user_id},
             },
-            return_document=ReturnDocument.AFTER,
         )
 
     async def resume_reconnecting(
@@ -427,9 +399,9 @@ class CallsRepository:
         *,
         call_id: str,
         participant_user_id: str,
-    ) -> dict[str, Any] | None:
+    ) -> CallDocument | None:
         now = datetime.now(UTC)
-        return await self.col.find_one_and_update(
+        return await self.find_one_and_update(
             {
                 "_id": _oid(call_id),
                 "status": {"$in": ["accepted", "connecting", "active", "reconnecting"]},
@@ -442,16 +414,13 @@ class CallsRepository:
                     f"participant_states.{participant_user_id}.join_state": "joined",
                     f"participant_states.{participant_user_id}.updated_at": now,
                 },
-                "$pull": {
-                    "disconnected_user_ids": participant_user_id,
-                },
+                "$pull": {"disconnected_user_ids": participant_user_id},
             },
-            return_document=ReturnDocument.AFTER,
         )
 
     async def set_connecting_after_resume(
         self, *, call_id: str, participant_user_id: str
-    ) -> dict[str, Any] | None:
+    ) -> CallDocument | None:
         return await self._transition_status(
             call_id=call_id,
             expected_statuses=("reconnecting",),
@@ -478,7 +447,7 @@ class CallsRepository:
         expires_at: datetime | None | object = _MISSING,
         reconnect_deadline_at: datetime | None | object = _MISSING,
         disconnected_user_ids: list[str] | object = _MISSING,
-    ) -> dict[str, Any] | None:
+    ) -> CallDocument | None:
         now = datetime.now(UTC)
         update_fields: dict[str, Any] = {
             "status": next_status,
@@ -504,11 +473,7 @@ class CallsRepository:
         if extra_filter:
             filter_doc.update(extra_filter)
 
-        return await self.col.find_one_and_update(
-            filter_doc,
-            {"$set": update_fields},
-            return_document=ReturnDocument.AFTER,
-        )
+        return await self.find_one_and_update(filter_doc, {"$set": update_fields})
 
     async def list_history(
         self,
@@ -517,7 +482,7 @@ class CallsRepository:
         peer_user_id: str | None = None,
         limit: int = 20,
         cursor: str | None = None,
-    ) -> tuple[list[dict[str, Any]], str | None]:
+    ) -> tuple[list[CallDocument], str | None]:
         if limit < 1 or limit > 100:
             raise AppError(
                 code="INVALID_LIMIT",
@@ -551,19 +516,19 @@ class CallsRepository:
                 },
             ]
 
-        items = await (
-            self.col.find(query)
-            .sort([("ended_at", -1), ("_id", -1)])
+        items = (
+            await CallDocument.find(query)
+            .sort("-ended_at", "-_id")
             .limit(limit + 1)
-            .to_list(length=limit + 1)
+            .to_list()
         )
 
         next_cursor: str | None = None
         if len(items) > limit:
             last_visible = items[limit - 1]
             next_cursor = encode_cursor(
-                ended_at=last_visible["ended_at"],
-                call_id=str(last_visible["_id"]),
+                ended_at=last_visible.ended_at,
+                call_id=str(last_visible.str_id),
             )
             items = items[:limit]
 
@@ -583,7 +548,7 @@ class CallsRepository:
         }
         if peer_user_id is not None:
             query["callee_user_id"] = peer_user_id
-        result = await self.col.delete_many(query)
+        result = await self.raw.delete_many(query)
         return result.deleted_count
 
     async def hide_peer_calls_for_user(
@@ -602,7 +567,7 @@ class CallsRepository:
         }
         if peer_user_id is not None:
             query["caller_user_id"] = peer_user_id
-        result = await self.col.update_many(
+        result = await self.raw.update_many(
             query,
             {
                 "$addToSet": {"hidden_for_user_ids": user_id},

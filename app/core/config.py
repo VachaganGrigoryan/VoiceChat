@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     # Mongo
     mongo_uri: str = Field(default="mongodb://mongo:27017", alias="MONGO_URI")
     mongo_db: str = Field(default="voice_chat", alias="MONGO_DB")
+    mongo_server_selection_timeout_ms: int = Field(
+        default=5000, alias="MONGO_SERVER_SELECTION_TIMEOUT_MS"
+    )
+    mongo_max_pool_size: int = Field(default=100, alias="MONGO_MAX_POOL_SIZE")
+    mongo_min_pool_size: int = Field(default=0, alias="MONGO_MIN_POOL_SIZE")
 
     # JWT
     jwt_secret: str = Field(default="supersecret", alias="JWT_SECRET")

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from app.core.config import settings
-from app.db.mongo import get_db
 
 from app.modules.discovery.repository import DiscoveryTokensRepository
 from app.modules.discovery.service import DiscoveryConfig, DiscoveryService
@@ -13,15 +12,13 @@ from app.modules.realtime.presence import get_presence_backend
 
 
 def get_discovery_service() -> DiscoveryService:
-    db = get_db()
-
-    users_repo = UsersRepository(db)
-    tokens_repo = DiscoveryTokensRepository(db)
+    users_repo = UsersRepository()
+    tokens_repo = DiscoveryTokensRepository()
 
     presence = get_presence_backend()
 
     pings_service = PingsService(
-        pings_repo=PingsRepository(db),
+        pings_repo=PingsRepository(),
         users_repo=users_repo,
         presence_service=None,
     )

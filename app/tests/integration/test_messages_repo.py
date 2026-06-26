@@ -4,8 +4,8 @@ import pytest
 from bson import ObjectId
 
 from app.core.errors import AppError
+from app.db.models import CallDocument, MediaDocument
 from app.db.mongo import get_db
-from app.db.indexes import ensure_indexes
 from app.modules.messages.repository import MessagesRepository
 
 
@@ -14,7 +14,7 @@ async def test_create_and_list_history_with_cursor():
     db = get_db()
     await db["messages"].delete_many({})
 
-    repo = MessagesRepository(db)
+    repo = MessagesRepository()
 
     u1 = str(ObjectId())
     u2 = str(ObjectId())
@@ -23,14 +23,14 @@ async def test_create_and_list_history_with_cursor():
         await repo.create_voice_message(
             sender_id=u1,
             receiver_id=u2,
-            audio={
-                "storage": "local",
-                "key": f"uploads/{i}.m4a",
-                "url": f"http://localhost:8000/media/{i}.m4a",
-                "mime": "audio/m4a",
-                "size_bytes": 123,
-                "duration_ms": 1000,
-            },
+            audio=MediaDocument(
+                kind="voice",
+                storage="local",
+                key=f"uploads/{i}.m4a",
+                mime="audio/m4a",
+                size_bytes=123,
+                duration_ms=1000,
+            ),
         )
 
     items, next_cursor = await repo.list_history(
@@ -52,11 +52,39 @@ async def test_create_and_list_history_with_cursor():
 
 
 @pytest.mark.asyncio
+async def test_list_conversations_returns_typed_rows():
+    db = get_db()
+    await db["messages"].delete_many({})
+
+    repo = MessagesRepository()
+    sender_id = str(ObjectId())
+    receiver_id = str(ObjectId())
+
+    await repo.create_message(
+        sender_id=sender_id,
+        receiver_id=receiver_id,
+        message_type="text",
+        text="latest message",
+    )
+
+    rows, next_cursor = await repo.list_conversations_for_user(
+        user_id=sender_id,
+        limit=10,
+    )
+
+    assert next_cursor is None
+    assert len(rows) == 1
+    assert rows[0].last_message.text == "latest message"
+    assert rows[0].last_message.conversation_id == rows[0].conversation_id
+    assert rows[0].unread_count == 0
+
+
+@pytest.mark.asyncio
 async def test_mark_read_sets_delivered_at_and_prevents_status_downgrade():
     db = get_db()
     await db["messages"].delete_many({})
 
-    repo = MessagesRepository(db)
+    repo = MessagesRepository()
 
     sender_id = str(ObjectId())
     receiver_id = str(ObjectId())
@@ -69,20 +97,20 @@ async def test_mark_read_sets_delivered_at_and_prevents_status_downgrade():
     )
 
     read_doc = await repo.mark_read_for_receiver(
-        message_id=str(message["_id"]),
+        message_id=message.str_id,
         receiver_id=receiver_id,
     )
-    assert read_doc["status"] == "read"
-    assert read_doc["read_at"] is not None
-    assert read_doc["delivered_at"] is not None
+    assert read_doc.status == "read"
+    assert read_doc.read_at is not None
+    assert read_doc.delivered_at is not None
 
     delivered_doc = await repo.mark_delivered_for_receiver(
-        message_id=str(message["_id"]),
+        message_id=message.str_id,
         receiver_id=receiver_id,
     )
-    assert delivered_doc["status"] == "read"
-    assert delivered_doc["read_at"] == read_doc["read_at"]
-    assert delivered_doc["delivered_at"] == read_doc["delivered_at"]
+    assert delivered_doc.status == "read"
+    assert delivered_doc.read_at == read_doc.read_at
+    assert delivered_doc.delivered_at == read_doc.delivered_at
 
 
 @pytest.mark.asyncio
@@ -90,7 +118,7 @@ async def test_hidden_message_is_excluded_only_for_hiding_user():
     db = get_db()
     await db["messages"].delete_many({})
 
-    repo = MessagesRepository(db)
+    repo = MessagesRepository()
 
     sender_id = str(ObjectId())
     receiver_id = str(ObjectId())
@@ -103,7 +131,7 @@ async def test_hidden_message_is_excluded_only_for_hiding_user():
     )
 
     await repo.hide_message_for_user(
-        message_id=str(message["_id"]),
+        message_id=message.str_id,
         user_id=receiver_id,
     )
 
@@ -120,7 +148,7 @@ async def test_hidden_message_is_excluded_only_for_hiding_user():
 
     assert receiver_items == []
     assert len(sender_items) == 1
-    assert sender_items[0]["text"] == "hide me"
+    assert sender_items[0].text == "hide me"
 
 
 @pytest.mark.asyncio
@@ -128,7 +156,7 @@ async def test_thread_replies_are_excluded_from_history_and_inherit_root():
     db = get_db()
     await db["messages"].delete_many({})
 
-    repo = MessagesRepository(db)
+    repo = MessagesRepository()
 
     sender_id = str(ObjectId())
     receiver_id = str(ObjectId())
@@ -144,21 +172,21 @@ async def test_thread_replies_are_excluded_from_history_and_inherit_root():
         sender_id=receiver_id,
         receiver_id=sender_id,
         message_type="text",
-        reply_to_message_id=str(root["_id"]),
+        reply_to_message_id=root.str_id,
         text="first thread reply",
     )
     second_reply = await repo.create_thread_reply(
         sender_id=sender_id,
         receiver_id=receiver_id,
         message_type="text",
-        reply_to_message_id=str(first_reply["_id"]),
+        reply_to_message_id=first_reply.str_id,
         text="second thread reply",
     )
     quote_reply = await repo.create_quote_reply(
         sender_id=sender_id,
         receiver_id=receiver_id,
         message_type="text",
-        reply_to_message_id=str(root["_id"]),
+        reply_to_message_id=root.str_id,
         text="quoted in timeline",
     )
 
@@ -167,35 +195,37 @@ async def test_thread_replies_are_excluded_from_history_and_inherit_root():
         peer_user_id=receiver_id,
         limit=20,
     )
-    history_ids = [str(item["_id"]) for item in history]
+    history_ids = [item.str_id for item in history]
 
-    assert str(root["_id"]) in history_ids
-    assert str(quote_reply["_id"]) in history_ids
-    assert str(first_reply["_id"]) not in history_ids
-    assert str(second_reply["_id"]) not in history_ids
+    assert root.str_id in history_ids
+    assert quote_reply.str_id in history_ids
+    assert first_reply.str_id not in history_ids
+    assert second_reply.str_id not in history_ids
 
-    assert first_reply["thread_root_id"] == str(root["_id"])
-    assert second_reply["thread_root_id"] == str(root["_id"])
-    assert first_reply["reply_preview"]["message_id"] == str(root["_id"])
-    assert second_reply["reply_preview"]["message_id"] == str(first_reply["_id"])
+    assert first_reply.thread_root_id == root.str_id
+    assert second_reply.thread_root_id == root.str_id
+    assert first_reply.reply_preview is not None
+    assert second_reply.reply_preview is not None
+    assert first_reply.reply_preview.message_id == root.str_id
+    assert second_reply.reply_preview.message_id == first_reply.str_id
 
     thread_items = await repo.load_thread_messages(
-        message_id=str(second_reply["_id"]),
+        message_id=second_reply.str_id,
         user_id=receiver_id,
     )
-    assert [item["text"] for item in thread_items] == [
+    assert [item.text for item in thread_items] == [
         "first thread reply",
         "second thread reply",
     ]
 
     summary = await repo.load_thread_summary(
-        message_id=str(first_reply["_id"]),
+        message_id=first_reply.str_id,
         user_id=sender_id,
     )
-    assert str(summary["_id"]) == str(root["_id"])
-    assert summary["is_thread_root"] is True
-    assert summary["thread_reply_count"] == 2
-    assert summary["last_thread_reply_at"] is not None
+    assert summary.str_id == root.str_id
+    assert summary.is_thread_root is True
+    assert summary.thread_reply_count == 2
+    assert summary.last_thread_reply_at is not None
 
 
 @pytest.mark.asyncio
@@ -203,7 +233,7 @@ async def test_grouped_reactions_toggle_and_deleted_messages_reject_reactions():
     db = get_db()
     await db["messages"].delete_many({})
 
-    repo = MessagesRepository(db)
+    repo = MessagesRepository()
 
     sender_id = str(ObjectId())
     receiver_id = str(ObjectId())
@@ -214,42 +244,42 @@ async def test_grouped_reactions_toggle_and_deleted_messages_reject_reactions():
         message_type="text",
         text="react to me",
     )
-    message_id = str(message["_id"])
+    message_id = message.str_id
 
     first = await repo.add_or_toggle_grouped_reaction(
         message_id=message_id,
         user_id=sender_id,
         emoji="🔥",
     )
-    assert len(first["reactions"]) == 1
-    assert first["reactions"][0]["user_ids"] == [sender_id]
-    assert first["reactions"][0]["count"] == 1
+    assert len(first.reactions) == 1
+    assert first.reactions[0].user_ids == [sender_id]
+    assert first.reactions[0].count == 1
 
     second = await repo.add_or_toggle_grouped_reaction(
         message_id=message_id,
         user_id=receiver_id,
         emoji="🔥",
     )
-    assert second["reactions"][0]["count"] == 2
-    assert set(second["reactions"][0]["user_ids"]) == {sender_id, receiver_id}
+    assert second.reactions[0].count == 2
+    assert set(second.reactions[0].user_ids) == {sender_id, receiver_id}
 
     third = await repo.add_or_toggle_grouped_reaction(
         message_id=message_id,
         user_id=sender_id,
         emoji="🔥",
     )
-    assert third["reactions"][0]["count"] == 1
-    assert third["reactions"][0]["user_ids"] == [receiver_id]
+    assert third.reactions[0].count == 1
+    assert third.reactions[0].user_ids == [receiver_id]
 
     fourth = await repo.remove_grouped_reaction(
         message_id=message_id,
         user_id=receiver_id,
         emoji="🔥",
     )
-    assert fourth["reactions"] == []
+    assert fourth.reactions == []
 
     await db["messages"].update_one(
-        {"_id": message["_id"]},
+        {"_id": message.id},
         {"$set": {"hidden_for_user_ids": [sender_id]}},
     )
 
@@ -266,18 +296,20 @@ async def test_grouped_reactions_toggle_and_deleted_messages_reject_reactions():
 @pytest.mark.asyncio
 async def test_create_call_message_is_unique_per_call():
     db = get_db()
-    await ensure_indexes(db)
     await db["messages"].delete_many({})
 
-    repo = MessagesRepository(db)
-    call_id = str(ObjectId())
+    repo = MessagesRepository()
+    call_oid = ObjectId()
+    call_id = str(call_oid)
     started_at = datetime.now(UTC)
+    caller_id = str(ObjectId())
+    callee_id = str(ObjectId())
 
-    call_doc = {
-        "_id": call_id,
-        "caller_user_id": str(ObjectId()),
-        "callee_user_id": str(ObjectId()),
-        "participant_user_ids": [],
+    call_doc = CallDocument.model_validate({
+        "_id": call_oid,
+        "caller_user_id": caller_id,
+        "callee_user_id": callee_id,
+        "participant_user_ids": [caller_id, callee_id],
         "type": "audio",
         "status": "ended",
         "room_id": f"call:{call_id}",
@@ -289,12 +321,15 @@ async def test_create_call_message_is_unique_per_call():
         "reconnect_deadline_at": None,
         "disconnected_user_ids": [],
         "is_live": False,
-    }
+    })
 
     first = await repo.create_call_message(call_doc=call_doc)
     second = await repo.create_call_message(call_doc=call_doc)
 
-    assert str(first["_id"]) == str(second["_id"])
-    assert first["call"]["call_id"] == call_id
-    count = await db["messages"].count_documents({"type": "call", "call.call_id": call_id})
+    assert first.str_id == second.str_id
+    assert first.call is not None
+    assert first.call.call_id == call_id
+    count = await db["messages"].count_documents(
+        {"type": "call", "call.call_id": call_id}
+    )
     assert count == 1

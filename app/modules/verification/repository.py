@@ -1,25 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime, UTC
-from typing import Any, Optional
+from datetime import UTC, datetime
 
-from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from beanie.operators import In
 
-from app.core.errors import AppError
-from app.db.indexes import COL_VERIFICATION
+from app.db.models import VerificationCodeDocument
+from app.db.repository import BaseRepository
 
 
-def _oid(s: str) -> ObjectId:
-    try:
-        return ObjectId(s)
-    except Exception:
-        raise AppError(code="INVALID_ID", message="Invalid id", status_code=400)
-
-
-class VerificationCodesRepository:
-    def __init__(self, db: AsyncIOMotorDatabase):
-        self.col = db[COL_VERIFICATION]
+class VerificationCodesRepository(BaseRepository[VerificationCodeDocument]):
+    model = VerificationCodeDocument
 
     async def create_code(
         self,
@@ -30,19 +20,17 @@ class VerificationCodesRepository:
         purpose: str,
         code_hash: str,
         expires_at: datetime,
-    ) -> dict[str, Any]:
-        doc = {
-            "method": method,
-            "identifier": identifier.lower().strip(),
-            "user_id": user_id,  # keep as str for simplicity
-            "purpose": purpose,
-            "code_hash": code_hash,
-            "attempts": 0,
-            "expires_at": expires_at,
-            "created_at": datetime.now(UTC),
-        }
-        res = await self.col.insert_one(doc)
-        doc["_id"] = res.inserted_id
+    ) -> VerificationCodeDocument:
+        doc = VerificationCodeDocument(
+            method=method,
+            identifier=identifier.lower().strip(),
+            user_id=user_id,
+            purpose=purpose,
+            code_hash=code_hash,
+            expires_at=expires_at,
+            created_at=datetime.now(UTC),
+        )
+        await doc.insert()
         return doc
 
     async def find_active_by_identifier_any(
@@ -51,27 +39,27 @@ class VerificationCodesRepository:
         method: str,
         identifier: str,
         purposes: list[str],
-    ) -> Optional[dict[str, Any]]:
+    ) -> VerificationCodeDocument | None:
         now = datetime.now(UTC)
-        return await self.col.find_one(
-            {
-                "method": method,
-                "identifier": identifier.lower().strip(),
-                "purpose": {"$in": purposes},
-                "expires_at": {"$gt": now},
-            },
-            sort=[("created_at", -1)],
+        return (
+            await VerificationCodeDocument.find(
+                VerificationCodeDocument.method == method,
+                VerificationCodeDocument.identifier == identifier.lower().strip(),
+                In(VerificationCodeDocument.purpose, purposes),
+                VerificationCodeDocument.expires_at > now,
+            )
+            .sort("-created_at")
+            .first_or_none()
         )
 
     async def increment_attempts(self, code_id: str) -> int:
-        res = await self.col.find_one_and_update(
-            {"_id": _oid(code_id)},
-            {"$inc": {"attempts": 1}},
-            return_document=True,
+        # Load-modify-save (not atomic); verification attempt counts are low-contention.
+        doc = await self.get_or_404(
+            code_id, code="CODE_NOT_FOUND", message="Verification code not found"
         )
-        if not res:
-            raise AppError(code="CODE_NOT_FOUND", message="Verification code not found", status_code=404)
-        return int(res.get("attempts", 0))
+        doc.attempts += 1
+        await doc.save()
+        return doc.attempts
 
     async def delete_by_user_method_and_purpose(
         self,
@@ -80,10 +68,8 @@ class VerificationCodesRepository:
         method: str,
         purpose: str,
     ) -> None:
-        await self.col.delete_many(
-            {
-                "user_id": user_id,
-                "method": method,
-                "purpose": purpose,
-            }
-        )
+        await VerificationCodeDocument.find(
+            VerificationCodeDocument.user_id == user_id,
+            VerificationCodeDocument.method == method,
+            VerificationCodeDocument.purpose == purpose,
+        ).delete()

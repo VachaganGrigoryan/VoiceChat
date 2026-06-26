@@ -4,11 +4,13 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.db.object_id import StrId
+
 
 class UserProfileResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
+    id: StrId
     email: str
     is_verified: bool
     username: str
@@ -26,7 +28,7 @@ class UserProfileResponse(BaseModel):
 class SelectedUserProfileResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
+    id: StrId
     username: str
     display_name: str | None = None
     bio: str | None = None
