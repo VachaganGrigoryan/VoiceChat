@@ -5,12 +5,14 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.db.object_id import StrId
+
 
 DiscoveryTokenType = Literal["code", "link"]
 
 
 class DiscoveryUserSummary(BaseModel):
-    id: str
+    id: StrId
     username: str
     display_name: str | None = None
     avatar: dict | None = None

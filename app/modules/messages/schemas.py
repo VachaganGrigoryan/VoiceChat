@@ -5,6 +5,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.db.object_id import StrId
+
 MessageType = Literal["text", "media", "file", "call"]
 MediaKind = Literal["voice", "audio", "image", "video", "file"]
 MessageStatus = Literal["sent", "delivered", "read"]
@@ -27,8 +29,8 @@ class CallMeta(BaseModel):
     call_id: str
     type: Literal["audio", "video"]
     status: CallMessageStatus
-    caller_user_id: str
-    callee_user_id: str
+    caller_user_id: StrId
+    callee_user_id: StrId
     started_at: datetime
     answered_at: datetime | None = None
     ended_at: datetime | None = None
@@ -36,8 +38,8 @@ class CallMeta(BaseModel):
 
 
 class ReplyPreview(BaseModel):
-    message_id: str
-    sender_id: str
+    message_id: StrId
+    sender_id: StrId
     type: MessageType
     media_kind: Optional[MediaKind] = None
     text: Optional[str] = None
@@ -46,16 +48,16 @@ class ReplyPreview(BaseModel):
 
 class MessageReactionGroup(BaseModel):
     emoji: str
-    user_ids: list[str] = Field(default_factory=list)
+    user_ids: list[StrId] = Field(default_factory=list)
     count: int = Field(ge=0)
     updated_at: datetime
 
 
 class MessageDoc(BaseModel):
-    id: str
+    id: StrId
     conversation_id: str
-    sender_id: str
-    receiver_id: str
+    sender_id: StrId
+    receiver_id: StrId
 
     type: MessageType = "text"
     text: Optional[str] = None
@@ -84,9 +86,9 @@ class MessageDoc(BaseModel):
 
 
 class DeleteMessageResponse(BaseModel):
-    message_id: str
+    message_id: StrId
     conversation_id: str
-    actor_user_id: str
+    actor_user_id: StrId
     deleted_for_everyone: bool = False
     hidden_for_me: bool = False
     deleted_media: bool = False
@@ -131,7 +133,7 @@ class AddReactionRequest(BaseModel):
 
 
 class ThreadSummary(BaseModel):
-    thread_root_id: str
+    thread_root_id: StrId
     conversation_id: str
     is_thread_root: bool = False
     thread_reply_count: int = Field(default=0, ge=0)
@@ -139,7 +141,7 @@ class ThreadSummary(BaseModel):
 
 
 class ConversationPeer(BaseModel):
-    id: str
+    id: StrId
     username: str | None = None
     display_name: str | None = None
     avatar: dict | None = None
@@ -151,7 +153,7 @@ class ConversationPeer(BaseModel):
 
 
 class ConversationLastMessage(BaseModel):
-    id: str
+    id: StrId
     type: MessageType
     text: str | None = None
     media: MediaMeta | None = None

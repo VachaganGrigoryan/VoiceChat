@@ -3,45 +3,60 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo import ReturnDocument
+from beanie.operators import Set
 
-from app.db.indexes import COL_PASSKEYS, COL_PASSKEY_CHALLENGES
+from app.db.models import PasskeyChallengeDocument, PasskeyDocument
+from app.db.repository import BaseRepository
 
 
-class PasskeysRepository:
-    def __init__(self, db: AsyncIOMotorDatabase) -> None:
-        self.collection = db[COL_PASSKEYS]
+class PasskeysRepository(BaseRepository[PasskeyDocument]):
+    model = PasskeyDocument
 
-    async def create_passkey(self, doc: dict[str, Any]) -> dict[str, Any]:
-        result = await self.collection.insert_one(doc)
-        doc["_id"] = result.inserted_id
-        return doc
+    async def create_passkey(self, doc: dict[str, Any]) -> PasskeyDocument:
+        passkey = PasskeyDocument(**doc)
+        await passkey.insert()
+        return passkey
 
-    async def find_by_credential_id(self, credential_id: str) -> dict[str, Any] | None:
-        return await self.collection.find_one({"credential_id": credential_id})
+    async def find_by_credential_id(self, credential_id: str) -> PasskeyDocument | None:
+        return await PasskeyDocument.find_one(
+            PasskeyDocument.credential_id == credential_id
+        )
 
-    async def list_by_user_id(self, user_id: str) -> list[dict[str, Any]]:
-        cursor = self.collection.find({"user_id": user_id}).sort("created_at", -1)
-        return [doc async for doc in cursor]
+    async def list_by_user_id(self, user_id: str) -> list[PasskeyDocument]:
+        return (
+            await PasskeyDocument.find(PasskeyDocument.user_id == user_id)
+            .sort("-created_at")
+            .to_list()
+        )
 
     async def delete_by_credential_id(self, user_id: str, credential_id: str) -> bool:
-        result = await self.collection.delete_one({"user_id": user_id, "credential_id": credential_id})
-        return result.deleted_count > 0
+        result = await PasskeyDocument.find(
+            PasskeyDocument.user_id == user_id,
+            PasskeyDocument.credential_id == credential_id,
+        ).delete()
+        return bool(result and result.deleted_count > 0)
 
-    async def update_sign_count(self, credential_id: str, sign_count: int, now: datetime) -> None:
-        await self.collection.update_one(
-            {"credential_id": credential_id},
-            {"$set": {"sign_count": sign_count, "last_used_at": now, "updated_at": now}},
+    async def update_sign_count(
+        self, credential_id: str, sign_count: int, now: datetime
+    ) -> None:
+        await PasskeyDocument.find(
+            PasskeyDocument.credential_id == credential_id
+        ).update(
+            Set(
+                {
+                    PasskeyDocument.sign_count: sign_count,
+                    PasskeyDocument.last_used_at: now,
+                    PasskeyDocument.updated_at: now,
+                }
+            )
         )
 
     async def count_by_user_id(self, user_id: str) -> int:
-        return await self.collection.count_documents({"user_id": user_id})
+        return await PasskeyDocument.find(PasskeyDocument.user_id == user_id).count()
 
 
-class PasskeyChallengesRepository:
-    def __init__(self, db: AsyncIOMotorDatabase) -> None:
-        self.collection = db[COL_PASSKEY_CHALLENGES]
+class PasskeyChallengesRepository(BaseRepository[PasskeyChallengeDocument]):
+    model = PasskeyChallengeDocument
 
     async def create_challenge(
         self,
@@ -52,18 +67,16 @@ class PasskeyChallengesRepository:
         user_id: str | None = None,
         email: str | None = None,
         now: datetime,
-    ) -> dict[str, Any]:
-        doc: dict[str, Any] = {
-            "flow": flow,
-            "challenge": challenge,
-            "expires_at": expires_at,
-            "used_at": None,
-            "created_at": now,
-            "user_id": user_id,
-            "email": email,
-        }
-        result = await self.collection.insert_one(doc)
-        doc["_id"] = result.inserted_id
+    ) -> PasskeyChallengeDocument:
+        doc = PasskeyChallengeDocument(
+            flow=flow,
+            challenge=challenge,
+            expires_at=expires_at,
+            created_at=now,
+            user_id=user_id,
+            email=email,
+        )
+        await doc.insert()
         return doc
 
     async def consume_active_challenge(
@@ -74,7 +87,8 @@ class PasskeyChallengesRepository:
         now: datetime,
         user_id: str | None = None,
         email: str | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> PasskeyChallengeDocument | None:
+        # Atomic claim (prevents challenge replay) via the raw async collection.
         query: dict[str, Any] = {
             "flow": flow,
             "challenge": challenge,
@@ -85,8 +99,5 @@ class PasskeyChallengesRepository:
             query["user_id"] = user_id
         if email is not None:
             query["email"] = email
-        return await self.collection.find_one_and_update(
-            query,
-            {"$set": {"used_at": now}},
-            return_document=ReturnDocument.AFTER,
-        )
+
+        return await self.find_one_and_update(query, {"$set": {"used_at": now}})

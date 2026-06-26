@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
-from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import AsyncMongoClient
 
 from app.core.config import settings
-from app.db.indexes import COL_USERS
+from app.db.collections import COL_USERS
 from app.modules.auth.username import generate_username_candidate, normalize_username
 
 
@@ -20,7 +20,7 @@ async def generate_unique_username(col) -> str:
 
 
 async def main() -> None:
-    client = AsyncIOMotorClient(settings.mongo_uri)
+    client = AsyncMongoClient(settings.mongo_uri)
     db = client[settings.mongo_db]
     col = db[COL_USERS]
 
@@ -77,7 +77,7 @@ async def main() -> None:
             raise RuntimeError(f"failed to update user {user['_id']}")
 
     print(f"scanned={total}, updated={updated}")
-    client.close()
+    await client.close()
 
 
 if __name__ == "__main__":

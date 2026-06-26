@@ -8,7 +8,7 @@ FROM python:3.12-slim AS python-base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    POETRY_VERSION=1.8.3 \
+    POETRY_VERSION=2.3.2 \
     POETRY_VIRTUALENVS_CREATE=false \
     PATH="/root/.local/bin:$PATH"
 
@@ -34,8 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY pyproject.toml poetry.lock* /app/
 
-# Install all deps into system site-packages
-RUN poetry install --no-interaction --no-ansi
+# Install all deps into system site-packages (deps only; this is an app, not a package)
+RUN poetry install --no-interaction --no-ansi --no-root
 
 COPY . /app
 

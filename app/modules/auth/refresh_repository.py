@@ -1,25 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime, UTC
-from typing import Any, Optional
+from datetime import UTC, datetime
 
-from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from beanie.operators import Eq, Set
 
-from app.core.errors import AppError
-from app.db.indexes import COL_REFRESH_TOKENS
+from app.db.models import RefreshTokenDocument
+from app.db.repository import BaseRepository
 
 
-def _oid(s: str) -> ObjectId:
-    try:
-        return ObjectId(s)
-    except Exception:
-        raise AppError(code="INVALID_ID", message="Invalid id", status_code=400)
-
-
-class RefreshTokensRepository:
-    def __init__(self, db: AsyncIOMotorDatabase):
-        self.col = db[COL_REFRESH_TOKENS]
+class RefreshTokensRepository(BaseRepository[RefreshTokenDocument]):
+    model = RefreshTokenDocument
 
     async def create_token(
         self,
@@ -29,35 +19,34 @@ class RefreshTokensRepository:
         expires_at: datetime,
         user_agent: str | None = None,
         ip: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> RefreshTokenDocument:
         now = datetime.now(UTC)
-        doc = {
-            "user_id": _oid(user_id),
-            "token_hash": token_hash,
-            "expires_at": expires_at,
-            "revoked_at": None,
-            "replaced_by_token_hash": None,
-            "created_at": now,
-            "updated_at": now,
-            "user_agent": user_agent,
-            "ip": ip,
-        }
-        res = await self.col.insert_one(doc)
-        doc["_id"] = res.inserted_id
+        doc = RefreshTokenDocument(
+            user_id=user_id,
+            token_hash=token_hash,
+            expires_at=expires_at,
+            created_at=now,
+            updated_at=now,
+            user_agent=user_agent,
+            ip=ip,
+        )
+        await doc.insert()
         return doc
 
-    async def find_active_by_hash(self, *, token_hash: str) -> Optional[dict[str, Any]]:
+    async def find_active_by_hash(
+        self, *, token_hash: str
+    ) -> RefreshTokenDocument | None:
         now = datetime.now(UTC)
-        return await self.col.find_one(
-            {
-                "token_hash": token_hash,
-                "revoked_at": None,
-                "expires_at": {"$gt": now},
-            }
+        return await RefreshTokenDocument.find_one(
+            RefreshTokenDocument.token_hash == token_hash,
+            Eq(RefreshTokenDocument.revoked_at, None),
+            RefreshTokenDocument.expires_at > now,
         )
 
-    async def find_any_by_hash(self, *, token_hash: str) -> Optional[dict[str, Any]]:
-        return await self.col.find_one({"token_hash": token_hash})
+    async def find_any_by_hash(self, *, token_hash: str) -> RefreshTokenDocument | None:
+        return await RefreshTokenDocument.find_one(
+            RefreshTokenDocument.token_hash == token_hash
+        )
 
     async def revoke_token(
         self,
@@ -66,23 +55,28 @@ class RefreshTokensRepository:
         replaced_by_token_hash: str | None = None,
     ) -> None:
         now = datetime.now(UTC)
-        await self.col.update_one(
-            {"token_hash": token_hash},
-            {
-                "$set": {
-                    "revoked_at": now,
-                    "updated_at": now,
-                    "replaced_by_token_hash": replaced_by_token_hash,
+        await RefreshTokenDocument.find(
+            RefreshTokenDocument.token_hash == token_hash
+        ).update(
+            Set(
+                {
+                    RefreshTokenDocument.revoked_at: now,
+                    RefreshTokenDocument.updated_at: now,
+                    RefreshTokenDocument.replaced_by_token_hash: replaced_by_token_hash,
                 }
-            },
+            )
         )
 
     async def revoke_all_for_user(self, *, user_id: str) -> None:
         now = datetime.now(UTC)
-        await self.col.update_many(
-            {
-                "user_id": _oid(user_id),
-                "revoked_at": None,
-            },
-            {"$set": {"revoked_at": now, "updated_at": now}},
+        await RefreshTokenDocument.find(
+            RefreshTokenDocument.user_id == user_id,
+            Eq(RefreshTokenDocument.revoked_at, None),
+        ).update(
+            Set(
+                {
+                    RefreshTokenDocument.revoked_at: now,
+                    RefreshTokenDocument.updated_at: now,
+                }
+            )
         )

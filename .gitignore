@@ -8,3 +8,6 @@ uploads_test/
 .mypy_cache
 .ruff_cache
 node_modules
+
+
+AGENTS.md

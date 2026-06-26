@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from app.core.errors import AppError
-from app.db.mongo import get_db
 from app.modules.calls.ws import (
     handle_call_socket_connect,
     handle_call_socket_disconnect,
 )
 from app.modules.messages.dependencies import get_messages_service
-from app.modules.messages.mappers import normalize_message_record
+from app.modules.messages.repository.mappers import normalize_message_record
 from app.modules.messages.repository import MessagesRepository
 from app.modules.calls.ws import register_events as register_call_events
 from app.modules.realtime.auth import authenticate_socket, get_socket_user_id
@@ -176,8 +175,7 @@ def register_events(sio) -> None:
             )
             return
 
-        db = get_db()
-        repo = MessagesRepository(db)
+        repo = MessagesRepository()
 
         try:
             msg = await repo.mark_delivered_for_receiver(
@@ -188,7 +186,7 @@ def register_events(sio) -> None:
             await sio.emit("error", {"code": e.code, "message": e.message}, to=sid)
             return
 
-        sender_id = str(msg["sender_id"])
+        sender_id = str(msg.sender_id)
         normalized_type, normalized_media = normalize_message_record(msg)
 
         await emit_message_status_to_user(
@@ -199,9 +197,9 @@ def register_events(sio) -> None:
                 "status": "delivered",
                 "message_type": normalized_type,
                 "media_kind": (
-                    normalized_media.get("kind") if normalized_media else None
+                    normalized_media.kind if normalized_media else None
                 ),
-                "delivered_at": msg.get("delivered_at"),
+                "delivered_at": msg.delivered_at,
             },
         )
 
@@ -226,8 +224,7 @@ def register_events(sio) -> None:
             )
             return
 
-        db = get_db()
-        repo = MessagesRepository(db)
+        repo = MessagesRepository()
 
         try:
             msg = await repo.mark_read_for_receiver(
@@ -238,7 +235,7 @@ def register_events(sio) -> None:
             await sio.emit("error", {"code": e.code, "message": e.message}, to=sid)
             return
 
-        sender_id = str(msg["sender_id"])
+        sender_id = str(msg.sender_id)
         normalized_type, normalized_media = normalize_message_record(msg)
 
         await emit_message_status_to_user(
@@ -249,9 +246,9 @@ def register_events(sio) -> None:
                 "status": "read",
                 "message_type": normalized_type,
                 "media_kind": (
-                    normalized_media.get("kind") if normalized_media else None
+                    normalized_media.kind if normalized_media else None
                 ),
-                "read_at": msg.get("read_at"),
+                "read_at": msg.read_at,
             },
         )
 
@@ -276,8 +273,7 @@ def register_events(sio) -> None:
             )
             return
 
-        db = get_db()
-        repo = MessagesRepository(db)
+        repo = MessagesRepository()
 
         updated_count = await repo.mark_conversation_read_for_receiver(
             receiver_id=receiver_id,

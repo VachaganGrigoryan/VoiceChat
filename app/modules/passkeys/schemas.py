@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from app.db.object_id import StrId
+
 
 class RegisterPasskeyStartRequest(BaseModel):
     nickname: str | None = Field(default=None, max_length=120)
@@ -60,8 +62,8 @@ class AuthTokensResponse(BaseModel):
 
 
 class ChallengeDocument(BaseModel):
-    id: str | None = None
-    user_id: str | None = None
+    id: StrId | None = None
+    user_id: StrId | None = None
     email: str | None = None
     flow: Literal["register", "authenticate"]
     challenge: str
@@ -71,8 +73,8 @@ class ChallengeDocument(BaseModel):
 
 
 class PasskeyDocument(BaseModel):
-    id: str | None = None
-    user_id: str
+    id: StrId | None = None
+    user_id: StrId
     credential_id: str
     public_key: str
     sign_count: int

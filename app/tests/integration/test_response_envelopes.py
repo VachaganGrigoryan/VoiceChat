@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -22,6 +23,11 @@ from app.modules.pings.router import router as pings_router
 from app.modules.pings.schemas import PingResponse
 
 FIXED_NOW = datetime(2026, 3, 24, 12, 0, 0, tzinfo=UTC)
+
+# `get_current_user` resolves to a UserDocument in production; the passkeys
+# router only reads `current_user.str_id`. These contract tests run DB-less
+# (no init_beanie), so a lightweight stand-in exposing `str_id` is enough.
+FAKE_CURRENT_USER = SimpleNamespace(str_id="user-1")
 
 
 class FakeSio:
@@ -135,11 +141,7 @@ async def contract_client():
     app.state.sio = FakeSio()
     app.dependency_overrides[get_sio] = lambda: app.state.sio
     app.dependency_overrides[get_current_user_id] = lambda: "user-1"
-    app.dependency_overrides[get_current_user] = lambda: {
-        "_id": "user-1",
-        "id": "user-1",
-        "email": "user@example.com",
-    }
+    app.dependency_overrides[get_current_user] = lambda: FAKE_CURRENT_USER
     app.dependency_overrides[get_pings_service] = lambda: FakePingsService()
     app.dependency_overrides[get_discovery_service] = lambda: FakeDiscoveryService()
     app.dependency_overrides[get_passkey_service] = lambda: FakePasskeyService()
