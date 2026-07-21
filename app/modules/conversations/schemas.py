@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -10,10 +10,13 @@ from app.modules.pings.schemas import PingStatusView
 
 ReplyMode = Literal["quote", "thread"]
 
-ConversationType = Literal["dm", "group"]
+ConversationType = Literal["dm", "group", "channel", "thread"]
 EncryptionMode = Literal["none", "e2ee"]
-ParticipantRole = Literal["owner", "admin", "member"]
+ParticipantRole = Literal["owner", "admin", "member", "subscriber"]
 PreviewType = Literal["text", "media", "file", "call", "system"]
+ConversationVisibility = Literal["private", "public"]
+PostingPolicy = Literal["everyone", "admins"]
+NotificationLevel = Literal["all", "mentions", "none"]
 
 
 class ConversationPreview(BaseModel):
@@ -44,6 +47,16 @@ class ConversationView(BaseModel):
     created_by: StrId
     title: str | None = None
     image: dict | None = None
+    visibility: ConversationVisibility = "private"
+    posting_policy: PostingPolicy = "everyone"
+    space_id: StrId | None = None
+    parent_conversation_id: StrId | None = None
+    root_message_id: str | None = None
+    slug: str | None = None
+    description: str | None = None
+    member_count: int = Field(default=0, ge=0)
+    pinned_message_ids: list[str] = Field(default_factory=list)
+    settings: dict[str, Any] = Field(default_factory=dict)
     peer_user: ConversationUserSummary | None = None
     participant_users: list[ConversationUserSummary] = Field(default_factory=list)
     last_message_at: datetime | None = None
@@ -57,9 +70,17 @@ class ParticipantView(BaseModel):
     conversation_id: StrId
     user_id: StrId
     role: ParticipantRole
+    permissions: dict[str, bool] | None = None
     joined_at: datetime
     last_read_at: datetime | None = None
     last_read_message_id: str | None = None
+    notification_level: NotificationLevel = "all"
+    muted_until: datetime | None = None
+    archived: bool = False
+    pinned: bool = False
+    folder: str | None = None
+    invited_by: StrId | None = None
+    draft_updated_at: datetime | None = None
     muted: bool = False
     hidden: bool = False
 

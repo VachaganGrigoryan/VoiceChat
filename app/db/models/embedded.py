@@ -62,6 +62,23 @@ class EncryptionEnvelopeDocument(EmbeddedBase):
     recipient_key_ids: list[str] = Field(default_factory=list)
 
 
+# Extensible message content-type registry. Clients tolerate unknown values as
+# an opaque fallback (finalize-messenger-conversation-model).
+ContentType = Literal[
+    "text",
+    "media",
+    "file",
+    "call",
+    "system",
+    "poll",
+    "sticker",
+    "voice",
+    "location",
+    "contact",
+    "link_preview",
+]
+
+
 class MessageContentDocument(EmbeddedBase):
     """Encryption-ready message body envelope.
 
@@ -70,10 +87,29 @@ class MessageContentDocument(EmbeddedBase):
     """
 
     encryption: Literal["none", "e2ee"] = "none"
-    type: Literal["text", "media", "file", "call", "system"] = "text"
+    type: ContentType = "text"
     plaintext: PlaintextContentDocument | None = None
+    # Zero or more media/file items carried alongside the primary body (Slack-style
+    # multi-attachment). Link previews use the dedicated `link_preview` type.
+    attachments: list[MediaDocument] = Field(default_factory=list)
     ciphertext: str | None = None
     envelope: EncryptionEnvelopeDocument | None = None
+
+
+class ForwardedFromDocument(EmbeddedBase):
+    """Origin header preserved when a message is forwarded into a conversation."""
+
+    conversation_id: str
+    message_id: str
+    sender_id: StrId
+    forwarded_at: datetime
+
+
+class MessageEditDocument(EmbeddedBase):
+    """A prior version of a message body, appended on each accepted edit."""
+
+    content: MessageContentDocument
+    edited_at: datetime
 
 
 class ConversationPreviewDocument(EmbeddedBase):

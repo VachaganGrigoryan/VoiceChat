@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from pydantic import Field
 from pymongo import ASCENDING, IndexModel
 
 from app.db.document import BaseDocument
@@ -22,6 +23,16 @@ class UserDocument(BaseDocument):
     username_updated_at: datetime | None = None
     has_passkey: bool = False
     passkey_login_enabled: bool = True
+    # Rich profile + notification preferences (finalize-messenger-conversation-model).
+    status_emoji: str | None = None
+    status_text: str | None = None
+    status_expires_at: datetime | None = None
+    pronouns: str | None = None
+    timezone: str | None = None
+    # Do-not-disturb window, "HH:MM" in the user's timezone.
+    dnd_from: str | None = None
+    dnd_to: str | None = None
+    notification_keywords: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

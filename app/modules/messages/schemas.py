@@ -1,13 +1,25 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 from app.db.object_id import StrId
 
-MessageType = Literal["text", "media", "file", "call"]
+MessageType = Literal[
+    "text",
+    "media",
+    "file",
+    "call",
+    "system",
+    "poll",
+    "sticker",
+    "voice",
+    "location",
+    "contact",
+    "link_preview",
+]
 MediaKind = Literal["voice", "audio", "image", "video", "file"]
 StorageProvider = Literal["local", "s3"]
 ReplyMode = Literal["quote", "thread"]
@@ -52,8 +64,10 @@ class MessageReactionGroup(BaseModel):
     updated_at: datetime
 
 
-ContentType = Literal["text", "media", "file", "call", "system"]
+ContentType = MessageType
 EncryptionMode = Literal["none", "e2ee"]
+MentionScope = Literal["here", "all"]
+MessageState = Literal["sent", "scheduled"]
 
 
 class MessagePlaintext(BaseModel):
@@ -68,8 +82,21 @@ class MessageContent(BaseModel):
     encryption: EncryptionMode = "none"
     type: ContentType = "text"
     plaintext: Optional[MessagePlaintext] = None
+    attachments: list[MediaMeta] = Field(default_factory=list)
     ciphertext: Optional[str] = None
-    envelope: Optional[dict] = None
+    envelope: Optional[dict[str, Any]] = None
+
+
+class ForwardedFrom(BaseModel):
+    conversation_id: str
+    message_id: str
+    sender_id: StrId
+    forwarded_at: datetime
+
+
+class MessageEdit(BaseModel):
+    content: MessageContent
+    edited_at: datetime
 
 
 class MessageReceiptSummary(BaseModel):
@@ -86,8 +113,11 @@ class MessageDoc(BaseModel):
     type: MessageType = "text"
     content: Optional[MessageContent] = None
 
-    receipt_summary: MessageReceiptSummary = Field(default_factory=MessageReceiptSummary)
+    receipt_summary: MessageReceiptSummary = Field(
+        default_factory=MessageReceiptSummary
+    )
     edited_at: Optional[datetime] = None
+    edit_history: list[MessageEdit] = Field(default_factory=list)
 
     is_deleted: bool = False
 
@@ -99,6 +129,11 @@ class MessageDoc(BaseModel):
     is_thread_root: bool = False
     thread_reply_count: int = Field(default=0, ge=0)
     last_thread_reply_at: Optional[datetime] = None
+    mention_user_ids: list[StrId] = Field(default_factory=list)
+    mention_scope: MentionScope | None = None
+    forwarded_from: ForwardedFrom | None = None
+    scheduled_for: datetime | None = None
+    state: MessageState = "sent"
     reactions: list[MessageReactionGroup] = Field(default_factory=list)
 
     created_at: datetime

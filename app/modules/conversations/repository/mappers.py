@@ -38,6 +38,22 @@ def to_conversation_view(
         created_by=str(conversation.created_by),
         title=conversation.title,
         image=build_group_avatar_payload(conversation.image),
+        visibility=conversation.visibility,
+        posting_policy=conversation.posting_policy,
+        space_id=(
+            str(conversation.space_id) if conversation.space_id is not None else None
+        ),
+        parent_conversation_id=(
+            str(conversation.parent_conversation_id)
+            if conversation.parent_conversation_id is not None
+            else None
+        ),
+        root_message_id=conversation.root_message_id,
+        slug=conversation.slug,
+        description=conversation.description,
+        member_count=conversation.member_count,
+        pinned_message_ids=conversation.pinned_message_ids,
+        settings=conversation.settings,
         peer_user=peer_user,
         participant_users=participant_users or [],
         last_message_at=conversation.last_message_at,
@@ -53,9 +69,19 @@ def to_participant_view(participant: ParticipantDocument) -> ParticipantView:
         conversation_id=str(participant.conversation_id),
         user_id=str(participant.user_id),
         role=participant.role,
+        permissions=participant.permissions,
         joined_at=participant.joined_at,
         last_read_at=participant.last_read_at,
         last_read_message_id=participant.last_read_message_id,
+        notification_level=participant.notification_level,
+        muted_until=participant.muted_until,
+        archived=participant.archived,
+        pinned=participant.pinned,
+        folder=participant.folder,
+        invited_by=(
+            str(participant.invited_by) if participant.invited_by is not None else None
+        ),
+        draft_updated_at=participant.draft_updated_at,
         muted=participant.muted,
         hidden=participant.hidden,
     )

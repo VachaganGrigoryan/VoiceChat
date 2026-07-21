@@ -19,10 +19,22 @@ class ParticipantDocument(TimestampedDocument):
 
     conversation_id: StrId
     user_id: StrId
-    role: Literal["owner", "admin", "member"] = "member"
+    role: Literal["owner", "admin", "member", "subscriber"] = "member"
+    # Optional granular rights that refine the base role (can_pin, can_invite,
+    # can_delete, can_restrict, can_manage, ...). Absent => role defaults.
+    permissions: dict[str, bool] | None = None
     joined_at: datetime
     last_read_at: datetime | None = None
     last_read_message_id: str | None = None
+    # Notification + inbox organization (finalize-messenger-conversation-model).
+    # `muted` is retained for back-compat and treated as notification_level=none.
+    notification_level: Literal["all", "mentions", "none"] = "all"
+    muted_until: datetime | None = None
+    archived: bool = False
+    pinned: bool = False
+    folder: str | None = None
+    invited_by: StrId | None = None
+    draft_updated_at: datetime | None = None
     muted: bool = False
     hidden: bool = False
 

@@ -85,12 +85,20 @@ def test_message_schemas_expose_normalized_message_and_media_kinds():
     media_meta = spec["components"]["schemas"]["MediaMeta"]
     reply_preview = spec["components"]["schemas"]["ReplyPreview"]
 
-    assert message_doc["properties"]["type"]["enum"] == [
+    finalized_message_types = [
         "text",
         "media",
         "file",
         "call",
+        "system",
+        "poll",
+        "sticker",
+        "voice",
+        "location",
+        "contact",
+        "link_preview",
     ]
+    assert message_doc["properties"]["type"]["enum"] == finalized_message_types
     assert media_meta["properties"]["kind"]["enum"] == [
         "voice",
         "audio",
@@ -98,12 +106,7 @@ def test_message_schemas_expose_normalized_message_and_media_kinds():
         "video",
         "file",
     ]
-    assert reply_preview["properties"]["type"]["enum"] == [
-        "text",
-        "media",
-        "file",
-        "call",
-    ]
+    assert reply_preview["properties"]["type"]["enum"] == finalized_message_types
     assert reply_preview["properties"]["media_kind"]["anyOf"][0]["enum"] == [
         "voice",
         "audio",

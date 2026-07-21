@@ -63,6 +63,18 @@ TEST_COLLECTIONS = [
     "conversation_participants",
     "devices",
     "device_prekeys",
+    "spaces",
+    "space_members",
+    "invite_links",
+    "join_requests",
+    "blocks",
+    "push_tokens",
+    "saved_messages",
+    "notifications",
+    "bots",
+    "webhooks",
+    "reports",
+    "audit_logs",
 ]
 
 
