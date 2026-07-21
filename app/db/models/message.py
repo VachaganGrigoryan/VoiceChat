@@ -4,13 +4,15 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import Field
-from pymongo import ASCENDING, DESCENDING, IndexModel
+from pymongo import ASCENDING, DESCENDING, TEXT, IndexModel
 
 from app.db.document import BaseDocument
 from app.db.collections import COL_MESSAGES
 from app.db.models.embedded import (
-    CallMessageDocument,
-    MediaDocument,
+    ContentType,
+    ForwardedFromDocument,
+    MessageContentDocument,
+    MessageEditDocument,
     MessageReactionDocument,
     ReplyPreviewDocument,
 )
@@ -20,16 +22,12 @@ from app.db.object_id import StrId
 class MessageDocument(BaseDocument):
     conversation_id: str
     sender_id: StrId
-    receiver_id: StrId
-    type: Literal["text", "media", "file", "call"] = "text"
-    text: str | None = None
-    media: MediaDocument | None = None
-    call: CallMessageDocument | None = None
+    type: ContentType = "text"
+    content: MessageContentDocument | None = None
     hidden_for_user_ids: list[StrId] = Field(default_factory=list)
-    status: Literal["sent", "delivered", "read"] = "sent"
     edited_at: datetime | None = None
-    delivered_at: datetime | None = None
-    read_at: datetime | None = None
+    # Append-only prior versions retained on each edit.
+    edit_history: list[MessageEditDocument] = Field(default_factory=list)
     reply_mode: Literal["quote", "thread"] | None = None
     reply_to_message_id: str | None = None
     thread_root_id: str | None = None
@@ -37,6 +35,13 @@ class MessageDocument(BaseDocument):
     is_thread_root: bool = False
     thread_reply_count: int = Field(default=0, ge=0)
     last_thread_reply_at: datetime | None = None
+    # Mentions resolved at send time for notification targeting.
+    mention_user_ids: list[StrId] = Field(default_factory=list)
+    mention_scope: Literal["here", "all"] | None = None
+    forwarded_from: ForwardedFromDocument | None = None
+    # Scheduled send: withheld from timeline/fan-out until `scheduled_for`.
+    scheduled_for: datetime | None = None
+    state: Literal["sent", "scheduled"] = "sent"
     reactions: list[MessageReactionDocument] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
@@ -65,26 +70,19 @@ class MessageDocument(BaseDocument):
                 name="ix_messages_replyToMessageId",
             ),
             IndexModel(
-                [("receiver_id", ASCENDING), ("created_at", DESCENDING)],
-                name="ix_messages_receiver_createdAt_desc",
-            ),
-            IndexModel(
                 [("sender_id", ASCENDING), ("created_at", DESCENDING)],
                 name="ix_messages_sender_createdAt_desc",
             ),
             IndexModel(
-                [
-                    ("conversation_id", ASCENDING),
-                    ("receiver_id", ASCENDING),
-                    ("status", ASCENDING),
-                    ("created_at", DESCENDING),
-                ],
-                name="ix_messages_conversation_receiver_status_createdAt_desc",
-            ),
-            IndexModel(
-                [("call.call_id", ASCENDING)],
+                [("content.plaintext.call.call_id", ASCENDING)],
                 unique=True,
                 partialFilterExpression={"type": "call"},
-                name="ux_messages_call_call_id",
+                name="ux_messages_content_call_call_id",
+            ),
+            # Full-text search over message plaintext (only one text index per
+            # collection is permitted).
+            IndexModel(
+                [("content.plaintext.text", TEXT)],
+                name="tx_messages_content_plaintext_text",
             ),
         ]

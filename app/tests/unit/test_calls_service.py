@@ -177,25 +177,29 @@ async def test_end_call_cancels_ringing_call_for_caller(service, ringing_call_do
         "_id": "507f1f77bcf86cd799439099",
         "conversation_id": "u1_u2",
         "sender_id": "u1",
-        "receiver_id": "u2",
         "type": "call",
-        "text": None,
-        "media": None,
-        "call": {
-            "call_id": "507f1f77bcf86cd799439011",
-            "type": "audio",
-            "status": "cancelled",
-            "caller_user_id": "u1",
-            "callee_user_id": "u2",
-            "started_at": ringing_call_doc["created_at"],
-            "answered_at": None,
-            "ended_at": ringing_call_doc["created_at"],
-            "duration_ms": 0,
+        "content": {
+            "encryption": "none",
+            "type": "call",
+            "plaintext": {
+                "text": None,
+                "media": None,
+                "call": {
+                    "call_id": "507f1f77bcf86cd799439011",
+                    "type": "audio",
+                    "status": "cancelled",
+                    "caller_user_id": "u1",
+                    "callee_user_id": "u2",
+                    "started_at": ringing_call_doc["created_at"],
+                    "answered_at": None,
+                    "ended_at": ringing_call_doc["created_at"],
+                    "duration_ms": 0,
+                },
+            },
+            "ciphertext": None,
+            "envelope": None,
         },
-        "status": "sent",
         "edited_at": None,
-        "delivered_at": None,
-        "read_at": None,
         "reply_mode": None,
         "reply_to_message_id": None,
         "thread_root_id": None,
@@ -221,8 +225,10 @@ async def test_end_call_cancels_ringing_call_for_caller(service, ringing_call_do
     assert result.call.status == "cancelled"
     assert result.history_message is not None
     assert result.history_message.type == "call"
-    assert result.history_message.call is not None
-    assert result.history_message.call.status == "cancelled"
+    assert result.history_message.content is not None
+    assert result.history_message.content.plaintext is not None
+    assert result.history_message.content.plaintext.call is not None
+    assert result.history_message.content.plaintext.call.status == "cancelled"
     repo.cancel_call.assert_awaited_once_with(
         call_id="507f1f77bcf86cd799439011",
         caller_user_id="u1",

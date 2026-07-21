@@ -39,7 +39,6 @@ class ReactionsRepositoryMixin:
                 )
             existing = self._as_message_document(raw_existing)
 
-            self._assert_message_participant(message=existing, user_id=user_id)
             if user_id in existing.hidden_for_user_ids:
                 raise AppError(
                     code="MESSAGE_NOT_REACTABLE",

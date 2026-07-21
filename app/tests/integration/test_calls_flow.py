@@ -250,8 +250,8 @@ async def test_call_accept_offer_answer_connected_and_end_flow(live_client):
         callee_message = callee_messages[-1]
         assert caller_message["type"] == "call"
         assert callee_message["type"] == "call"
-        assert caller_message["call"]["call_id"] == call_id
-        assert callee_message["call"]["status"] == "ended"
+        assert caller_message["content"]["plaintext"]["call"]["call_id"] == call_id
+        assert callee_message["content"]["plaintext"]["call"]["status"] == "ended"
 
         history_res = await live_client.get(
             f"/calls/history?peer_user_id={callee_id}&limit=10",
@@ -263,24 +263,30 @@ async def test_call_accept_offer_answer_connected_and_end_flow(live_client):
         assert history_item["status"] == "ended"
         assert history_item["message_id"] == caller_message["id"]
 
+        conversation_res = await live_client.post(
+            "/conversations",
+            headers=_auth_header(caller_tokens["access_token"]),
+            json={"peer_user_id": callee_id},
+        )
+        assert conversation_res.status_code == 200, conversation_res.text
+        conversation_id = conversation_res.json()["data"]["id"]
         message_history_res = await live_client.get(
-            f"/messages/conversations/{callee_id}?limit=10",
+            f"/conversations/{conversation_id}/messages?limit=10",
             headers=_auth_header(caller_tokens["access_token"]),
         )
         assert message_history_res.status_code == 200, message_history_res.text
         message_item = message_history_res.json()["data"][0]
         assert message_item["type"] == "call"
-        assert message_item["call"]["call_id"] == call_id
+        assert message_item["content"]["plaintext"]["call"]["call_id"] == call_id
 
         conversations_res = await live_client.get(
-            "/messages/conversations?limit=10",
+            "/conversations?limit=10",
             headers=_auth_header(caller_tokens["access_token"]),
         )
         assert conversations_res.status_code == 200, conversations_res.text
         conversation_item = conversations_res.json()["data"][0]
-        assert conversation_item["peer_user"]["id"] == callee_id
-        assert conversation_item["last_message"]["type"] == "call"
-        assert conversation_item["last_message"]["call"]["call_id"] == call_id
+        assert conversation_item["id"] == conversation_id
+        assert conversation_item["last_message_preview"]["type"] == "call"
 
         assert caller_errors == []
         assert callee_errors == []
@@ -621,8 +627,11 @@ async def test_call_reject_flow_emits_rejected(live_client):
         await asyncio.wait_for(caller_message_event.wait(), timeout=5)
         await asyncio.wait_for(callee_message_event.wait(), timeout=5)
         assert caller_messages[-1]["type"] == "call"
-        assert caller_messages[-1]["call"]["status"] == "rejected"
-        assert callee_messages[-1]["call"]["call_id"] == call_id
+        assert (
+            caller_messages[-1]["content"]["plaintext"]["call"]["status"]
+            == "rejected"
+        )
+        assert callee_messages[-1]["content"]["plaintext"]["call"]["call_id"] == call_id
 
         history_res = await live_client.get(
             f"/calls/history?peer_user_id={callee_id}&limit=10",
@@ -633,12 +642,24 @@ async def test_call_reject_flow_emits_rejected(live_client):
         assert history_item["status"] == "rejected"
         assert history_item["message_id"] == caller_messages[-1]["id"]
 
+        conversation_res = await live_client.post(
+            "/conversations",
+            headers=_auth_header(caller_tokens["access_token"]),
+            json={"peer_user_id": callee_id},
+        )
+        assert conversation_res.status_code == 200, conversation_res.text
+        conversation_id = conversation_res.json()["data"]["id"]
         message_history_res = await live_client.get(
-            f"/messages/conversations/{callee_id}?limit=10",
+            f"/conversations/{conversation_id}/messages?limit=10",
             headers=_auth_header(caller_tokens["access_token"]),
         )
         assert message_history_res.status_code == 200, message_history_res.text
-        assert message_history_res.json()["data"][0]["call"]["status"] == "rejected"
+        assert (
+            message_history_res.json()["data"][0]["content"]["plaintext"]["call"][
+                "status"
+            ]
+            == "rejected"
+        )
     finally:
         if caller_sio.connected:
             await asyncio.wait_for(caller_sio.disconnect(), timeout=3)
@@ -817,14 +838,21 @@ async def test_ringing_call_cancel_creates_call_message_and_history(inprocess_cl
     assert history_item["status"] == "cancelled"
     assert history_item["message_id"] is not None
 
+    conversation_res = await inprocess_client.post(
+        "/conversations",
+        headers=_auth_header(caller_tokens["access_token"]),
+        json={"peer_user_id": callee_id},
+    )
+    assert conversation_res.status_code == 200, conversation_res.text
+    conversation_id = conversation_res.json()["data"]["id"]
     message_history_res = await inprocess_client.get(
-        f"/messages/conversations/{callee_id}?limit=10",
+        f"/conversations/{conversation_id}/messages?limit=10",
         headers=_auth_header(caller_tokens["access_token"]),
     )
     assert message_history_res.status_code == 200, message_history_res.text
     message_item = message_history_res.json()["data"][0]
     assert message_item["type"] == "call"
-    assert message_item["call"]["status"] == "cancelled"
+    assert message_item["content"]["plaintext"]["call"]["status"] == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -861,14 +889,21 @@ async def test_expired_call_creates_call_message_and_history(
     assert history_item["status"] == "expired"
     assert history_item["message_id"] is not None
 
+    conversation_res = await inprocess_client.post(
+        "/conversations",
+        headers=_auth_header(caller_tokens["access_token"]),
+        json={"peer_user_id": callee_id},
+    )
+    assert conversation_res.status_code == 200, conversation_res.text
+    conversation_id = conversation_res.json()["data"]["id"]
     message_history_res = await inprocess_client.get(
-        f"/messages/conversations/{callee_id}?limit=10",
+        f"/conversations/{conversation_id}/messages?limit=10",
         headers=_auth_header(caller_tokens["access_token"]),
     )
     assert message_history_res.status_code == 200, message_history_res.text
     message_item = message_history_res.json()["data"][0]
     assert message_item["type"] == "call"
-    assert message_item["call"]["status"] == "expired"
+    assert message_item["content"]["plaintext"]["call"]["status"] == "expired"
 
 
 @pytest.mark.asyncio

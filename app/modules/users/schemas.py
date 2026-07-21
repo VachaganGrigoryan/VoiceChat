@@ -21,6 +21,14 @@ class UserProfileResponse(BaseModel):
     default_discovery_enabled: bool
     last_seen_at: datetime | None = None
     username_updated_at: datetime | None = None
+    status_emoji: str | None = None
+    status_text: str | None = None
+    status_expires_at: datetime | None = None
+    pronouns: str | None = None
+    timezone: str | None = None
+    dnd_from: str | None = None
+    dnd_to: str | None = None
+    notification_keywords: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -33,6 +41,11 @@ class SelectedUserProfileResponse(BaseModel):
     display_name: str | None = None
     bio: str | None = None
     avatar: dict | None = None
+    status_emoji: str | None = None
+    status_text: str | None = None
+    status_expires_at: datetime | None = None
+    pronouns: str | None = None
+    timezone: str | None = None
     is_online: bool = False
 
 

@@ -39,6 +39,93 @@ class ReplyPreviewDocument(EmbeddedBase):
     is_deleted: bool = False
 
 
+class PlaintextContentDocument(EmbeddedBase):
+    """Cleartext message body, present when the envelope encryption mode is "none".
+
+    Canonical cleartext body for messages whose encryption mode is ``none``.
+    """
+
+    text: str | None = None
+    media: MediaDocument | None = None
+    call: CallMessageDocument | None = None
+
+
+class EncryptionEnvelopeDocument(EmbeddedBase):
+    """Per-recipient encryption metadata, reserved for future E2EE.
+
+    Unused while `MessageContentDocument.encryption == "none"`; no cryptography is
+    performed against these fields in this change.
+    """
+
+    scheme: str | None = None
+    sender_device_id: str | None = None
+    recipient_key_ids: list[str] = Field(default_factory=list)
+
+
+# Extensible message content-type registry. Clients tolerate unknown values as
+# an opaque fallback (finalize-messenger-conversation-model).
+ContentType = Literal[
+    "text",
+    "media",
+    "file",
+    "call",
+    "system",
+    "poll",
+    "sticker",
+    "voice",
+    "location",
+    "contact",
+    "link_preview",
+]
+
+
+class MessageContentDocument(EmbeddedBase):
+    """Encryption-ready message body envelope.
+
+    When `encryption == "none"` the body lives in `plaintext` (today's behavior).
+    When `encryption == "e2ee"` the body lives in `ciphertext`/`envelope`.
+    """
+
+    encryption: Literal["none", "e2ee"] = "none"
+    type: ContentType = "text"
+    plaintext: PlaintextContentDocument | None = None
+    # Zero or more media/file items carried alongside the primary body (Slack-style
+    # multi-attachment). Link previews use the dedicated `link_preview` type.
+    attachments: list[MediaDocument] = Field(default_factory=list)
+    ciphertext: str | None = None
+    envelope: EncryptionEnvelopeDocument | None = None
+
+
+class ForwardedFromDocument(EmbeddedBase):
+    """Origin header preserved when a message is forwarded into a conversation."""
+
+    conversation_id: str
+    message_id: str
+    sender_id: StrId
+    forwarded_at: datetime
+
+
+class MessageEditDocument(EmbeddedBase):
+    """A prior version of a message body, appended on each accepted edit."""
+
+    content: MessageContentDocument
+    edited_at: datetime
+
+
+class ConversationPreviewDocument(EmbeddedBase):
+    """Denormalized last-message preview for inbox rendering.
+
+    Server-rendered plaintext while conversations are `encryption == "none"`; a
+    future E2EE change replaces this with client-rendered previews.
+    """
+
+    message_id: str
+    sender_id: StrId
+    type: Literal["text", "media", "file", "call", "system"]
+    text: str | None = None
+    created_at: datetime
+
+
 class MessageReactionDocument(EmbeddedBase):
     emoji: str
     user_ids: list[StrId] = Field(default_factory=list)

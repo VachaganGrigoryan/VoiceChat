@@ -214,6 +214,14 @@ class UsersService:
             default_discovery_enabled=_doc_value(user, "default_discovery_enabled"),
             last_seen_at=_doc_value(user, "last_seen_at"),
             username_updated_at=_doc_value(user, "username_updated_at"),
+            status_emoji=_doc_value(user, "status_emoji"),
+            status_text=_doc_value(user, "status_text"),
+            status_expires_at=_doc_value(user, "status_expires_at"),
+            pronouns=_doc_value(user, "pronouns"),
+            timezone=_doc_value(user, "timezone"),
+            dnd_from=_doc_value(user, "dnd_from"),
+            dnd_to=_doc_value(user, "dnd_to"),
+            notification_keywords=_doc_value(user, "notification_keywords", []),
             created_at=_doc_value(user, "created_at"),
             updated_at=_doc_value(user, "updated_at"),
         )
@@ -233,6 +241,11 @@ class UsersService:
             display_name=_doc_value(user, "display_name"),
             bio=_doc_value(user, "bio"),
             avatar=build_user_avatar_payload(_doc_value(user, "avatar")),
+            status_emoji=_doc_value(user, "status_emoji"),
+            status_text=_doc_value(user, "status_text"),
+            status_expires_at=_doc_value(user, "status_expires_at"),
+            pronouns=_doc_value(user, "pronouns"),
+            timezone=_doc_value(user, "timezone"),
             is_online=is_online,
         )
 

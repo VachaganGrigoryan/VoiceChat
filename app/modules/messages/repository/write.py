@@ -5,21 +5,27 @@ from datetime import UTC, datetime
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
-from app.db.models import CallDocument, CallMessageDocument, MediaDocument, MessageDocument
+from app.db.models import (
+    CallDocument,
+    CallMessageDocument,
+    MediaDocument,
+    MessageContentDocument,
+    MessageDocument,
+    PlaintextContentDocument,
+)
 from app.db.object_id import parse_object_id as _oid
 from app.modules.messages.repository.helpers import (
     build_reply_preview,
     call_duration_ms,
-    conversation_id_for,
 )
 
 
 class WriteRepositoryMixin:
-    async def create_message(
+    async def create_conversation_message(
         self,
         *,
+        conversation_id: str,
         sender_id: str,
-        receiver_id: str,
         message_type: str,
         text: str | None = None,
         media: MediaDocument | None = None,
@@ -27,18 +33,18 @@ class WriteRepositoryMixin:
         created_at: datetime | None = None,
         updated_at: datetime | None = None,
     ) -> MessageDocument:
-        conv_id = conversation_id_for(sender_id, receiver_id)
         created_ts = created_at or datetime.now(UTC)
         updated_ts = updated_at or created_ts
-
-        message = MessageDocument(
-            conversation_id=conv_id,
-            sender_id=sender_id,
-            receiver_id=receiver_id,
+        content = MessageContentDocument(
+            encryption="none",
             type=message_type,
-            text=text,
-            media=media,
-            call=call,
+            plaintext=PlaintextContentDocument(text=text, media=media, call=call),
+        )
+        message = MessageDocument(
+            conversation_id=conversation_id,
+            sender_id=sender_id,
+            type=message_type,
+            content=content,
             created_at=created_ts,
             updated_at=updated_ts,
         )
@@ -48,12 +54,15 @@ class WriteRepositoryMixin:
     async def find_call_message_by_call_id(
         self, *, call_id: str
     ) -> MessageDocument | None:
-        return await MessageDocument.find_one({"type": "call", "call.call_id": call_id})
+        return await MessageDocument.find_one(
+            {"type": "call", "content.plaintext.call.call_id": call_id}
+        )
 
     async def create_call_message(
         self,
         *,
         call_doc: CallDocument,
+        conversation_id: str,
     ) -> MessageDocument:
         terminal_at = (
             call_doc.ended_at
@@ -74,9 +83,9 @@ class WriteRepositoryMixin:
         }
 
         try:
-            return await self.create_message(
+            return await self.create_conversation_message(
+                conversation_id=conversation_id,
                 sender_id=call_doc.caller_user_id,
-                receiver_id=call_doc.callee_user_id,
                 message_type="call",
                 call=CallMessageDocument.model_validate(payload),
                 created_at=terminal_at,
@@ -90,29 +99,27 @@ class WriteRepositoryMixin:
                 return existing
             raise
 
-    async def create_quote_reply(
+    async def create_conversation_quote_reply(
         self,
         *,
+        conversation_id: str,
         sender_id: str,
-        receiver_id: str,
         message_type: str,
         reply_to_message_id: str,
         text: str | None = None,
         media: MediaDocument | None = None,
     ) -> MessageDocument:
-        target = await self._load_reply_target(
-            sender_id=sender_id,
-            receiver_id=receiver_id,
+        target = await self._load_reply_target_by_conversation(
+            conversation_id=conversation_id,
             reply_to_message_id=reply_to_message_id,
         )
-        doc = await self.create_message(
+        doc = await self.create_conversation_message(
+            conversation_id=conversation_id,
             sender_id=sender_id,
-            receiver_id=receiver_id,
             message_type=message_type,
             text=text,
             media=media,
         )
-
         return await doc.set(
             {
                 "reply_mode": "quote",
@@ -122,31 +129,31 @@ class WriteRepositoryMixin:
             }
         )
 
-    async def create_thread_reply(
+    async def create_conversation_thread_reply(
         self,
         *,
+        conversation_id: str,
         sender_id: str,
-        receiver_id: str,
         message_type: str,
         reply_to_message_id: str,
         text: str | None = None,
         media: MediaDocument | None = None,
     ) -> MessageDocument:
-        target = await self._load_reply_target(
-            sender_id=sender_id,
-            receiver_id=receiver_id,
+        target = await self._load_reply_target_by_conversation(
+            conversation_id=conversation_id,
             reply_to_message_id=reply_to_message_id,
         )
         thread_root_id = target.thread_root_id or target.str_id
         now = datetime.now(UTC)
-
         created = MessageDocument(
-            conversation_id=target.conversation_id,
+            conversation_id=conversation_id,
             sender_id=sender_id,
-            receiver_id=receiver_id,
             type=message_type,
-            text=text,
-            media=media,
+            content=MessageContentDocument(
+                encryption="none",
+                type=message_type,
+                plaintext=PlaintextContentDocument(text=text, media=media),
+            ),
             reply_mode="thread",
             reply_to_message_id=target.str_id,
             thread_root_id=thread_root_id,
@@ -159,7 +166,7 @@ class WriteRepositoryMixin:
         root = await self.col.find_one_and_update(
             {
                 "_id": _oid(thread_root_id),
-                "conversation_id": target.conversation_id,
+                "conversation_id": conversation_id,
             },
             {
                 "$set": {
@@ -179,20 +186,4 @@ class WriteRepositoryMixin:
                 message="Thread root not found",
                 status_code=404,
             )
-
         return created
-
-    async def create_voice_message(
-        self,
-        *,
-        sender_id: str,
-        receiver_id: str,
-        audio: MediaDocument,
-    ) -> MessageDocument:
-        media = audio.model_copy(update={"kind": "voice"})
-        return await self.create_message(
-            sender_id=sender_id,
-            receiver_id=receiver_id,
-            message_type="media",
-            media=media,
-        )
