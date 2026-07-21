@@ -54,6 +54,11 @@ async def test_get_user_profile_returns_minimal_payload_for_self(service, user_d
         "display_name": "Target User",
         "bio": "Visible profile",
         "avatar": None,
+        "status_emoji": None,
+        "status_text": None,
+        "status_expires_at": None,
+        "pronouns": None,
+        "timezone": None,
         "is_online": True,
     }
     pings_repo.has_accepted_permission.assert_not_awaited()
