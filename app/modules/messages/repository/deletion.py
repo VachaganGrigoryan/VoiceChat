@@ -101,6 +101,27 @@ class DeletionRepositoryMixin:
         )
         return [MessageDocument.model_validate(doc) for doc in owned]
 
+    async def bulk_hard_delete_all_messages_in_conversation(
+        self,
+        *,
+        conversation_id: str,
+    ) -> list[MessageDocument]:
+        """Hard-delete every message in a conversation, returning the removed docs.
+
+        Used by the owner/admin "clear history for everyone" action; the returned
+        documents let the caller clean up any associated media objects.
+        """
+        docs = await self.col.find(
+            {"conversation_id": conversation_id}
+        ).to_list(length=None)
+
+        if not docs:
+            return []
+
+        message_ids = [doc["_id"] for doc in docs]
+        await self.col.delete_many({"_id": {"$in": message_ids}})
+        return [MessageDocument.model_validate(doc) for doc in docs]
+
     async def hide_peer_messages_for_user(
         self,
         *,

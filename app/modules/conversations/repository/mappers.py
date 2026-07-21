@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.db.models import ConversationDocument, ParticipantDocument
+from app.modules.conversations.group_avatar import build_group_avatar_payload
 from app.modules.conversations.schemas import (
     ConversationPreview,
     ConversationUserSummary,
@@ -36,6 +37,7 @@ def to_conversation_view(
         participant_ids=[str(pid) for pid in conversation.participant_ids],
         created_by=str(conversation.created_by),
         title=conversation.title,
+        image=build_group_avatar_payload(conversation.image),
         peer_user=peer_user,
         participant_users=participant_users or [],
         last_message_at=conversation.last_message_at,

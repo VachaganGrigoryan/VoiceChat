@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 from pymongo import ASCENDING, DESCENDING, IndexModel
@@ -25,6 +25,7 @@ class ConversationDocument(TimestampedDocument):
     participant_ids: list[StrId] = Field(default_factory=list)
     created_by: StrId
     title: str | None = None
+    image: dict[str, Any] | None = None
     encryption: Literal["none", "e2ee"] = "none"
     dm_key: str | None = None
     last_message_at: datetime | None = None

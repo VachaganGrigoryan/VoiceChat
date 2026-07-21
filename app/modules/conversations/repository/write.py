@@ -65,6 +65,30 @@ class ConversationsWriteMixin:
         await conversation.insert()
         return conversation
 
+    async def update_group_title(
+        self, *, conversation_id: str, title: str
+    ) -> ConversationDocument:
+        now = datetime.now(UTC)
+        await self.raw.update_one(
+            {"_id": parse_object_id(conversation_id)},
+            {"$set": {"title": title, "updated_at": now}},
+        )
+        updated = await self.get_by_id(conversation_id)
+        assert updated is not None
+        return updated
+
+    async def update_group_image(
+        self, *, conversation_id: str, image: dict | None
+    ) -> ConversationDocument:
+        now = datetime.now(UTC)
+        await self.raw.update_one(
+            {"_id": parse_object_id(conversation_id)},
+            {"$set": {"image": image, "updated_at": now}},
+        )
+        updated = await self.get_by_id(conversation_id)
+        assert updated is not None
+        return updated
+
     async def delete_conversation(self, *, conversation_id: str) -> None:
         await self.raw.delete_one({"_id": parse_object_id(conversation_id)})
 

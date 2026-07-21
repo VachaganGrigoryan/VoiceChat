@@ -29,6 +29,7 @@ from app.modules.conversations.schemas import (
     CreateDmRequest,
     ParticipantView,
     TransferOwnershipRequest,
+    UpdateGroupRequest,
     UpdateParticipantRoleRequest,
 )
 from app.modules.conversations.service import ConversationsService
@@ -267,6 +268,79 @@ async def delete_group(
 ):
     await service.delete_group(user_id=user.str_id, conversation_id=conversation_id)
     return ok(request, data=None, status_code=204)
+
+
+@router.patch(
+    "/groups/{conversation_id}",
+    response_model=SuccessResponse[ConversationView],
+    dependencies=[Depends(rate_limit("20/minute", scope="group_conversation_rename"))],
+)
+async def rename_group(
+    request: Request,
+    conversation_id: str,
+    body: UpdateGroupRequest,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    conversation = await service.rename_group(
+        actor_user_id=user.str_id,
+        conversation_id=conversation_id,
+        title=body.title,
+    )
+    data = (
+        await service.views_for_user(
+            user_id=user.str_id, conversations=[conversation]
+        )
+    )[0]
+    return ok(request, data=data)
+
+
+@router.patch(
+    "/groups/{conversation_id}/avatar",
+    response_model=SuccessResponse[ConversationView],
+    dependencies=[Depends(rate_limit("20/minute", scope="group_conversation_avatar"))],
+)
+async def set_group_avatar(
+    request: Request,
+    conversation_id: str,
+    file: UploadFile = File(...),
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    conversation = await service.set_group_avatar(
+        actor_user_id=user.str_id,
+        conversation_id=conversation_id,
+        file=file,
+    )
+    data = (
+        await service.views_for_user(
+            user_id=user.str_id, conversations=[conversation]
+        )
+    )[0]
+    return ok(request, data=data)
+
+
+@router.delete(
+    "/groups/{conversation_id}/avatar",
+    response_model=SuccessResponse[ConversationView],
+    dependencies=[Depends(rate_limit("20/minute", scope="group_conversation_avatar"))],
+)
+async def remove_group_avatar(
+    request: Request,
+    conversation_id: str,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    conversation = await service.remove_group_avatar(
+        actor_user_id=user.str_id,
+        conversation_id=conversation_id,
+    )
+    data = (
+        await service.views_for_user(
+            user_id=user.str_id, conversations=[conversation]
+        )
+    )[0]
+    return ok(request, data=data)
 
 
 @router.get(
@@ -593,6 +667,38 @@ async def edit_message(
     for participant_id in conversation.participant_ids:
         await emit_to_user(sio, str(participant_id), "message_edited", payload)
     return ok(request, data=message)
+
+
+@router.delete(
+    "/{conversation_id}/messages/all",
+    response_model=SuccessResponse[ClearChatResponse],
+    dependencies=[Depends(rate_limit("10/minute", scope="conversation_clear_all"))],
+)
+async def clear_messages_for_everyone(
+    request: Request,
+    conversation_id: str,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+    messages: MessagesService = Depends(get_messages_service),
+):
+    conversation = await service.require_group_manager(
+        user_id=user.str_id,
+        conversation_id=conversation_id,
+        allowed_roles={"owner", "admin"},
+    )
+    conv_id, count = await messages.clear_chat_history_for_everyone(
+        conversation_id=conversation_id
+    )
+    payload = {"conversation_id": conv_id, "cleared_count": count}
+    for participant_id in conversation.participant_ids:
+        await emit_to_user(
+            sio, str(participant_id), "conversation_history_cleared", payload
+        )
+    return ok(
+        request,
+        data=ClearChatResponse(conversation_id=conv_id, cleared_count=count),
+    )
 
 
 @router.delete(

@@ -112,6 +112,24 @@ class DeleteMessagesMixin:
             user_id=user_id,
         )
 
+    async def clear_chat_history_for_everyone(
+        self, *, conversation_id: str
+    ) -> tuple[str, int]:
+        """Hard-delete every message (and its media) in a conversation for all users.
+
+        Authorization (owner/admin, group-only) is enforced by the caller via the
+        conversations service; this method performs the irreversible deletion.
+        """
+        deleted_docs = await self.repo.bulk_hard_delete_all_messages_in_conversation(
+            conversation_id=conversation_id,
+        )
+        for doc in deleted_docs:
+            media = _media_dict(message_media(doc))
+            if media and media.get("key") and media.get("storage"):
+                await get_storage(media["storage"]).delete(media["key"])
+
+        return conversation_id, len(deleted_docs)
+
     async def delete_chat(
         self, *, conversation_id: str, user_id: str, peer_user_id: str | None = None
     ) -> tuple[str, int, bool]:

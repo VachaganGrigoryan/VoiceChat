@@ -43,6 +43,7 @@ class ConversationView(BaseModel):
     participant_ids: list[StrId]
     created_by: StrId
     title: str | None = None
+    image: dict | None = None
     peer_user: ConversationUserSummary | None = None
     participant_users: list[ConversationUserSummary] = Field(default_factory=list)
     last_message_at: datetime | None = None
@@ -70,6 +71,10 @@ class CreateDmRequest(BaseModel):
 class CreateGroupRequest(BaseModel):
     title: str = Field(min_length=1, max_length=80)
     participant_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class UpdateGroupRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
 
 
 class AddGroupMembersRequest(BaseModel):

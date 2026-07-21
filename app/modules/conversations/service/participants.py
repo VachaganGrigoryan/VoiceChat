@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from fastapi import UploadFile
+
 from app.core.errors import AppError
 from app.db.models import ConversationDocument, ParticipantDocument
+from app.infra.storage import get_storage, storage_key_builder
+from app.modules.conversations.group_avatar import read_group_image_upload
 from app.modules.conversations.service.base import BaseConversationsService
 
 
@@ -57,6 +61,105 @@ class ParticipantsServiceMixin(BaseConversationsService):
                 status_code=403,
             )
         return participant
+
+    async def require_group_manager(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+        allowed_roles: set[str],
+    ) -> ConversationDocument:
+        """Load a group and assert the caller holds one of ``allowed_roles``.
+
+        Shared entry point for group-management actions that live outside this
+        service (e.g. clearing history for everyone via the messages service).
+        """
+        conversation = await self._get_group_for_participant(
+            conversation_id=conversation_id, user_id=user_id
+        )
+        await self._require_actor_role(
+            conversation_id=conversation.str_id,
+            user_id=user_id,
+            allowed_roles=allowed_roles,
+        )
+        return conversation
+
+    async def rename_group(
+        self, *, actor_user_id: str, conversation_id: str, title: str
+    ) -> ConversationDocument:
+        conversation = await self.require_group_manager(
+            user_id=actor_user_id,
+            conversation_id=conversation_id,
+            allowed_roles={"owner", "admin"},
+        )
+        return await self.repo.update_group_title(
+            conversation_id=conversation.str_id, title=title.strip()
+        )
+
+    async def set_group_avatar(
+        self, *, actor_user_id: str, conversation_id: str, file: UploadFile
+    ) -> ConversationDocument:
+        conversation = await self.require_group_manager(
+            user_id=actor_user_id,
+            conversation_id=conversation_id,
+            allowed_roles={"owner", "admin"},
+        )
+
+        content, content_type = await read_group_image_upload(file)
+        storage = get_storage()
+        key_builder = storage_key_builder("avatar")
+        stored = await storage.save(
+            filename=file.filename,
+            content=content,
+            mime=content_type,
+            key=key_builder(conversation.str_id, file.filename),
+        )
+        image = {
+            "storage": stored.storage,
+            "key": stored.key,
+            "url": stored.url,
+            "mime": stored.mime,
+            "size_bytes": stored.size_bytes,
+        }
+
+        previous = conversation.image
+        updated = await self.repo.update_group_image(
+            conversation_id=conversation.str_id, image=image
+        )
+
+        if previous and isinstance(previous, dict):
+            prev_key = previous.get("key")
+            if prev_key and prev_key != image["key"]:
+                try:
+                    await storage.delete(prev_key)
+                except Exception:  # noqa: BLE001 - best-effort cleanup, never fatal
+                    pass
+
+        return updated
+
+    async def remove_group_avatar(
+        self, *, actor_user_id: str, conversation_id: str
+    ) -> ConversationDocument:
+        conversation = await self.require_group_manager(
+            user_id=actor_user_id,
+            conversation_id=conversation_id,
+            allowed_roles={"owner", "admin"},
+        )
+
+        previous = conversation.image
+        updated = await self.repo.update_group_image(
+            conversation_id=conversation.str_id, image=None
+        )
+
+        if previous and isinstance(previous, dict):
+            prev_key = previous.get("key")
+            if prev_key:
+                try:
+                    await get_storage(previous.get("storage")).delete(prev_key)
+                except Exception:  # noqa: BLE001 - best-effort cleanup, never fatal
+                    pass
+
+        return updated
 
     async def mark_conversation_read(
         self,
