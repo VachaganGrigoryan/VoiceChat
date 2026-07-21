@@ -581,11 +581,15 @@ async def _emit_history_message_if_any(
     if history_message is None:
         return
 
+    payload = history_message.model_dump(mode="json")
+    call = payload.get("content", {}).get("plaintext", {}).get("call")
+    if not call:
+        return
     await emit_message_to_participants(
         sio,
-        sender_id=history_message.sender_id,
-        receiver_id=history_message.receiver_id,
-        payload=history_message.model_dump(mode="json"),
+        sender_id=call["caller_user_id"],
+        receiver_id=call["callee_user_id"],
+        payload=payload,
     )
 
 

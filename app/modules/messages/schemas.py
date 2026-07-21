@@ -3,13 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from app.db.object_id import StrId
 
 MessageType = Literal["text", "media", "file", "call"]
 MediaKind = Literal["voice", "audio", "image", "video", "file"]
-MessageStatus = Literal["sent", "delivered", "read"]
 StorageProvider = Literal["local", "s3"]
 ReplyMode = Literal["quote", "thread"]
 CallMessageStatus = Literal["rejected", "cancelled", "expired", "ended"]
@@ -53,21 +52,42 @@ class MessageReactionGroup(BaseModel):
     updated_at: datetime
 
 
-class MessageDoc(BaseModel):
-    id: StrId
-    conversation_id: str
-    sender_id: StrId
-    receiver_id: StrId
+ContentType = Literal["text", "media", "file", "call", "system"]
+EncryptionMode = Literal["none", "e2ee"]
 
-    type: MessageType = "text"
+
+class MessagePlaintext(BaseModel):
     text: Optional[str] = None
     media: Optional[MediaMeta] = None
     call: Optional[CallMeta] = None
 
-    status: MessageStatus = "sent"
+
+class MessageContent(BaseModel):
+    """Canonical encryption-ready message body."""
+
+    encryption: EncryptionMode = "none"
+    type: ContentType = "text"
+    plaintext: Optional[MessagePlaintext] = None
+    ciphertext: Optional[str] = None
+    envelope: Optional[dict] = None
+
+
+class MessageReceiptSummary(BaseModel):
+    recipient_count: int = Field(default=0, ge=0)
+    delivered_count: int = Field(default=0, ge=0)
+    read_count: int = Field(default=0, ge=0)
+
+
+class MessageDoc(BaseModel):
+    id: StrId
+    conversation_id: str
+    sender_id: StrId
+
+    type: MessageType = "text"
+    content: Optional[MessageContent] = None
+
+    receipt_summary: MessageReceiptSummary = Field(default_factory=MessageReceiptSummary)
     edited_at: Optional[datetime] = None
-    delivered_at: Optional[datetime] = None
-    read_at: Optional[datetime] = None
 
     is_deleted: bool = False
 
@@ -97,35 +117,10 @@ class DeleteMessageResponse(BaseModel):
 class MessageDeleteOutcome(BaseModel):
     response: DeleteMessageResponse
     sender_id: str
-    receiver_id: str
-
-
-class SendTextMessageRequest(BaseModel):
-    receiver_id: str
-    text: str = Field(min_length=1, max_length=4000)
-    reply_mode: Optional[ReplyMode] = None
-    reply_to_message_id: Optional[str] = None
-
-    @model_validator(mode="after")
-    def validate_reply_fields(self) -> "SendTextMessageRequest":
-        if self.reply_mode and not self.reply_to_message_id:
-            raise ValueError("reply_to_message_id is required when reply_mode is set")
-        if self.reply_to_message_id and not self.reply_mode:
-            raise ValueError("reply_mode is required when reply_to_message_id is set")
-        return self
 
 
 class EditMessageRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
-
-
-class UpdateMessageStatusRequest(BaseModel):
-    # useful if later you want one REST endpoint instead of two
-    status: Literal["delivered", "read"]
-
-
-class MarkConversationReadRequest(BaseModel):
-    peer_user_id: str
 
 
 class AddReactionRequest(BaseModel):
@@ -140,28 +135,6 @@ class ThreadSummary(BaseModel):
     last_thread_reply_at: Optional[datetime] = None
 
 
-class ConversationPeer(BaseModel):
-    id: StrId
-    username: str | None = None
-    display_name: str | None = None
-    avatar: dict | None = None
-    is_online: bool = False
-    can_ping: bool = False
-    chat_allowed: bool = False
-    ping_status: str = "none"
-    is_ghost: bool = False
-
-
-class ConversationLastMessage(BaseModel):
-    id: StrId
-    type: MessageType
-    text: str | None = None
-    media: MediaMeta | None = None
-    call: CallMeta | None = None
-    status: MessageStatus = "sent"
-    created_at: datetime
-
-
 class ClearChatResponse(BaseModel):
     conversation_id: str
     cleared_count: int
@@ -171,11 +144,3 @@ class DeleteChatResponse(BaseModel):
     conversation_id: str
     cleared_count: int
     ping_deleted: bool
-
-
-class ConversationItem(BaseModel):
-    conversation_id: str
-    peer_user: ConversationPeer
-    last_message: ConversationLastMessage
-    last_message_at: datetime
-    unread_count: int = 0

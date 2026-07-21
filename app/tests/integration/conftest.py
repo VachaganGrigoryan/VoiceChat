@@ -53,11 +53,16 @@ TEST_COLLECTIONS = [
     "pings",
     "calls",
     "messages",
+    "message_receipts",
     "refresh_tokens",
     "verification_codes",
     "passkeys",
     "passkey_challenges",
     "discovery_tokens",
+    "conversations",
+    "conversation_participants",
+    "devices",
+    "device_prekeys",
 ]
 
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 from app.modules.auth.repository import UsersRepository
 from app.modules.calls.repository import CallsRepository
 from app.modules.calls.service import CallsService
+from app.modules.conversations.repository import ConversationsRepository
+from app.modules.conversations.service import ConversationsService
 from app.modules.messages.repository import MessagesRepository
 from app.modules.pings.repository import PingsRepository
 from app.modules.pings.service import PingsService
@@ -18,6 +20,10 @@ def get_calls_service() -> CallsService:
         users_repo=users_repo,
         presence_service=presence,
     )
+    conversations_service = ConversationsService(
+        repo=ConversationsRepository(),
+        pings_service=pings_service,
+    )
 
     return CallsService(
         repo=CallsRepository(),
@@ -26,4 +32,5 @@ def get_calls_service() -> CallsService:
         presence_service=presence,
         webrtc_service=get_webrtc_service(),
         messages_repo=MessagesRepository(),
+        conversations_service=conversations_service,
     )

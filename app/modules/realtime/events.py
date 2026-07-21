@@ -5,9 +5,8 @@ from app.modules.calls.ws import (
     handle_call_socket_connect,
     handle_call_socket_disconnect,
 )
+from app.modules.conversations.dependencies import get_conversations_service
 from app.modules.messages.dependencies import get_messages_service
-from app.modules.messages.repository.mappers import normalize_message_record
-from app.modules.messages.repository import MessagesRepository
 from app.modules.calls.ws import register_events as register_call_events
 from app.modules.realtime.auth import authenticate_socket, get_socket_user_id
 from app.modules.realtime.emits import (
@@ -20,14 +19,15 @@ from app.modules.realtime.presence import get_presence_backend
 def register_events(sio) -> None:
     register_call_events(sio)
 
-    async def ensure_chat_allowed(*, sender_id: str, receiver_id: str) -> None:
-        service = get_messages_service()
-        if service.pings_service is None:
-            return
-        await service.pings_service.ensure_can_message(
-            sender_id=sender_id,
-            receiver_id=receiver_id,
+    async def get_conversation_participant_ids(
+        *, user_id: str, conversation_id: str
+    ) -> list[str]:
+        service = get_conversations_service()
+        conversation = await service.require_participant(
+            user_id=user_id,
+            conversation_id=conversation_id,
         )
+        return [str(participant_id) for participant_id in conversation.participant_ids]
 
     @sio.event
     async def connect(sid, environ, auth):
@@ -70,26 +70,31 @@ def register_events(sio) -> None:
         if not user_id:
             return
 
-        peer_user_id = (data or {}).get("to")
-        if not peer_user_id:
+        conversation_id = (data or {}).get("conversation_id")
+        if not conversation_id:
             await sio.emit(
                 "error",
-                {"code": "INVALID_PAYLOAD", "message": "`to` is required"},
+                {"code": "INVALID_PAYLOAD", "message": "conversation_id is required"},
                 to=sid,
             )
             return
 
         try:
-            await ensure_chat_allowed(sender_id=user_id, receiver_id=peer_user_id)
+            participant_ids = await get_conversation_participant_ids(
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
         except AppError as e:
             await sio.emit("error", {"code": e.code, "message": e.message}, to=sid)
             return
 
-        await sio.emit(
-            "typing_start",
-            {"from": user_id},
-            room=f"user:{peer_user_id}",
-        )
+        for participant_id in participant_ids:
+            if participant_id != user_id:
+                await sio.emit(
+                    "typing_start",
+                    {"from": user_id, "conversation_id": conversation_id},
+                    room=f"user:{participant_id}",
+                )
 
     @sio.event
     async def typing_stop(sid, data):
@@ -97,26 +102,31 @@ def register_events(sio) -> None:
         if not user_id:
             return
 
-        peer_user_id = (data or {}).get("to")
-        if not peer_user_id:
+        conversation_id = (data or {}).get("conversation_id")
+        if not conversation_id:
             await sio.emit(
                 "error",
-                {"code": "INVALID_PAYLOAD", "message": "`to` is required"},
+                {"code": "INVALID_PAYLOAD", "message": "conversation_id is required"},
                 to=sid,
             )
             return
 
         try:
-            await ensure_chat_allowed(sender_id=user_id, receiver_id=peer_user_id)
+            participant_ids = await get_conversation_participant_ids(
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
         except AppError as e:
             await sio.emit("error", {"code": e.code, "message": e.message}, to=sid)
             return
 
-        await sio.emit(
-            "typing_stop",
-            {"from": user_id},
-            room=f"user:{peer_user_id}",
-        )
+        for participant_id in participant_ids:
+            if participant_id != user_id:
+                await sio.emit(
+                    "typing_stop",
+                    {"from": user_id, "conversation_id": conversation_id},
+                    room=f"user:{participant_id}",
+                )
 
     @sio.event
     async def send_message(sid, data):
@@ -128,23 +138,26 @@ def register_events(sio) -> None:
         if not user_id:
             return
 
-        receiver_id = (data or {}).get("to")
+        conversation_id = (data or {}).get("conversation_id")
         message_id = (data or {}).get("message_id")
         message_type = (data or {}).get("type")
 
-        if not receiver_id or not message_id:
+        if not conversation_id or not message_id:
             await sio.emit(
                 "error",
                 {
                     "code": "INVALID_PAYLOAD",
-                    "message": "`to` and `message_id` are required",
+                    "message": "conversation_id and message_id are required",
                 },
                 to=sid,
             )
             return
 
         try:
-            await ensure_chat_allowed(sender_id=user_id, receiver_id=receiver_id)
+            await get_conversation_participant_ids(
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
         except AppError as e:
             await sio.emit("error", {"code": e.code, "message": e.message}, to=sid)
             return
@@ -153,7 +166,7 @@ def register_events(sio) -> None:
             "send_message_ack",
             {
                 "message_id": message_id,
-                "to": receiver_id,
+                "conversation_id": conversation_id,
                 "message_type": message_type,
                 "accepted": True,
             },
@@ -166,46 +179,56 @@ def register_events(sio) -> None:
         if not receiver_id:
             return
 
-        message_id = (data or {}).get("message_id")
-        if not message_id:
+        payload = data or {}
+        conversation_id = payload.get("conversation_id")
+        message_id = payload.get("message_id")
+        if not conversation_id or not message_id:
             await sio.emit(
                 "error",
-                {"code": "INVALID_PAYLOAD", "message": "message_id required"},
+                {
+                    "code": "INVALID_PAYLOAD",
+                    "message": "conversation_id and message_id required",
+                },
                 to=sid,
             )
             return
 
-        repo = MessagesRepository()
+        messages_service = get_messages_service()
 
         try:
-            msg = await repo.mark_delivered_for_receiver(
+            participant_ids = await get_conversation_participant_ids(
+                user_id=receiver_id,
+                conversation_id=conversation_id,
+            )
+            msg = await messages_service.mark_delivered_for_conversation(
+                conversation_id=conversation_id,
                 message_id=message_id,
-                receiver_id=receiver_id,
+                user_id=receiver_id,
             )
         except AppError as e:
             await sio.emit("error", {"code": e.code, "message": e.message}, to=sid)
             return
 
-        sender_id = str(msg.sender_id)
-        normalized_type, normalized_media = normalize_message_record(msg)
-
-        await emit_message_status_to_user(
-            sio,
-            sender_id,
-            {
-                "message_id": message_id,
-                "status": "delivered",
-                "message_type": normalized_type,
-                "media_kind": (
-                    normalized_media.kind if normalized_media else None
-                ),
-                "delivered_at": msg.delivered_at,
-            },
-        )
+        for participant_id in participant_ids:
+            if participant_id != receiver_id:
+                await emit_message_status_to_user(
+                    sio,
+                    participant_id,
+                    {
+                        "conversation_id": conversation_id,
+                        "message_id": message_id,
+                        "receipt_summary": msg.receipt_summary.model_dump(mode="json"),
+                        "updated_at": msg.updated_at,
+                    },
+                )
 
         await sio.emit(
             "message_ack",
-            {"message_id": message_id, "status": "delivered"},
+            {
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "receipt_summary": msg.receipt_summary.model_dump(mode="json"),
+            },
             to=sid,
         )
 
@@ -215,46 +238,62 @@ def register_events(sio) -> None:
         if not receiver_id:
             return
 
-        message_id = (data or {}).get("message_id")
-        if not message_id:
+        payload = data or {}
+        conversation_id = payload.get("conversation_id")
+        message_id = payload.get("message_id")
+        if not conversation_id or not message_id:
             await sio.emit(
                 "error",
-                {"code": "INVALID_PAYLOAD", "message": "message_id required"},
+                {
+                    "code": "INVALID_PAYLOAD",
+                    "message": "conversation_id and message_id required",
+                },
                 to=sid,
             )
             return
 
-        repo = MessagesRepository()
+        conversations_service = get_conversations_service()
+        messages_service = get_messages_service()
 
         try:
-            msg = await repo.mark_read_for_receiver(
+            participant_ids = await get_conversation_participant_ids(
+                user_id=receiver_id,
+                conversation_id=conversation_id,
+            )
+            msg = await messages_service.mark_read_for_conversation(
+                conversation_id=conversation_id,
                 message_id=message_id,
-                receiver_id=receiver_id,
+                user_id=receiver_id,
+            )
+            await conversations_service.mark_conversation_read(
+                user_id=receiver_id,
+                conversation_id=conversation_id,
+                last_read_message_id=message_id,
             )
         except AppError as e:
             await sio.emit("error", {"code": e.code, "message": e.message}, to=sid)
             return
 
-        sender_id = str(msg.sender_id)
-        normalized_type, normalized_media = normalize_message_record(msg)
-
-        await emit_message_status_to_user(
-            sio,
-            sender_id,
-            {
-                "message_id": message_id,
-                "status": "read",
-                "message_type": normalized_type,
-                "media_kind": (
-                    normalized_media.kind if normalized_media else None
-                ),
-                "read_at": msg.read_at,
-            },
-        )
+        for participant_id in participant_ids:
+            if participant_id != receiver_id:
+                await emit_message_status_to_user(
+                    sio,
+                    participant_id,
+                    {
+                        "conversation_id": conversation_id,
+                        "message_id": message_id,
+                        "receipt_summary": msg.receipt_summary.model_dump(mode="json"),
+                        "updated_at": msg.updated_at,
+                    },
+                )
 
         await sio.emit(
             "message_ack",
-            {"message_id": message_id, "status": "read"},
+            {
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "receipt_summary": msg.receipt_summary.model_dump(mode="json"),
+            },
             to=sid,
         )
 
@@ -264,24 +303,40 @@ def register_events(sio) -> None:
         if not receiver_id:
             return
 
-        peer_user_id = (data or {}).get("peer_user_id")
-        if not peer_user_id:
+        conversation_id = (data or {}).get("conversation_id")
+        if not conversation_id:
             await sio.emit(
                 "error",
-                {"code": "INVALID_PAYLOAD", "message": "peer_user_id required"},
+                {"code": "INVALID_PAYLOAD", "message": "conversation_id required"},
                 to=sid,
             )
             return
 
-        repo = MessagesRepository()
+        service = get_conversations_service()
 
-        updated_count = await repo.mark_conversation_read_for_receiver(
-            receiver_id=receiver_id,
-            peer_user_id=peer_user_id,
-        )
+        try:
+            participant_ids = await get_conversation_participant_ids(
+                user_id=receiver_id,
+                conversation_id=conversation_id,
+            )
+            await service.mark_conversation_read(
+                user_id=receiver_id,
+                conversation_id=conversation_id,
+            )
+        except AppError as e:
+            await sio.emit("error", {"code": e.code, "message": e.message}, to=sid)
+            return
+
+        for participant_id in participant_ids:
+            if participant_id != receiver_id:
+                await sio.emit(
+                    "conversation_read",
+                    {"conversation_id": conversation_id, "user_id": receiver_id},
+                    room=f"user:{participant_id}",
+                )
 
         await sio.emit(
             "conversation_read_ack",
-            {"peer_user_id": peer_user_id, "updated_count": updated_count},
+            {"conversation_id": conversation_id},
             to=sid,
         )

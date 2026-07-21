@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from app.db.models import CallDocument, MessageDocument, ReplyPreviewDocument
-from app.modules.messages.repository.mappers import normalize_message_record
+from app.modules.messages.repository.mappers import (
+    normalize_message_record,
+    message_text,
+)
 
 REPLY_PREVIEW_MAX_TEXT = 160
-
-
-@dataclass(slots=True)
-class ConversationListRow:
-    conversation_id: str
-    last_message: MessageDocument
-    unread_count: int
 
 
 def truncate_preview_text(value: str | None) -> str | None:
@@ -45,22 +39,7 @@ def build_reply_preview(message: MessageDocument) -> ReplyPreviewDocument:
         sender_id=str(message.sender_id),
         type=message_type,
         media_kind=media.kind if media is not None else None,
-        text=truncate_preview_text(message.text),
+        text=truncate_preview_text(message_text(message)),
         is_deleted=False,
     )
 
-
-def message_participants(message: MessageDocument) -> set[str]:
-    return {
-        str(message.sender_id),
-        str(message.receiver_id),
-    }
-
-
-def conversation_id_for(user_a: str, user_b: str) -> str:
-    """
-    Stable conversation id: sort by string form of ObjectId.
-    """
-    a = str(user_a)
-    b = str(user_b)
-    return f"{a}_{b}" if a < b else f"{b}_{a}"

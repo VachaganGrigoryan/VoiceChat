@@ -7,7 +7,6 @@ from pymongo import ReturnDocument
 from app.core.errors import AppError
 from app.db.models import MessageDocument
 from app.db.object_id import parse_object_id as _oid
-from app.modules.messages.repository.helpers import conversation_id_for
 
 
 class DeletionRepositoryMixin:
@@ -32,7 +31,10 @@ class DeletionRepositoryMixin:
                 status_code=400,
             )
         now = datetime.now(UTC)
-        return await existing.set({"text": text, "edited_at": now, "updated_at": now})
+        update: dict = {"edited_at": now, "updated_at": now}
+        if existing.content is not None and existing.content.plaintext is not None:
+            update["content.plaintext.text"] = text
+        return await existing.set(update)
 
     async def hard_delete_owned_message(
         self,
@@ -69,13 +71,12 @@ class DeletionRepositoryMixin:
     async def bulk_hard_delete_own_messages_in_conversation(
         self,
         *,
+        conversation_id: str,
         user_id: str,
-        peer_user_id: str,
     ) -> list[MessageDocument]:
-        conv_id = conversation_id_for(user_id, peer_user_id)
         owned = await self.col.find(
             {
-                "conversation_id": conv_id,
+                "conversation_id": conversation_id,
                 "sender_id": user_id,
             }
         ).to_list(length=None)
@@ -103,15 +104,14 @@ class DeletionRepositoryMixin:
     async def hide_peer_messages_for_user(
         self,
         *,
+        conversation_id: str,
         user_id: str,
-        peer_user_id: str,
     ) -> int:
-        conv_id = conversation_id_for(user_id, peer_user_id)
         now = datetime.now(UTC)
         result = await self.col.update_many(
             {
-                "conversation_id": conv_id,
-                "sender_id": peer_user_id,
+                "conversation_id": conversation_id,
+                "sender_id": {"$ne": user_id},
                 "hidden_for_user_ids": {"$ne": user_id},
             },
             {
@@ -131,10 +131,7 @@ class DeletionRepositoryMixin:
         res = await self.col.find_one_and_update(
             {
                 "_id": _oid(message_id),
-                "$or": [
-                    {"sender_id": user_id},
-                    {"receiver_id": user_id},
-                ],
+                "hidden_for_user_ids": {"$ne": user_id},
             },
             {
                 "$addToSet": {"hidden_for_user_ids": user_id},

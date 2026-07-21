@@ -2,12 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.db.models import CallMessageDocument, MessageDocument
+from app.db.models import (
+    CallMessageDocument,
+    MediaDocument,
+    MessageDocument,
+    PlaintextContentDocument,
+)
 from app.infra.storage import build_storage_url
 from app.modules.messages.schemas import (
     CallMeta,
     MediaMeta,
+    MessageContent,
     MessageDoc,
+    MessagePlaintext,
+    MessageReceiptSummary,
     MessageReactionGroup,
     ReplyPreview,
     ThreadSummary,
@@ -62,15 +70,76 @@ def normalize_call_payload(
     )
 
 
+def _stored_plaintext(message: MessageDocument) -> PlaintextContentDocument | None:
+    content = message.content
+    if content is None or content.encryption != "none":
+        return None
+    return content.plaintext
+
+
+def message_text(message: MessageDocument) -> str | None:
+    plaintext = _stored_plaintext(message)
+    return plaintext.text if plaintext is not None else None
+
+
+def message_media(message: MessageDocument) -> MediaDocument | None:
+    plaintext = _stored_plaintext(message)
+    return plaintext.media if plaintext is not None else None
+
+
+def message_call(message: MessageDocument) -> CallMessageDocument | None:
+    plaintext = _stored_plaintext(message)
+    return plaintext.call if plaintext is not None else None
+
+
 def normalize_message_record(message: MessageDocument) -> tuple[str, MediaMeta | None]:
     message_type = _normalize_message_type(message.type)
-    media = _normalize_media(message_type=message_type, media=message.media)
+    media = _normalize_media(message_type=message_type, media=message_media(message))
     return message_type, media
 
 
-def to_message_doc(message: MessageDocument) -> MessageDoc:
+def _build_content(
+    *,
+    message: MessageDocument,
+    normalized_type: str,
+    media: MediaMeta | None,
+    call: CallMeta | None,
+) -> MessageContent:
+    """Build the wire content envelope.
+
+    Prefers the stored `content` envelope (E2EE-ready); falls back to synthesizing
+    a plaintext envelope from the legacy flat fields for messages written before
+    the envelope existed.
+    """
+    stored = message.content
+    if stored is not None and getattr(stored, "encryption", "none") == "e2ee":
+        return MessageContent(
+            encryption="e2ee",
+            type=getattr(stored, "type", normalized_type),
+            ciphertext=getattr(stored, "ciphertext", None),
+            envelope=(
+                stored.envelope.model_dump(mode="json")
+                if getattr(stored, "envelope", None) is not None
+                else None
+            ),
+        )
+
+    return MessageContent(
+        encryption="none",
+        type=normalized_type,
+        plaintext=MessagePlaintext(text=message_text(message), media=media, call=call),
+    )
+
+
+def to_message_doc(
+    message: MessageDocument,
+    *,
+    receipt_summary: MessageReceiptSummary | None = None,
+) -> MessageDoc:
     normalized_type, media = normalize_message_record(message)
-    call = normalize_call_payload(message_type=normalized_type, call=message.call)
+    call = normalize_call_payload(
+        message_type=normalized_type, call=message_call(message)
+    )
 
     reply_preview = message.reply_preview
     if reply_preview is not None:
@@ -94,19 +163,21 @@ def to_message_doc(message: MessageDocument) -> MessageDoc:
         for reaction in message.reactions
     ]
 
+    content = _build_content(
+        message=message,
+        normalized_type=normalized_type,
+        media=media,
+        call=call,
+    )
+
     return MessageDoc(
         id=message.str_id,
         conversation_id=message.conversation_id,
         sender_id=str(message.sender_id),
-        receiver_id=str(message.receiver_id),
         type=normalized_type,
-        text=message.text,
-        media=media,
-        call=call,
-        status=message.status,
+        content=content,
+        receipt_summary=receipt_summary or MessageReceiptSummary(),
         edited_at=message.edited_at,
-        delivered_at=message.delivered_at,
-        read_at=message.read_at,
         # Live documents are never deleted in-place; a hard delete removes the
         # document entirely and the tombstone lives on referencing reply previews.
         is_deleted=False,

@@ -10,15 +10,24 @@ from beanie import Document
 
 from app.db.models.auth import RefreshTokenDocument
 from app.db.models.call import CallDocument
+from app.db.models.conversation import ConversationDocument
+from app.db.models.device import DeviceDocument
+from app.db.models.device_prekey import DevicePreKeyDocument
 from app.db.models.discovery import DiscoveryTokenDocument
 from app.db.models.embedded import (
     CallMessageDocument,
     CallParticipantStateDocument,
+    ConversationPreviewDocument,
+    EncryptionEnvelopeDocument,
     MediaDocument,
+    MessageContentDocument,
     MessageReactionDocument,
+    PlaintextContentDocument,
     ReplyPreviewDocument,
 )
 from app.db.models.message import MessageDocument
+from app.db.models.message_receipt import MessageReceiptDocument
+from app.db.models.participant import ParticipantDocument
 from app.db.models.passkey import PasskeyChallengeDocument, PasskeyDocument
 from app.db.models.ping import PingDocument
 from app.db.models.user import UserDocument
@@ -36,6 +45,11 @@ DOCUMENT_MODELS: list[type[Document]] = [
     PingDocument,
     CallDocument,
     MessageDocument,
+    MessageReceiptDocument,
+    ConversationDocument,
+    ParticipantDocument,
+    DeviceDocument,
+    DevicePreKeyDocument,
 ]
 
 __all__ = [
@@ -43,13 +57,22 @@ __all__ = [
     "CallDocument",
     "CallMessageDocument",
     "CallParticipantStateDocument",
+    "ConversationDocument",
+    "ConversationPreviewDocument",
+    "DeviceDocument",
+    "DevicePreKeyDocument",
     "DiscoveryTokenDocument",
+    "EncryptionEnvelopeDocument",
     "MediaDocument",
+    "MessageContentDocument",
     "MessageDocument",
+    "MessageReceiptDocument",
     "MessageReactionDocument",
+    "ParticipantDocument",
     "PasskeyChallengeDocument",
     "PasskeyDocument",
     "PingDocument",
+    "PlaintextContentDocument",
     "RefreshTokenDocument",
     "ReplyPreviewDocument",
     "UserDocument",

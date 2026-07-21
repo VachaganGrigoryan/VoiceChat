@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Optional, Protocol
 
 from fastapi import UploadFile
@@ -32,16 +33,22 @@ class SendMessageResult:
 
 
 class PingsServiceProto(Protocol):
-    async def ensure_can_message(self, *, sender_id: str, receiver_id: str) -> None: ...
-    async def get_contact_state(
-        self, *, viewer_user_id: str, peer_user_id: str
-    ) -> Any: ...
-    async def get_contact_states(
-        self, *, viewer_user_id: str, peer_user_ids: list[str]
-    ) -> dict[str, Any]: ...
     async def delete_ping_for_pair(
         self, *, user_id: str, peer_user_id: str
     ) -> bool: ...
+
+
+class ConversationsServiceProto(Protocol):
+    async def materialize_conversation_message(
+        self,
+        *,
+        conversation_id: str,
+        sender_id: str,
+        message_id: str,
+        message_type: str,
+        preview_text: str | None,
+        created_at: datetime,
+    ) -> None: ...
 
 
 class BaseMessagesService:
@@ -49,9 +56,11 @@ class BaseMessagesService:
         self,
         repo: MessagesRepository,
         pings_service: PingsServiceProto | None = None,
+        conversations_service: ConversationsServiceProto | None = None,
     ):
         self.repo = repo
         self.pings_service = pings_service
+        self.conversations_service = conversations_service
 
     async def _read_upload(self, *, file: UploadFile) -> bytes:
         if not file or not file.filename:

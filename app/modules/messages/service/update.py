@@ -8,27 +8,46 @@ from app.modules.messages.service.base import EDIT_WINDOW_MINUTES
 
 
 class UpdateMessagesMixin:
-    async def mark_delivered(self, *, message_id: str, receiver_id: str):
-        doc = await self.repo.mark_delivered_for_receiver(
+    async def mark_delivered_for_conversation(
+        self, *, conversation_id: str, message_id: str, user_id: str
+    ):
+        existing = await self.repo.get_by_id_for_conversation(
+            conversation_id=conversation_id,
             message_id=message_id,
-            receiver_id=receiver_id,
+            user_id=user_id,
         )
-        return to_message_doc(doc)
-
-    async def mark_read(self, *, message_id: str, receiver_id: str):
-        doc = await self.repo.mark_read_for_receiver(
+        if not existing:
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
+        summary = await self.repo.upsert_message_receipt(
+            conversation_id=conversation_id,
             message_id=message_id,
-            receiver_id=receiver_id,
+            user_id=user_id,
+            delivered=True,
         )
-        return to_message_doc(doc)
+        return to_message_doc(existing, receipt_summary=summary)
 
-    async def mark_conversation_read(
-        self, *, receiver_id: str, peer_user_id: str
-    ) -> int:
-        return await self.repo.mark_conversation_read_for_receiver(
-            receiver_id=receiver_id,
-            peer_user_id=peer_user_id,
+    async def mark_read_for_conversation(
+        self, *, conversation_id: str, message_id: str, user_id: str
+    ):
+        existing = await self.repo.get_by_id_for_conversation(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            user_id=user_id,
         )
+        if not existing:
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
+        summary = await self.repo.upsert_message_receipt(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            user_id=user_id,
+            delivered=True,
+            read=True,
+        )
+        return to_message_doc(existing, receipt_summary=summary)
 
     async def edit_text_message(self, *, message_id: str, sender_id: str, text: str):
         existing = await self.repo.get_by_id(message_id=message_id)
@@ -53,4 +72,29 @@ class UpdateMessagesMixin:
             sender_id=sender_id,
             text=self._normalize_text(text),
         )
-        return to_message_doc(doc)
+        summaries = await self.repo.receipt_summaries_for_messages(
+            conversation_id=doc.conversation_id,
+            messages=[doc],
+        )
+        return to_message_doc(doc, receipt_summary=summaries.get(doc.str_id))
+
+    async def edit_text_message_for_conversation(
+        self,
+        *,
+        conversation_id: str,
+        message_id: str,
+        sender_id: str,
+        text: str,
+    ):
+        existing = await self.repo.get_by_id_for_conversation(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            user_id=sender_id,
+        )
+        if not existing:
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
+        return await self.edit_text_message(
+            message_id=message_id, sender_id=sender_id, text=text
+        )

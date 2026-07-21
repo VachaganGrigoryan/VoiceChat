@@ -39,6 +39,57 @@ class ReplyPreviewDocument(EmbeddedBase):
     is_deleted: bool = False
 
 
+class PlaintextContentDocument(EmbeddedBase):
+    """Cleartext message body, present when the envelope encryption mode is "none".
+
+    Canonical cleartext body for messages whose encryption mode is ``none``.
+    """
+
+    text: str | None = None
+    media: MediaDocument | None = None
+    call: CallMessageDocument | None = None
+
+
+class EncryptionEnvelopeDocument(EmbeddedBase):
+    """Per-recipient encryption metadata, reserved for future E2EE.
+
+    Unused while `MessageContentDocument.encryption == "none"`; no cryptography is
+    performed against these fields in this change.
+    """
+
+    scheme: str | None = None
+    sender_device_id: str | None = None
+    recipient_key_ids: list[str] = Field(default_factory=list)
+
+
+class MessageContentDocument(EmbeddedBase):
+    """Encryption-ready message body envelope.
+
+    When `encryption == "none"` the body lives in `plaintext` (today's behavior).
+    When `encryption == "e2ee"` the body lives in `ciphertext`/`envelope`.
+    """
+
+    encryption: Literal["none", "e2ee"] = "none"
+    type: Literal["text", "media", "file", "call", "system"] = "text"
+    plaintext: PlaintextContentDocument | None = None
+    ciphertext: str | None = None
+    envelope: EncryptionEnvelopeDocument | None = None
+
+
+class ConversationPreviewDocument(EmbeddedBase):
+    """Denormalized last-message preview for inbox rendering.
+
+    Server-rendered plaintext while conversations are `encryption == "none"`; a
+    future E2EE change replaces this with client-rendered previews.
+    """
+
+    message_id: str
+    sender_id: StrId
+    type: Literal["text", "media", "file", "call", "system"]
+    text: str | None = None
+    created_at: datetime
+
+
 class MessageReactionDocument(EmbeddedBase):
     emoji: str
     user_ids: list[StrId] = Field(default_factory=list)
