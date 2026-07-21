@@ -23,6 +23,9 @@ from app.scripts.migrate_conversation_message_ids import (
 from app.scripts.migrate_message_receipts import (
     run_migration as run_message_receipt_migration,
 )
+from app.scripts.repair_call_message_content import (
+    run_migration as run_call_message_content_repair,
+)
 
 
 def _print_stats(name: str, stats: Any) -> None:
@@ -49,23 +52,36 @@ async def run_cutover_migrations(
     try:
         mode = "APPLY" if apply else "DRY RUN"
         print(f"[conversation_cutover] {mode} against {mongo_db}")
-        print("  step 1/4: migrate legacy message conversation ids")
+        print("  step 1/5: migrate legacy message conversation ids")
         conversation_stats = await run_conversation_id_migration(db, apply=apply)
         _print_stats("migrate_conversation_message_ids", conversation_stats)
         has_blockers = has_blockers or _has_items(
             conversation_stats, ("skipped_keys",)
         )
 
-        print("\n  step 2/4: backfill message receipts")
+        print("\n  step 2/5: repair call message content")
+        call_content_stats = await run_call_message_content_repair(db, apply=apply)
+        _print_stats("repair_call_message_content", call_content_stats)
+        has_blockers = has_blockers or _has_items(
+            call_content_stats, ("skipped_ids", "duplicate_call_ids")
+        )
+        if has_blockers:
+            print(
+                "\n[conversation_cutover] BLOCKED: repair call message content "
+                "before continuing."
+            )
+            return 2 if not allow_skips else 0
+
+        print("\n  step 3/5: backfill message receipts")
         receipt_stats = await run_message_receipt_migration(db, apply=apply)
         _print_stats("migrate_message_receipts", receipt_stats)
         has_blockers = has_blockers or _has_items(receipt_stats, ("skipped_ids",))
 
-        print("\n  step 3/4: drop legacy message indexes")
+        print("\n  step 4/5: drop legacy message indexes")
         index_stats = await run_drop_indexes(db, apply=apply)
         _print_stats("drop_legacy_message_indexes", index_stats)
 
-        print("\n  step 4/4: clean legacy message fields")
+        print("\n  step 5/5: clean legacy message fields")
         cleanup_stats = await run_cleanup(
             db,
             apply=apply,

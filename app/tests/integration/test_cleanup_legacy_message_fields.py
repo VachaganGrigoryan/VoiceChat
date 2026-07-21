@@ -5,10 +5,18 @@ from datetime import UTC, datetime
 import pytest
 from bson import ObjectId
 from pymongo import AsyncMongoClient
+from pymongo.errors import OperationFailure
 
 from app.core.config import settings
 from app.db.collections import COL_CONVERSATIONS, COL_MESSAGES
 from app.scripts.cleanup_legacy_message_fields import run_cleanup
+
+
+async def _drop_legacy_call_index(db) -> None:
+    try:
+        await db[COL_MESSAGES].drop_index("ux_messages_call_call_id")
+    except OperationFailure:
+        pass
 
 
 def _conversation(*, conversation_id: ObjectId, user_a: str, user_b: str) -> dict:
@@ -104,7 +112,7 @@ async def test_cleanup_dry_run_reports_without_writes(app_lifecycle):
     assert stats.messages_scanned == 1
     assert stats.messages_eligible == 1
     assert stats.messages_cleaned == 1
-    assert stats.fields_unset == {"text": 1, "media": 1, "status": 1}
+    assert stats.fields_unset == {"text": 1, "media": 1, "call": 1, "status": 1}
     message = await db[COL_MESSAGES].find_one({})
     assert "text" in message
     assert "media" in message
@@ -135,7 +143,7 @@ async def test_cleanup_unsets_eligible_legacy_fields_and_is_idempotent(app_lifec
     message = await db[COL_MESSAGES].find_one({})
     assert "text" not in message
     assert "media" not in message
-    assert "call" in message
+    assert "call" not in message
     assert message["receiver_id"] == user_b
     assert "status" not in message
     assert message["content"]["plaintext"]["text"] == "clean me"
@@ -146,8 +154,9 @@ async def test_cleanup_unsets_eligible_legacy_fields_and_is_idempotent(app_lifec
 
 
 @pytest.mark.asyncio
-async def test_cleanup_keeps_call_field_for_call_messages(app_lifecycle):
+async def test_cleanup_unsets_call_field_after_call_content_repair(app_lifecycle):
     db = AsyncMongoClient(settings.mongo_uri)[settings.mongo_db]
+    await _drop_legacy_call_index(db)
     user_a = str(ObjectId())
     user_b = str(ObjectId())
     conversation_id = ObjectId()
@@ -178,15 +187,15 @@ async def test_cleanup_keeps_call_field_for_call_messages(app_lifecycle):
     stats = await run_cleanup(db, apply=True)
 
     assert stats.messages_cleaned == 2
-    assert stats.fields_unset == {"text": 2, "media": 2, "status": 2}
+    assert stats.fields_unset == {"text": 2, "media": 2, "call": 2, "status": 2}
     messages = await db[COL_MESSAGES].find({}).to_list(length=10)
-    assert {message["call"]["call_id"] for message in messages} == {"call-1", "call-2"}
+    assert all("call" not in message for message in messages)
     assert all("text" not in message for message in messages)
     assert all("media" not in message for message in messages)
 
 
 @pytest.mark.asyncio
-async def test_cleanup_repairs_partially_cleaned_call_message(app_lifecycle):
+async def test_cleanup_does_not_restore_partially_cleaned_call_message(app_lifecycle):
     db = AsyncMongoClient(settings.mongo_uri)[settings.mongo_db]
     user_a = str(ObjectId())
     user_b = str(ObjectId())
@@ -207,10 +216,41 @@ async def test_cleanup_repairs_partially_cleaned_call_message(app_lifecycle):
 
     stats = await run_cleanup(db, apply=True)
 
-    assert stats.call_fields_restored == 1
+    assert stats.call_fields_restored == 0
     restored = await db[COL_MESSAGES].find_one({})
-    assert restored["call"]["call_id"] == "call-1"
+    assert "call" not in restored
     assert "status" not in restored
+
+
+@pytest.mark.asyncio
+async def test_cleanup_skips_call_message_when_nested_call_id_missing(app_lifecycle):
+    db = AsyncMongoClient(settings.mongo_uri)[settings.mongo_db]
+    await _drop_legacy_call_index(db)
+    user_a = str(ObjectId())
+    user_b = str(ObjectId())
+    conversation_id = ObjectId()
+    await db[COL_CONVERSATIONS].insert_one(
+        _conversation(conversation_id=conversation_id, user_a=user_a, user_b=user_b)
+    )
+    message = _message(
+        conversation_id=str(conversation_id),
+        sender_id=user_a,
+        receiver_id=user_b,
+        text="invalid nested call",
+        message_type="call",
+        call_id="call-1",
+    )
+    message["content"]["plaintext"]["call"] = None
+    await db[COL_MESSAGES].insert_one(message)
+
+    stats = await run_cleanup(db, apply=True)
+
+    assert stats.messages_cleaned == 0
+    assert stats.skipped_invalid_call_content == 1
+    assert stats.skipped_ids == [str(message["_id"])]
+    stored = await db[COL_MESSAGES].find_one({})
+    assert stored["call"]["call_id"] == "call-1"
+    assert stored["text"] == "invalid nested call"
 
 
 @pytest.mark.asyncio
