@@ -61,11 +61,11 @@ def test_all_documented_422_responses_use_error_response():
     assert mismatches == []
 
 
-def test_messages_media_upload_openapi_exposes_new_type_contract():
+def test_conversation_media_upload_openapi_exposes_new_type_contract():
     spec = create_app().openapi()
 
     request_schema = spec["components"]["schemas"][
-        "Body_upload_media_messages_media_post"
+        "Body_send_media_conversations__conversation_id__messages_media_post"
     ]
 
     assert request_schema["properties"]["type"]["enum"] == ["media", "file"]
@@ -84,14 +84,21 @@ def test_message_schemas_expose_normalized_message_and_media_kinds():
     message_doc = spec["components"]["schemas"]["MessageDoc"]
     media_meta = spec["components"]["schemas"]["MediaMeta"]
     reply_preview = spec["components"]["schemas"]["ReplyPreview"]
-    conversation_last_message = spec["components"]["schemas"]["ConversationLastMessage"]
 
-    assert message_doc["properties"]["type"]["enum"] == [
+    finalized_message_types = [
         "text",
         "media",
         "file",
         "call",
+        "system",
+        "poll",
+        "sticker",
+        "voice",
+        "location",
+        "contact",
+        "link_preview",
     ]
+    assert message_doc["properties"]["type"]["enum"] == finalized_message_types
     assert media_meta["properties"]["kind"]["enum"] == [
         "voice",
         "audio",
@@ -99,12 +106,7 @@ def test_message_schemas_expose_normalized_message_and_media_kinds():
         "video",
         "file",
     ]
-    assert reply_preview["properties"]["type"]["enum"] == [
-        "text",
-        "media",
-        "file",
-        "call",
-    ]
+    assert reply_preview["properties"]["type"]["enum"] == finalized_message_types
     assert reply_preview["properties"]["media_kind"]["anyOf"][0]["enum"] == [
         "voice",
         "audio",
@@ -112,8 +114,8 @@ def test_message_schemas_expose_normalized_message_and_media_kinds():
         "video",
         "file",
     ]
-    assert "call" in message_doc["properties"]
-    assert "call" in conversation_last_message["properties"]
+    assert "content" in message_doc["properties"]
+    assert "call" not in message_doc["properties"]
     assert call_meta["properties"]["status"]["enum"] == [
         "rejected",
         "cancelled",

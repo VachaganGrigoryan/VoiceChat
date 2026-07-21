@@ -2,12 +2,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.db.models import CallMessageDocument, MessageDocument
+from app.db.models import (
+    CallMessageDocument,
+    MediaDocument,
+    MessageContentDocument,
+    MessageDocument,
+    PlaintextContentDocument,
+)
 from app.infra.storage import build_storage_url
 from app.modules.messages.schemas import (
     CallMeta,
+    ForwardedFrom,
     MediaMeta,
+    MessageContent,
     MessageDoc,
+    MessageEdit,
+    MessagePlaintext,
+    MessageReceiptSummary,
     MessageReactionGroup,
     ReplyPreview,
     ThreadSummary,
@@ -15,18 +26,24 @@ from app.modules.messages.schemas import (
 
 
 def _normalize_message_type(message_type: Any) -> str:
-    if message_type in {"text", "media", "file", "call"}:
+    if message_type in {
+        "text",
+        "media",
+        "file",
+        "call",
+        "system",
+        "poll",
+        "sticker",
+        "voice",
+        "location",
+        "contact",
+        "link_preview",
+    }:
         return message_type
     return "text"
 
 
-def _normalize_media(
-    *,
-    message_type: str,
-    media,
-) -> MediaMeta | None:
-    if message_type == "call":
-        return None
+def _media_meta_from_document(media: MediaDocument | None) -> MediaMeta | None:
     if media is None:
         return None
 
@@ -39,6 +56,19 @@ def _normalize_media(
         size_bytes=media.size_bytes,
         duration_ms=media.duration_ms,
     )
+
+
+def _normalize_media(
+    *,
+    message_type: str,
+    media,
+) -> MediaMeta | None:
+    if message_type == "call":
+        return None
+    if media is None:
+        return None
+
+    return _media_meta_from_document(media)
 
 
 def normalize_call_payload(
@@ -62,15 +92,109 @@ def normalize_call_payload(
     )
 
 
+def _stored_plaintext(message: MessageDocument) -> PlaintextContentDocument | None:
+    content = message.content
+    if content is None or content.encryption != "none":
+        return None
+    return content.plaintext
+
+
+def message_text(message: MessageDocument) -> str | None:
+    plaintext = _stored_plaintext(message)
+    return plaintext.text if plaintext is not None else None
+
+
+def message_media(message: MessageDocument) -> MediaDocument | None:
+    plaintext = _stored_plaintext(message)
+    return plaintext.media if plaintext is not None else None
+
+
+def message_call(message: MessageDocument) -> CallMessageDocument | None:
+    plaintext = _stored_plaintext(message)
+    return plaintext.call if plaintext is not None else None
+
+
 def normalize_message_record(message: MessageDocument) -> tuple[str, MediaMeta | None]:
     message_type = _normalize_message_type(message.type)
-    media = _normalize_media(message_type=message_type, media=message.media)
+    media = _normalize_media(message_type=message_type, media=message_media(message))
     return message_type, media
 
 
-def to_message_doc(message: MessageDocument) -> MessageDoc:
+def _content_attachments(content: MessageContentDocument | None) -> list[MediaMeta]:
+    if content is None:
+        return []
+    return [
+        attachment
+        for attachment in (
+            _media_meta_from_document(media) for media in content.attachments
+        )
+        if attachment is not None
+    ]
+
+
+def _stored_content_view(content: MessageContentDocument) -> MessageContent:
+    message_type = _normalize_message_type(content.type)
+    if content.encryption == "e2ee":
+        return MessageContent(
+            encryption="e2ee",
+            type=message_type,
+            attachments=_content_attachments(content),
+            ciphertext=content.ciphertext,
+            envelope=(
+                content.envelope.model_dump(mode="json")
+                if content.envelope is not None
+                else None
+            ),
+        )
+
+    plaintext = content.plaintext
+    media = _media_meta_from_document(
+        plaintext.media if plaintext is not None else None
+    )
+    call = normalize_call_payload(
+        message_type=message_type,
+        call=plaintext.call if plaintext is not None else None,
+    )
+    return MessageContent(
+        encryption="none",
+        type=message_type,
+        plaintext=MessagePlaintext(
+            text=plaintext.text if plaintext is not None else None,
+            media=media,
+            call=call,
+        ),
+        attachments=_content_attachments(content),
+    )
+
+
+def _build_content(
+    *,
+    message: MessageDocument,
+    normalized_type: str,
+    media: MediaMeta | None,
+    call: CallMeta | None,
+) -> MessageContent:
+    """Build the wire content envelope."""
+    stored = message.content
+    if stored is not None:
+        return _stored_content_view(stored)
+
+    return MessageContent(
+        encryption="none",
+        type=normalized_type,
+        plaintext=MessagePlaintext(text=message_text(message), media=media, call=call),
+    )
+
+
+def to_message_doc(
+    message: MessageDocument,
+    *,
+    receipt_summary: MessageReceiptSummary | None = None,
+) -> MessageDoc:
     normalized_type, media = normalize_message_record(message)
-    call = normalize_call_payload(message_type=normalized_type, call=message.call)
+    call = normalize_call_payload(
+        message_type=normalized_type, call=message_call(message)
+    )
 
     reply_preview = message.reply_preview
     if reply_preview is not None:
@@ -94,19 +218,38 @@ def to_message_doc(message: MessageDocument) -> MessageDoc:
         for reaction in message.reactions
     ]
 
+    content = _build_content(
+        message=message,
+        normalized_type=normalized_type,
+        media=media,
+        call=call,
+    )
+    edit_history = [
+        MessageEdit(
+            content=_stored_content_view(edit.content), edited_at=edit.edited_at
+        )
+        for edit in message.edit_history
+    ]
+    forwarded_from = (
+        ForwardedFrom(
+            conversation_id=message.forwarded_from.conversation_id,
+            message_id=message.forwarded_from.message_id,
+            sender_id=str(message.forwarded_from.sender_id),
+            forwarded_at=message.forwarded_from.forwarded_at,
+        )
+        if message.forwarded_from is not None
+        else None
+    )
+
     return MessageDoc(
         id=message.str_id,
         conversation_id=message.conversation_id,
         sender_id=str(message.sender_id),
-        receiver_id=str(message.receiver_id),
         type=normalized_type,
-        text=message.text,
-        media=media,
-        call=call,
-        status=message.status,
+        content=content,
+        receipt_summary=receipt_summary or MessageReceiptSummary(),
         edited_at=message.edited_at,
-        delivered_at=message.delivered_at,
-        read_at=message.read_at,
+        edit_history=edit_history,
         # Live documents are never deleted in-place; a hard delete removes the
         # document entirely and the tombstone lives on referencing reply previews.
         is_deleted=False,
@@ -117,6 +260,11 @@ def to_message_doc(message: MessageDocument) -> MessageDoc:
         is_thread_root=message.is_thread_root,
         thread_reply_count=int(message.thread_reply_count),
         last_thread_reply_at=message.last_thread_reply_at,
+        mention_user_ids=[str(user_id) for user_id in message.mention_user_ids],
+        mention_scope=message.mention_scope,
+        forwarded_from=forwarded_from,
+        scheduled_for=message.scheduled_for,
+        state=message.state,
         reactions=reactions,
         created_at=message.created_at,
         updated_at=message.updated_at,

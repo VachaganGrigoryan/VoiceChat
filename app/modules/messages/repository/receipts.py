@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+
+from app.db.collections import COL_CONVERSATION_PARTICIPANTS
+from app.db.models import MessageReceiptDocument
+from app.modules.messages.schemas import MessageReceiptSummary
+
+
+class ReceiptsRepositoryMixin:
+    async def upsert_message_receipt(
+        self,
+        *,
+        conversation_id: str,
+        message_id: str,
+        user_id: str,
+        delivered: bool = False,
+        read: bool = False,
+    ) -> MessageReceiptSummary:
+        now = datetime.now(UTC)
+        set_data: dict[str, Any] = {"updated_at": now}
+        set_on_insert = {
+            "conversation_id": conversation_id,
+            "message_id": message_id,
+            "user_id": user_id,
+            "created_at": now,
+        }
+        if delivered or read:
+            set_data["delivered_at"] = now
+        if read:
+            set_data["read_at"] = now
+
+        await MessageReceiptDocument.get_pymongo_collection().update_one(
+            {"message_id": message_id, "user_id": user_id},
+            {"$set": set_data, "$setOnInsert": set_on_insert},
+            upsert=True,
+        )
+        return (
+            await self.receipt_summaries_for_messages(
+                conversation_id=conversation_id,
+                messages=[await self.get_by_id(message_id=message_id)],
+            )
+        )[message_id]
+
+    async def receipt_summaries_for_messages(
+        self,
+        *,
+        conversation_id: str,
+        messages: list[Any],
+    ) -> dict[str, MessageReceiptSummary]:
+        visible_messages = [message for message in messages if message is not None]
+        if not visible_messages:
+            return {}
+
+        participant_docs = (
+            await self.db[COL_CONVERSATION_PARTICIPANTS]
+            .find(
+                {"conversation_id": conversation_id, "hidden": {"$ne": True}},
+                {"user_id": 1},
+            )
+            .to_list(length=None)
+        )
+        participant_ids = {str(doc["user_id"]) for doc in participant_docs}
+        message_ids = [message.str_id for message in visible_messages]
+        sender_by_message = {
+            message.str_id: str(message.sender_id) for message in visible_messages
+        }
+
+        cursor = await MessageReceiptDocument.get_pymongo_collection().aggregate(
+            [
+                {
+                    "$match": {
+                        "conversation_id": conversation_id,
+                        "message_id": {"$in": message_ids},
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$message_id",
+                        "delivered_count": {
+                            "$sum": {"$cond": [{"$ne": ["$delivered_at", None]}, 1, 0]}
+                        },
+                        "read_count": {
+                            "$sum": {"$cond": [{"$ne": ["$read_at", None]}, 1, 0]}
+                        },
+                    }
+                },
+            ]
+        )
+        rows = await cursor.to_list(length=None)
+        counts_by_message = {str(row["_id"]): row for row in rows}
+
+        summaries: dict[str, MessageReceiptSummary] = {}
+        for message_id in message_ids:
+            recipient_count = max(
+                len(participant_ids - {sender_by_message[message_id]}),
+                0,
+            )
+            counts = counts_by_message.get(message_id, {})
+            summaries[message_id] = MessageReceiptSummary(
+                recipient_count=recipient_count,
+                delivered_count=int(counts.get("delivered_count", 0)),
+                read_count=int(counts.get("read_count", 0)),
+            )
+        return summaries

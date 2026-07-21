@@ -7,10 +7,13 @@ from bson import ObjectId
 from app.db.models import (
     CallMessageDocument,
     MediaDocument,
+    MessageContentDocument,
     MessageDocument,
+    PlaintextContentDocument,
     ReplyPreviewDocument,
 )
-from app.modules.messages.repository import MessagesRepository, conversation_id_for
+from app.modules.conversations.repository.helpers import dm_key_for
+from app.modules.messages.repository import MessagesRepository
 from app.modules.messages.repository.mappers import (
     normalize_message_record,
     to_message_doc,
@@ -20,16 +23,20 @@ FIXED_NOW = datetime(2026, 3, 24, 12, 0, 0, tzinfo=UTC)
 
 
 def _message_document(**overrides: object) -> MessageDocument:
+    text = overrides.pop("text", None)
+    media = overrides.pop("media", None)
+    call = overrides.pop("call", None)
+    message_type = overrides.get("type", "text")
     data = {
         "_id": ObjectId(),
         "conversation_id": "c1",
         "sender_id": "u1",
-        "receiver_id": "u2",
-        "type": "text",
-        "text": None,
-        "media": None,
-        "call": None,
-        "status": "sent",
+        "type": message_type,
+        "content": MessageContentDocument(
+            encryption="none",
+            type=message_type,
+            plaintext=PlaintextContentDocument(text=text, media=media, call=call),
+        ),
         "hidden_for_user_ids": [],
         "created_at": FIXED_NOW,
         "updated_at": FIXED_NOW,
@@ -42,7 +49,7 @@ def test_repository_package_exports_public_surface() -> None:
     repo = MessagesRepository()
 
     assert isinstance(repo, MessagesRepository)
-    assert conversation_id_for("u2", "u1") == "u1_u2"
+    assert dm_key_for("u2", "u1") == "u1_u2"
 
 
 def test_normalize_message_record_keeps_canonical_type_and_media_kind() -> None:
@@ -118,11 +125,66 @@ def test_to_message_doc_uses_canonical_reply_preview_shape() -> None:
     normalized_message = to_message_doc(message)
 
     assert normalized_message.type == "media"
-    assert normalized_message.media is not None
-    assert normalized_message.media.kind == "audio"
+    assert normalized_message.content is not None
+    assert normalized_message.content.plaintext is not None
+    assert normalized_message.content.plaintext.media is not None
+    assert normalized_message.content.plaintext.media.kind == "audio"
     assert normalized_message.reply_preview is not None
     assert normalized_message.reply_preview.type == "file"
     assert normalized_message.reply_preview.media_kind == "file"
+
+
+def test_to_message_doc_builds_plaintext_content_envelope() -> None:
+    message = _message_document(type="text", text="hello world")
+
+    normalized_message = to_message_doc(message)
+
+    assert normalized_message.content is not None
+    assert normalized_message.content.encryption == "none"
+    assert normalized_message.content.type == "text"
+    assert normalized_message.content.plaintext is not None
+    assert normalized_message.content.plaintext.text == "hello world"
+
+
+def test_to_message_doc_uses_content_after_flat_fields_are_removed() -> None:
+    message = _message_document(
+        type="text",
+        text=None,
+        content=MessageContentDocument(
+            encryption="none",
+            type="text",
+            plaintext=PlaintextContentDocument(text="from envelope"),
+        ),
+    )
+
+    normalized_message = to_message_doc(message)
+
+    assert normalized_message.content is not None
+    assert normalized_message.content.plaintext is not None
+    assert normalized_message.content.plaintext.text == "from envelope"
+
+
+def test_to_message_doc_passes_through_e2ee_content_envelope() -> None:
+    message = _message_document(
+        type="text",
+        text=None,
+        content={
+            "encryption": "e2ee",
+            "type": "text",
+            "ciphertext": "BASE64CIPHERTEXT",
+            "envelope": {"scheme": "test", "recipient_key_ids": ["k1"]},
+        },
+    )
+
+    normalized_message = to_message_doc(message)
+
+    assert normalized_message.content is not None
+    assert normalized_message.content.encryption == "e2ee"
+    assert normalized_message.content.ciphertext == "BASE64CIPHERTEXT"
+    assert normalized_message.content.plaintext is None
+    assert normalized_message.content.envelope is not None
+    assert normalized_message.content.envelope["scheme"] == "test"
+    assert normalized_message.content.envelope["recipient_key_ids"] == ["k1"]
 
 
 def test_to_message_doc_normalizes_call_payload() -> None:
@@ -146,6 +208,8 @@ def test_to_message_doc_normalizes_call_payload() -> None:
     normalized_message = to_message_doc(message)
 
     assert normalized_message.type == "call"
-    assert normalized_message.call is not None
-    assert normalized_message.call.call_id == "call1"
-    assert normalized_message.call.status == "ended"
+    assert normalized_message.content is not None
+    assert normalized_message.content.plaintext is not None
+    assert normalized_message.content.plaintext.call is not None
+    assert normalized_message.content.plaintext.call.call_id == "call1"
+    assert normalized_message.content.plaintext.call.status == "ended"

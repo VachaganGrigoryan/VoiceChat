@@ -219,6 +219,11 @@ async def test_get_selected_user_profile_allows_accepted_ping(inprocess_client):
         "display_name": "Target User",
         "bio": "Visible through accepted ping",
         "avatar": None,
+        "status_emoji": None,
+        "status_text": None,
+        "status_expires_at": None,
+        "pronouns": None,
+        "timezone": None,
         "is_online": False,
     }
     assert "email" not in data
