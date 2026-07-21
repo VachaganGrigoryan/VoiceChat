@@ -36,6 +36,7 @@ class LegacyMessageFieldCleanupStats:
     messages_cleaned: int = 0
     call_fields_restored: int = 0
     skipped_call_field_due_legacy_index: int = 0
+    skipped_invalid_call_content: int = 0
     fields_unset: dict[str, int] = field(default_factory=dict)
     skipped_missing_content: int = 0
     skipped_legacy_or_invalid_conversation_id: int = 0
@@ -83,24 +84,6 @@ async def run_cleanup(
         else tuple(field for field in LEGACY_MESSAGE_FIELDS if field != "receiver_id")
     )
 
-    repair_filter = {
-        "type": "call",
-        "call.call_id": {"$exists": False},
-        "content.plaintext.call.call_id": {"$exists": True},
-    }
-    async for message in col_messages.find(repair_filter):
-        call_payload = _call_payload_from_content(message)
-        if call_payload is None:
-            continue
-        if apply:
-            result = await col_messages.update_one(
-                {"_id": message["_id"]},
-                {"$set": {"call": call_payload}},
-            )
-            stats.call_fields_restored += int(result.modified_count)
-        else:
-            stats.call_fields_restored += 1
-
     async for message in col_messages.find(_field_exists_filter(fields)):
         stats.messages_scanned += 1
         message_id = str(message["_id"])
@@ -118,6 +101,16 @@ async def run_cleanup(
 
         if not await _has_canonical_conversation(col_conversations, conversation_id):
             stats.skipped_missing_conversation += 1
+            stats.skipped_ids.append(message_id)
+            continue
+
+        if (
+            message.get("type") == "call"
+            and "call" in message
+            and not preserve_call_field
+            and _call_payload_from_content(message) is None
+        ):
+            stats.skipped_invalid_call_content += 1
             stats.skipped_ids.append(message_id)
             continue
 
@@ -188,6 +181,10 @@ async def main() -> None:
     print(
         "  call fields skipped due legacy index:     "
         f"{stats.skipped_call_field_due_legacy_index}"
+    )
+    print(
+        "  skipped invalid call content:             "
+        f"{stats.skipped_invalid_call_content}"
     )
     print(
         f"  skipped missing content:                  {stats.skipped_missing_content}"
