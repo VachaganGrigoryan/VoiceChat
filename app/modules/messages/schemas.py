@@ -158,6 +158,24 @@ class EditMessageRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
+class ForwardMessageRequest(BaseModel):
+    target_conversation_id: str = Field(min_length=1)
+
+
+class ScheduleMessageRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    scheduled_for: datetime
+
+
+class SetDraftRequest(BaseModel):
+    text: str = Field(default="", max_length=4000)
+
+
+class MessageSearchResults(BaseModel):
+    items: list[MessageDoc] = Field(default_factory=list)
+    has_more: bool = False
+
+
 class AddReactionRequest(BaseModel):
     emoji: str = Field(min_length=1, max_length=32)
 

@@ -34,6 +34,8 @@ class ParticipantDocument(TimestampedDocument):
     pinned: bool = False
     folder: str | None = None
     invited_by: StrId | None = None
+    # Per-participant unsent composition, recoverable across devices.
+    draft_text: str | None = None
     draft_updated_at: datetime | None = None
     muted: bool = False
     hidden: bool = False

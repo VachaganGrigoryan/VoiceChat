@@ -86,6 +86,10 @@ class Settings(BaseSettings):
         default="email.send",
         alias="EMAIL_QUEUE_NAME",
     )
+    push_queue_name: str = Field(
+        default="push.deliver",
+        alias="PUSH_QUEUE_NAME",
+    )
 
     # Redis
     redis_url: str = Field(default="redis://redis:6379/0", alias="REDIS_URL")

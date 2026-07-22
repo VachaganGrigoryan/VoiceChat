@@ -79,6 +79,13 @@ class MessageDocument(BaseDocument):
                 partialFilterExpression={"type": "call"},
                 name="ux_messages_content_call_call_id",
             ),
+            # Cheap due-message lookup for the scheduled-send poller: only indexes
+            # documents still awaiting release.
+            IndexModel(
+                [("state", ASCENDING), ("scheduled_for", ASCENDING)],
+                partialFilterExpression={"state": "scheduled"},
+                name="ix_messages_state_scheduledFor",
+            ),
             # Full-text search over message plaintext (only one text index per
             # collection is permitted).
             IndexModel(

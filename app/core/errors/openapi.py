@@ -88,6 +88,23 @@ COMMON_ERROR_RESPONSES = {
             }
         },
     },
+    410: {
+        "model": ErrorResponse,
+        "description": "Gone. The resource is no longer available (e.g. a revoked or expired link).",
+        "content": {
+            "application/json": {
+                "example": {
+                    "success": False,
+                    "error": {
+                        "code": "INVITE_UNAVAILABLE",
+                        "message": "Invite link is revoked, expired, or fully used.",
+                        "details": None,
+                    },
+                    "request_id": "req_1234567890",
+                }
+            }
+        },
+    },
     422: {
         "model": ErrorResponse,
         "description": "Validation Error. One or more request fields failed validation.",
