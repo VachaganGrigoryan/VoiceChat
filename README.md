@@ -500,6 +500,19 @@ python -m app.workers.email_worker
 
 ---
 
+## Run Integration Tests Safely
+
+Integration tests clean their Mongo collections before and after each test. Use a test database:
+
+```
+docker compose --profile test run tests
+docker compose exec -e MONGO_DB=voicechat_test api pytest app/tests/integration/<path>
+```
+
+Do not run `docker compose exec api pytest app/tests/integration/...` without a test `MONGO_DB` override.
+
+---
+
 # Testing Realtime
 
 Example:
