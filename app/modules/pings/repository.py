@@ -8,7 +8,7 @@ from pymongo.errors import DuplicateKeyError
 
 from app.core.errors import AppError
 from app.core.pagination.cursor import decode_cursor, encode_cursor
-from app.db.models import PingDocument
+from app.db.models import BlockDocument, PingDocument
 from app.db.object_id import parse_object_id as _oid
 from app.db.repository import BaseRepository
 from app.modules.pings.schemas import PingStatus
@@ -169,6 +169,17 @@ class PingsRepository(BaseRepository[PingDocument]):
         )
 
     async def is_blocked(self, *, user_a: str, user_b: str) -> bool:
+        block_doc = await BlockDocument.find_one(
+            {
+                "$or": [
+                    {"blocker_id": str(user_a), "blocked_id": str(user_b)},
+                    {"blocker_id": str(user_b), "blocked_id": str(user_a)},
+                ]
+            }
+        )
+        if block_doc is not None:
+            return True
+
         return (
             await PingDocument.find_one(
                 PingDocument.pair_id == pair_id_for(user_a, user_b),
@@ -176,6 +187,35 @@ class PingsRepository(BaseRepository[PingDocument]):
             )
             is not None
         )
+
+    async def get_block_state(
+        self, *, viewer_user_id: str, peer_user_id: str
+    ) -> tuple[bool, bool]:
+        docs = await BlockDocument.find(
+            {
+                "$or": [
+                    {
+                        "blocker_id": str(viewer_user_id),
+                        "blocked_id": str(peer_user_id),
+                    },
+                    {
+                        "blocker_id": str(peer_user_id),
+                        "blocked_id": str(viewer_user_id),
+                    },
+                ]
+            }
+        ).to_list()
+        blocked_by_me = any(
+            str(doc.blocker_id) == str(viewer_user_id)
+            and str(doc.blocked_id) == str(peer_user_id)
+            for doc in docs
+        )
+        blocks_me = any(
+            str(doc.blocker_id) == str(peer_user_id)
+            and str(doc.blocked_id) == str(viewer_user_id)
+            for doc in docs
+        )
+        return blocked_by_me, blocks_me
 
     async def cancel_pending(self, *, ping_id: str, by_user_id: str) -> PingDocument:
         now = datetime.now(UTC)
@@ -196,6 +236,21 @@ class PingsRepository(BaseRepository[PingDocument]):
     ) -> PingDocument:
         now = datetime.now(UTC)
         pair_id = pair_id_for(user_a, user_b)
+        block_doc = BlockDocument(
+            blocker_id=str(by_user_id),
+            blocked_id=str(user_b if str(by_user_id) == str(user_a) else user_a),
+            created_at=now,
+            updated_at=now,
+        )
+        try:
+            await block_doc.insert()
+        except DuplicateKeyError:
+            existing_block = await BlockDocument.find_one(
+                BlockDocument.blocker_id == block_doc.blocker_id,
+                BlockDocument.blocked_id == block_doc.blocked_id,
+            )
+            if existing_block is not None:
+                await existing_block.set({BlockDocument.updated_at: now})
 
         existing = await PingDocument.find_one(PingDocument.pair_id == pair_id)
         if existing:
@@ -225,6 +280,11 @@ class PingsRepository(BaseRepository[PingDocument]):
         self, *, user_a: str, user_b: str, by_user_id: str
     ) -> PingDocument:
         now = datetime.now(UTC)
+        peer_id = str(user_b if str(by_user_id) == str(user_a) else user_a)
+        block_result = await BlockDocument.find(
+            BlockDocument.blocker_id == str(by_user_id),
+            BlockDocument.blocked_id == peer_id,
+        ).delete()
         res = await self.find_one_and_update(
             {
                 "pair_id": pair_id_for(user_a, user_b),
@@ -237,6 +297,12 @@ class PingsRepository(BaseRepository[PingDocument]):
             },
         )
         if res is None:
+            if block_result and block_result.deleted_count > 0:
+                existing = await PingDocument.find_one(
+                    PingDocument.pair_id == pair_id_for(user_a, user_b)
+                )
+                if existing is not None:
+                    return existing
             raise AppError(
                 code="PAIR_NOT_BLOCKED",
                 message="Pair is not blocked by this user",
@@ -254,9 +320,43 @@ class PingsRepository(BaseRepository[PingDocument]):
         return (
             await PingDocument.find(
                 Eq(PingDocument.status, "blocked"),
-                {"$or": [{"from_user_id": user_id}, {"to_user_id": user_id}]},
+                {"blocked_by": str(user_id)},
             )
             .sort("-updated_at")
             .limit(100)
             .to_list()
         )
+
+    async def list_contacts(
+        self, *, user_id: str, limit: int = 20, cursor: str | None = None
+    ) -> tuple[list[PingDocument], str | None]:
+        query: dict[str, Any] = {
+            "status": "accepted",
+            "$or": [{"from_user_id": str(user_id)}, {"to_user_id": str(user_id)}],
+        }
+        if cursor:
+            payload = decode_cursor(cursor, required_fields={"updated_at", "id"})
+            updated_at = payload["updated_at"]
+            oid = _oid(payload["id"])
+            query["$and"] = [
+                {
+                    "$or": [
+                        {"updated_at": {"$lt": updated_at}},
+                        {"updated_at": updated_at, "_id": {"$lt": oid}},
+                    ]
+                }
+            ]
+
+        docs = (
+            await PingDocument.find(query)
+            .sort("-updated_at", "-_id")
+            .limit(limit + 1)
+            .to_list()
+        )
+
+        next_cursor: str | None = None
+        if len(docs) > limit:
+            last = docs[limit - 1]
+            next_cursor = encode_cursor(updated_at=last.updated_at, id=str(last.str_id))
+            docs = docs[:limit]
+        return docs, next_cursor

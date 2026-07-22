@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 from app.db.object_id import StrId
 
 PingStatus = Literal["pending", "accepted", "declined", "cancelled", "expired", "blocked"]
-PingStatusView = Literal["none", "incoming_pending", "outgoing_pending", "accepted", "declined"]
+PingStatusView = Literal[
+    "none", "incoming_pending", "outgoing_pending", "accepted", "declined", "blocked"
+]
 
 
 class SendPingRequest(BaseModel):
@@ -46,3 +48,11 @@ class ContactState(BaseModel):
     can_ping: bool
     chat_allowed: bool
     ping_status: PingStatusView
+    blocked_by_me: bool = False
+    blocks_me: bool = False
+
+
+class ContactListItem(BaseModel):
+    ping: PingResponse
+    peer: PeerUserSummary
+    conversation_id: StrId | None = None

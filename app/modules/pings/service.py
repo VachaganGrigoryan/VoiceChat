@@ -9,6 +9,7 @@ from app.core.errors import AppError
 from app.db.models import PingDocument, UserDocument
 from app.modules.pings.repository import PingsRepository, pair_id_for
 from app.modules.pings.schemas import (
+    ContactListItem,
     PingListItem,
     PingResponse,
     PeerUserSummary,
@@ -25,6 +26,10 @@ class PresenceServiceProto(Protocol):
     async def is_online(self, user_id: str) -> bool: ...
 
 
+class ConversationsRepositoryProto(Protocol):
+    async def get_by_dm_key(self, dm_key: str): ...
+
+
 class PingsService:
     def __init__(
         self,
@@ -32,10 +37,12 @@ class PingsService:
         pings_repo: PingsRepository,
         users_repo: UsersRepositoryProto,
         presence_service: PresenceServiceProto | None = None,
+        conversations_repo: ConversationsRepositoryProto | None = None,
     ) -> None:
         self.pings_repo = pings_repo
         self.users_repo = users_repo
         self.presence_service = presence_service
+        self.conversations_repo = conversations_repo
 
     def _doc_value(self, doc: object, key: str, default: Any = None) -> Any:
         if isinstance(doc, dict):
@@ -51,6 +58,12 @@ class PingsService:
         target = await self.users_repo.find_by_id(to_user_id)
         if not target:
             raise HTTPException(status_code=404, detail="User not found")
+        if await self.pings_repo.is_blocked(user_a=from_user_id, user_b=to_user_id):
+            raise AppError(
+                code="PING_BLOCKED",
+                message="Cannot ping this user",
+                status_code=403,
+            )
 
         existing = await self.pings_repo.find_by_pair_id(
             pair_id_for(from_user_id, to_user_id)
@@ -187,6 +200,12 @@ class PingsService:
         return self._to_ping_response(updated)
 
     async def block_user(self, *, user_id: str, peer_user_id: str):
+        if user_id == peer_user_id:
+            raise AppError(
+                code="INVALID_BLOCK_TARGET",
+                message="Cannot block yourself",
+                status_code=400,
+            )
         doc = await self.pings_repo.block_pair(
             user_a=user_id,
             user_b=peer_user_id,
@@ -195,6 +214,12 @@ class PingsService:
         return self._to_ping_response(doc)
 
     async def unblock_user(self, *, user_id: str, peer_user_id: str):
+        if user_id == peer_user_id:
+            raise AppError(
+                code="INVALID_BLOCK_TARGET",
+                message="Cannot unblock yourself",
+                status_code=400,
+            )
         doc = await self.pings_repo.unblock_pair(
             user_a=user_id,
             user_b=peer_user_id,
@@ -208,6 +233,21 @@ class PingsService:
     async def list_blocked(self, *, user_id: str):
         docs = await self.pings_repo.list_blocked(user_id=user_id)
         return [self._to_ping_response(doc) for doc in docs]
+
+    async def list_contacts(
+        self,
+        *,
+        user_id: str,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> tuple[list[ContactListItem], str | None]:
+        docs, next_cursor = await self.pings_repo.list_contacts(
+            user_id=user_id,
+            limit=limit,
+            cursor=cursor,
+        )
+        items = [await self._to_contact_item(doc, user_id=user_id) for doc in docs]
+        return items, next_cursor
 
     def _to_ping_response(self, doc: PingDocument) -> PingResponse:
         return PingResponse(
@@ -306,7 +346,16 @@ class PingsService:
         doc = await self.pings_repo.get_pair_state(
             user_a=viewer_user_id, user_b=peer_user_id
         )
-        return self._contact_state_from_doc(viewer_user_id=viewer_user_id, doc=doc)
+        blocked_by_me, blocks_me = await self.pings_repo.get_block_state(
+            viewer_user_id=viewer_user_id,
+            peer_user_id=peer_user_id,
+        )
+        return self._contact_state_from_doc(
+            viewer_user_id=viewer_user_id,
+            doc=doc,
+            blocked_by_me=blocked_by_me,
+            blocks_me=blocks_me,
+        )
 
     async def get_contact_states(
         self, *, viewer_user_id: str, peer_user_ids: list[str]
@@ -320,17 +369,37 @@ class PingsService:
             peer_user_ids=unique_peer_ids,
         )
 
-        return {
-            peer_user_id: self._contact_state_from_doc(
+        states: dict[str, ContactState] = {}
+        for peer_user_id in unique_peer_ids:
+            blocked_by_me, blocks_me = await self.pings_repo.get_block_state(
+                viewer_user_id=viewer_user_id,
+                peer_user_id=peer_user_id,
+            )
+            states[peer_user_id] = self._contact_state_from_doc(
                 viewer_user_id=viewer_user_id,
                 doc=docs_by_pair_id.get(pair_id_for(viewer_user_id, peer_user_id)),
+                blocked_by_me=blocked_by_me,
+                blocks_me=blocks_me,
             )
-            for peer_user_id in unique_peer_ids
-        }
+        return states
 
     def _contact_state_from_doc(
-        self, *, viewer_user_id: str, doc: PingDocument | None
+        self,
+        *,
+        viewer_user_id: str,
+        doc: PingDocument | None,
+        blocked_by_me: bool = False,
+        blocks_me: bool = False,
     ) -> ContactState:
+        if blocked_by_me or blocks_me:
+            return ContactState(
+                can_ping=False,
+                chat_allowed=False,
+                ping_status="blocked",
+                blocked_by_me=blocked_by_me,
+                blocks_me=blocks_me,
+            )
+
         if not doc:
             return ContactState(
                 can_ping=True,
@@ -371,4 +440,43 @@ class PingsService:
             can_ping=True,
             chat_allowed=False,
             ping_status="none",
+        )
+
+    async def _to_contact_item(
+        self, doc: PingDocument, *, user_id: str
+    ) -> ContactListItem:
+        peer_id = (
+            self._doc_value(doc, "to_user_id")
+            if self._doc_value(doc, "from_user_id") == user_id
+            else self._doc_value(doc, "from_user_id")
+        )
+        peer = await self.users_repo.find_by_id(peer_id)
+        online = (
+            await self.presence_service.is_online(peer_id)
+            if self.presence_service
+            else False
+        )
+        conversation_id = None
+        if self.conversations_repo is not None:
+            from app.modules.conversations.repository.helpers import dm_key_for
+
+            conversation = await self.conversations_repo.get_by_dm_key(
+                dm_key_for(user_id, peer_id)
+            )
+            conversation_id = conversation.str_id if conversation is not None else None
+
+        return ContactListItem(
+            ping=self._to_ping_response(doc),
+            peer=PeerUserSummary(
+                id=peer_id,
+                username=self._doc_value(peer, "username", "") if peer else "",
+                display_name=self._doc_value(peer, "display_name") if peer else None,
+                avatar=(
+                    build_user_avatar_payload(self._doc_value(peer, "avatar"))
+                    if peer
+                    else None
+                ),
+                is_online=online,
+            ),
+            conversation_id=conversation_id,
         )

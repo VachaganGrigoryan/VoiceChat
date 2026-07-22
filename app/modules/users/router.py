@@ -7,11 +7,12 @@ from app.core.errors.openapi import build_error_responses
 from app.core.http import SuccessResponse, ok
 from app.core.security import get_current_user_id
 from app.modules.auth.repository import UsersRepository
-from app.modules.pings.repository import PingsRepository
+from app.modules.pings.dependencies import get_pings_service
 from app.modules.realtime.presence.factory import get_presence_backend
 from app.modules.users.schemas import (
     SelectedUserProfileResponse,
     UpdateProfileRequest,
+    UpdateStatusRequest,
     UpdateUsernameRequest,
     UserProfileResponse,
 )
@@ -28,7 +29,7 @@ router = APIRouter(
 def get_users_service() -> UsersService:
     return UsersService(
         UsersRepository(),
-        PingsRepository(),
+        get_pings_service(),
         get_presence_backend(),
     )
 
@@ -43,17 +44,24 @@ async def get_me(
     return ok(request, data=result)
 
 
-@router.get("/{id}", response_model=SuccessResponse[SelectedUserProfileResponse])
-async def get_user_profile(
+@router.patch("/me/status", response_model=SuccessResponse[UserProfileResponse])
+async def update_my_status(
     request: Request,
-    id: str,
+    body: UpdateStatusRequest,
     current_user_id: str = Depends(get_current_user_id),
     service: UsersService = Depends(get_users_service),
 ):
-    result = await service.get_user_profile(
-        current_user_id=current_user_id,
-        selected_user_id=id,
-    )
+    result = await service.update_status(user_id=current_user_id, body=body)
+    return ok(request, data=result)
+
+
+@router.delete("/me/status", response_model=SuccessResponse[UserProfileResponse])
+async def clear_my_status(
+    request: Request,
+    current_user_id: str = Depends(get_current_user_id),
+    service: UsersService = Depends(get_users_service),
+):
+    result = await service.clear_status(user_id=current_user_id)
     return ok(request, data=result)
 
 
@@ -100,4 +108,18 @@ async def delete_my_avatar(
     service: UsersService = Depends(get_users_service),
 ):
     result = await service.delete_avatar(user_id=current_user_id)
+    return ok(request, data=result)
+
+
+@router.get("/{id}", response_model=SuccessResponse[SelectedUserProfileResponse])
+async def get_user_profile(
+    request: Request,
+    id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    service: UsersService = Depends(get_users_service),
+):
+    result = await service.get_user_profile(
+        current_user_id=current_user_id,
+        selected_user_id=id,
+    )
     return ok(request, data=result)

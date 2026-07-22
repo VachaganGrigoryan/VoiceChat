@@ -173,6 +173,12 @@ class DiscoveryService:
                 continue
             if user.default_discovery_enabled is False:
                 continue
+            contact_state = await self.pings_service.get_contact_state(
+                viewer_user_id=requester_user_id,
+                peer_user_id=user.str_id,
+            )
+            if contact_state.blocked_by_me or contact_state.blocks_me:
+                continue
 
             result.append(
                 await self._to_summary(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from bson import ObjectId
@@ -9,13 +10,15 @@ from app.core.errors import AppError
 from app.db.models import UserDocument
 from app.modules.auth.repository import UsersRepository
 from app.modules.auth.username import is_valid_username, normalize_username
-from app.modules.pings.repository import PingsRepository
 from app.modules.users.avatar import build_user_avatar_payload
 from app.modules.users.schemas import (
     SelectedUserProfileResponse,
     UpdateProfileRequest,
+    UpdateStatusRequest,
     UserProfileResponse,
 )
+from app.modules.pings.schemas import ContactState
+from app.modules.realtime.presence import PresenceState
 from app.infra.storage import get_storage, storage_key_builder
 
 ALLOWED_AVATAR_CONTENT_TYPES: dict[str, str] = {
@@ -29,6 +32,14 @@ MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024
 
 class PresenceServiceProto(Protocol):
     async def is_online(self, user_id: str) -> bool: ...
+
+    async def get_state(self, user_id: str) -> PresenceState: ...
+
+
+class PingsServiceProto(Protocol):
+    async def get_contact_state(
+        self, *, viewer_user_id: str, peer_user_id: str
+    ) -> ContactState: ...
 
 
 def _strip_or_none(value: str | None) -> str | None:
@@ -50,7 +61,7 @@ class UsersService:
     def __init__(
         self,
         users: UsersRepository,
-        pings: PingsRepository,
+        pings: PingsServiceProto,
         presence_service: "PresenceServiceProto | None" = None,
     ):
         self.users = users
@@ -64,6 +75,7 @@ class UsersService:
                 code="USER_NOT_FOUND", message="User not found", status_code=404
             )
 
+        user = await self._clear_expired_status_if_needed(user)
         return self._to_profile_response(user)
 
     async def get_user_profile(
@@ -79,18 +91,26 @@ class UsersService:
             )
 
         if current_user_id != selected_user_id:
-            has_access = await self.pings.has_accepted_permission(
-                user_a=current_user_id,
-                user_b=selected_user_id,
+            relationship = await self.pings.get_contact_state(
+                viewer_user_id=current_user_id,
+                peer_user_id=selected_user_id,
             )
-            if not has_access:
-                raise AppError(
-                    code="PROFILE_ACCESS_FORBIDDEN",
-                    message="Accepted ping required to access this profile",
-                    status_code=403,
-                )
+        else:
+            relationship = ContactState(
+                can_ping=False,
+                chat_allowed=False,
+                ping_status="none",
+            )
 
-        return await self._to_selected_profile_response(user)
+        user = await self._clear_expired_status_if_needed(user)
+        has_private_access = current_user_id == selected_user_id or (
+            relationship.chat_allowed and not relationship.blocks_me
+        )
+        return await self._to_selected_profile_response(
+            user,
+            relationship=relationship,
+            include_private_profile=has_private_access or not _doc_value(user, "is_private"),
+        )
 
     async def update_me(
         self,
@@ -102,9 +122,30 @@ class UsersService:
             user_id=user_id,
             display_name=_strip_or_none(body.display_name),
             bio=_strip_or_none(body.bio),
+            pronouns=_strip_or_none(body.pronouns),
+            timezone=_strip_or_none(body.timezone),
             is_private=body.is_private,
             default_discovery_enabled=body.default_discovery_enabled,
         )
+        return self._to_profile_response(user)
+
+    async def update_status(
+        self,
+        *,
+        user_id: str,
+        body: UpdateStatusRequest,
+    ) -> UserProfileResponse:
+        expires_at = self._normalize_status_expiry(body.status_expires_at)
+        user = await self.users.update_status(
+            user_id=user_id,
+            status_emoji=_strip_or_none(body.status_emoji),
+            status_text=_strip_or_none(body.status_text),
+            status_expires_at=expires_at,
+        )
+        return self._to_profile_response(user)
+
+    async def clear_status(self, *, user_id: str) -> UserProfileResponse:
+        user = await self.users.clear_status(user_id=user_id)
         return self._to_profile_response(user)
 
     async def update_username(
@@ -202,6 +243,7 @@ class UsersService:
         return self._to_profile_response(updated)
 
     def _to_profile_response(self, user: UserDocument) -> UserProfileResponse:
+        user = self._without_expired_status(user)
         return UserProfileResponse(
             id=_doc_value(user, "id", ""),
             email=_doc_value(user, "email"),
@@ -227,27 +269,88 @@ class UsersService:
         )
 
     async def _to_selected_profile_response(
-        self, user: UserDocument
+        self,
+        user: UserDocument,
+        *,
+        relationship: ContactState,
+        include_private_profile: bool,
     ) -> SelectedUserProfileResponse:
+        user = self._without_expired_status(user)
         user_id = _doc_value(user, "id", "")
-        is_online = (
-            await self.presence_service.is_online(user_id)
-            if self.presence_service
-            else False
-        )
+        presence_state: PresenceState = "offline"
+        if include_private_profile and self.presence_service:
+            presence_state = await self.presence_service.get_state(user_id)
+        is_online = presence_state != "offline"
         return SelectedUserProfileResponse(
             id=user_id,
             username=_doc_value(user, "username"),
             display_name=_doc_value(user, "display_name"),
-            bio=_doc_value(user, "bio"),
+            bio=_doc_value(user, "bio") if include_private_profile else None,
             avatar=build_user_avatar_payload(_doc_value(user, "avatar")),
-            status_emoji=_doc_value(user, "status_emoji"),
-            status_text=_doc_value(user, "status_text"),
-            status_expires_at=_doc_value(user, "status_expires_at"),
-            pronouns=_doc_value(user, "pronouns"),
-            timezone=_doc_value(user, "timezone"),
+            status_emoji=(
+                _doc_value(user, "status_emoji") if include_private_profile else None
+            ),
+            status_text=(
+                _doc_value(user, "status_text") if include_private_profile else None
+            ),
+            status_expires_at=(
+                _doc_value(user, "status_expires_at")
+                if include_private_profile
+                else None
+            ),
+            pronouns=_doc_value(user, "pronouns") if include_private_profile else None,
+            timezone=_doc_value(user, "timezone") if include_private_profile else None,
             is_online=is_online,
+            presence_state=presence_state,
+            last_seen_at=(
+                _doc_value(user, "last_seen_at")
+                if include_private_profile and presence_state in {"away", "offline"}
+                else None
+            ),
+            profile_visibility="full" if include_private_profile else "limited",
+            relationship=relationship,
         )
+
+    def _normalize_status_expiry(self, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        normalized = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        if normalized <= datetime.now(UTC):
+            raise AppError(
+                code="STATUS_EXPIRY_IN_PAST",
+                message="status_expires_at must be in the future",
+                status_code=400,
+            )
+        return normalized
+
+    def _status_is_expired(self, user: object) -> bool:
+        expires_at = _doc_value(user, "status_expires_at")
+        if expires_at is None:
+            return False
+        normalized = (
+            expires_at
+            if expires_at.tzinfo is not None
+            else expires_at.replace(tzinfo=UTC)
+        )
+        return normalized <= datetime.now(UTC)
+
+    def _without_expired_status(self, user: Any) -> Any:
+        if not self._status_is_expired(user):
+            return user
+        if isinstance(user, dict):
+            user["status_emoji"] = None
+            user["status_text"] = None
+            user["status_expires_at"] = None
+            return user
+        user.status_emoji = None
+        user.status_text = None
+        user.status_expires_at = None
+        return user
+
+    async def _clear_expired_status_if_needed(self, user: UserDocument) -> UserDocument:
+        if not self._status_is_expired(user):
+            return user
+        return await self.users.clear_status(user_id=_doc_value(user, "id", ""))
 
     async def _read_avatar_bytes(self, file: UploadFile) -> bytes:
         content_type = (file.content_type or "").lower().strip()

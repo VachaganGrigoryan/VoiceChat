@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.modules.auth.repository import UsersRepository
+from app.modules.conversations.repository import ConversationsRepository
 from app.modules.pings.repository import PingsRepository
 from app.modules.pings.service import PingsService
 from app.modules.realtime.presence import get_presence_backend
@@ -15,4 +16,5 @@ def get_pings_service() -> PingsService:
         pings_repo=pings_repo,
         users_repo=users_repo,
         presence_service=presence,
+        conversations_repo=ConversationsRepository(),
     )

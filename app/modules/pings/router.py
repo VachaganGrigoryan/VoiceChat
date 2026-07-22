@@ -22,6 +22,7 @@ from app.modules.pings.schemas import (
     SendPingRequest,
     PingListItem,
     PeerActionRequest,
+    ContactListItem,
 )
 from app.modules.realtime import (
     emit_ping_received,
@@ -211,3 +212,27 @@ async def blocked_users(
     service=Depends(get_pings_service),
 ):
     return ok(request, data=await service.list_blocked(user_id=user_id))
+
+
+@router.get("/contacts", response_model=PaginatedResponse[list[ContactListItem]])
+async def list_contacts(
+    request: Request,
+    user_id=Depends(get_current_user_id),
+    limit: int = Query(default=20, ge=1, le=100),
+    cursor: str | None = Query(default=None),
+    service=Depends(get_pings_service),
+):
+    items, next_cursor = await service.list_contacts(
+        user_id=user_id,
+        limit=limit,
+        cursor=cursor,
+    )
+    return ok_paginated(
+        request,
+        data=items,
+        meta=PaginationMeta(
+            cursor=cursor,
+            next_cursor=next_cursor,
+            limit=limit,
+        ),
+    )

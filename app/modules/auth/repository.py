@@ -121,6 +121,8 @@ class UsersRepository(BaseRepository[UserDocument]):
         user_id: str,
         display_name: str | None,
         bio: str | None,
+        pronouns: str | None,
+        timezone: str | None,
         is_private: bool | None,
         default_discovery_enabled: bool | None,
     ) -> UserDocument:
@@ -129,6 +131,10 @@ class UsersRepository(BaseRepository[UserDocument]):
             updates[UserDocument.display_name] = display_name
         if bio is not None:
             updates[UserDocument.bio] = bio
+        if pronouns is not None:
+            updates[UserDocument.pronouns] = pronouns
+        if timezone is not None:
+            updates[UserDocument.timezone] = timezone
         if is_private is not None:
             updates[UserDocument.is_private] = is_private
         if default_discovery_enabled is not None:
@@ -136,6 +142,35 @@ class UsersRepository(BaseRepository[UserDocument]):
 
         user = await self._get_or_404(user_id)
         return await user.set(updates)
+
+    async def update_status(
+        self,
+        *,
+        user_id: str,
+        status_emoji: str | None,
+        status_text: str | None,
+        status_expires_at: datetime | None,
+    ) -> UserDocument:
+        user = await self._get_or_404(user_id)
+        return await user.set(
+            {
+                UserDocument.status_emoji: status_emoji,
+                UserDocument.status_text: status_text,
+                UserDocument.status_expires_at: status_expires_at,
+                UserDocument.updated_at: datetime.now(UTC),
+            }
+        )
+
+    async def clear_status(self, *, user_id: str) -> UserDocument:
+        user = await self._get_or_404(user_id)
+        return await user.set(
+            {
+                UserDocument.status_emoji: None,
+                UserDocument.status_text: None,
+                UserDocument.status_expires_at: None,
+                UserDocument.updated_at: datetime.now(UTC),
+            }
+        )
 
     async def update_username(self, *, user_id: str, username: str) -> UserDocument:
         now = datetime.now(UTC)
@@ -166,6 +201,20 @@ class UsersRepository(BaseRepository[UserDocument]):
         user = await self._get_or_404(user_id)
         return await user.set(
             {UserDocument.avatar: avatar, UserDocument.updated_at: now}
+        )
+
+    async def record_last_seen(
+        self,
+        *,
+        user_id: str,
+        last_seen_at: datetime,
+    ) -> None:
+        user = await self._get_or_404(user_id)
+        await user.set(
+            {
+                UserDocument.last_seen_at: last_seen_at,
+                UserDocument.updated_at: datetime.now(UTC),
+            }
         )
 
     async def set_has_passkey(self, *, user_id: str, value: bool) -> None:
