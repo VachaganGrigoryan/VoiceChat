@@ -7,16 +7,27 @@ from app.core.errors import AppError
 from app.db.models import ConversationDocument
 from app.modules.conversations.repository.mappers import to_conversation_view
 from app.modules.conversations.schemas import ConversationUserSummary, ConversationView
-from app.modules.users.avatar import build_user_avatar_payload
 from app.modules.conversations.service.base import BaseConversationsService
+from app.modules.realtime.presence import PresenceState
+from app.modules.users.avatar import build_user_avatar_payload
 
 
 class ReadConversationsMixin(BaseConversationsService):
     async def list_for_user(
-        self, *, user_id: str, limit: int, cursor: str | None
+        self,
+        *,
+        user_id: str,
+        limit: int,
+        cursor: str | None,
+        archived: bool = False,
+        folder: str | None = None,
     ) -> tuple[list[ConversationDocument], str | None]:
         return await self.repo.list_for_user(
-            user_id=user_id, limit=limit, cursor=cursor
+            user_id=user_id,
+            limit=limit,
+            cursor=cursor,
+            archived=archived,
+            folder=folder,
         )
 
     async def require_participant(
@@ -32,6 +43,64 @@ class ReadConversationsMixin(BaseConversationsService):
                 status_code=404,
             )
         return conversation
+
+    async def require_can_post(
+        self, *, user_id: str, conversation_id: str
+    ) -> ConversationDocument:
+        """Assert the caller may post to the conversation.
+
+        Shared gate for REST and socket send paths: enforces membership and the
+        conversation's ``posting_policy``. When ``posting_policy == "admins"``
+        (broadcast channels) only ``owner``/``admin`` participants may post;
+        ``member``/``subscriber`` are read-only.
+        """
+        conversation = await self.require_participant(
+            user_id=user_id, conversation_id=conversation_id
+        )
+        if conversation.type == "dm":
+            peer_id = self._peer_id(conversation, user_id=user_id)
+            if peer_id is not None:
+                await self._ensure_can_message(sender_id=user_id, receiver_id=peer_id)
+        if conversation.posting_policy != "admins":
+            return conversation
+
+        participant = await self.repo.get_participant(
+            conversation_id=conversation.str_id, user_id=user_id
+        )
+        if participant is None or participant.role not in {"owner", "admin"}:
+            raise AppError(
+                code="CONVERSATION_POST_FORBIDDEN",
+                message="Only admins can post to this conversation",
+                status_code=403,
+            )
+        return conversation
+
+    async def accessible_conversation_ids(self, *, user_id: str) -> list[str]:
+        return await self.repo.accessible_conversation_ids(user_id=user_id)
+
+    async def conversation_participant_ids(
+        self, *, conversation_id: str
+    ) -> list[str]:
+        conversation = await self.repo.get_by_id(conversation_id)
+        if conversation is None:
+            return []
+        return [str(participant_id) for participant_id in conversation.participant_ids]
+
+    async def mention_targets_for_conversation(
+        self, *, conversation_id: str
+    ) -> dict[str, str]:
+        conversation = await self.repo.get_by_id(conversation_id)
+        if conversation is None or self.users_repo is None:
+            return {}
+
+        participant_ids = [str(user_id) for user_id in conversation.participant_ids]
+        users = await self.users_repo.find_by_ids(participant_ids)
+        targets: dict[str, str] = {}
+        for user_id, user in users.items():
+            username = self._user_value(user, "username")
+            if isinstance(username, str) and username.strip():
+                targets[username.lower()] = user_id
+        return targets
 
     async def unread_count_for(
         self, *, user_id: str, conversation: ConversationDocument
@@ -60,7 +129,7 @@ class ReadConversationsMixin(BaseConversationsService):
             if self.users_repo is not None
             else {}
         )
-        online_by_id = await self._presence_by_id(participant_ids)
+        presence_by_id = await self._presence_by_id(participant_ids)
         contact_state_by_peer = await self._contact_state_by_peer(
             user_id=user_id,
             peer_ids=[
@@ -78,7 +147,7 @@ class ReadConversationsMixin(BaseConversationsService):
                 self._conversation_user_summary(
                     user_id=str(participant_id),
                     user=users_by_id.get(str(participant_id)),
-                    is_online=online_by_id.get(str(participant_id), False),
+                    presence_state=presence_by_id.get(str(participant_id), "offline"),
                     contact_state=contact_state_by_peer.get(str(participant_id)),
                 )
                 for participant_id in conversation.participant_ids
@@ -92,29 +161,40 @@ class ReadConversationsMixin(BaseConversationsService):
                 self._conversation_user_summary(
                     user_id=peer_id,
                     user=users_by_id.get(peer_id),
-                    is_online=online_by_id.get(peer_id, False),
+                    presence_state=presence_by_id.get(peer_id, "offline"),
                     contact_state=contact_state_by_peer.get(peer_id),
                 )
                 if peer_id is not None
                 else None
             )
+            viewer_participant = await self.repo.get_participant(
+                conversation_id=conversation.str_id, user_id=user_id
+            )
+            unread_count = await self.repo.unread_count(
+                message_conversation_id=conversation.str_id,
+                user_id=user_id,
+                last_read_at=(
+                    viewer_participant.last_read_at
+                    if viewer_participant is not None
+                    else None
+                ),
+            )
             views.append(
                 to_conversation_view(
                     conversation,
-                    unread_count=await self.unread_count_for(
-                        user_id=user_id, conversation=conversation
-                    ),
+                    unread_count=unread_count,
                     peer_user=peer_user,
                     participant_users=participant_users,
+                    viewer_participant=viewer_participant,
                 )
             )
         return views
 
-    async def _presence_by_id(self, user_ids: list[str]) -> dict[str, bool]:
+    async def _presence_by_id(self, user_ids: list[str]) -> dict[str, PresenceState]:
         if not user_ids or self.presence_service is None:
             return {}
         statuses = await asyncio.gather(
-            *(self.presence_service.is_online(user_id) for user_id in user_ids)
+            *(self.presence_service.get_state(user_id) for user_id in user_ids)
         )
         return dict(zip(user_ids, statuses))
 
@@ -139,9 +219,16 @@ class ReadConversationsMixin(BaseConversationsService):
         *,
         user_id: str,
         user: Any | None,
-        is_online: bool,
+        presence_state: PresenceState,
         contact_state: Any | None = None,
     ) -> ConversationUserSummary:
+        has_presence_access = (
+            contact_state is None
+            or (getattr(contact_state, "chat_allowed", False) and not getattr(contact_state, "blocks_me", False))
+        )
+        exposed_presence_state: PresenceState = (
+            presence_state if has_presence_access else "offline"
+        )
         return ConversationUserSummary(
             id=user_id,
             username=self._user_value(user, "username") if user is not None else None,
@@ -153,7 +240,13 @@ class ReadConversationsMixin(BaseConversationsService):
                 if user is not None
                 else None
             ),
-            is_online=is_online,
+            is_online=exposed_presence_state != "offline",
+            presence_state=exposed_presence_state,
+            last_seen_at=(
+                self._user_value(user, "last_seen_at")
+                if exposed_presence_state in {"away", "offline"}
+                else None
+            ),
             can_ping=getattr(contact_state, "can_ping", None),
             chat_allowed=getattr(contact_state, "chat_allowed", None),
             ping_status=getattr(contact_state, "ping_status", None),

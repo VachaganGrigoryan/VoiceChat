@@ -63,6 +63,17 @@ class ParticipantsRepositoryMixin:
         )
         return ParticipantDocument.model_validate(raw) if raw is not None else None
 
+    async def set_participant_permissions(
+        self, *, conversation_id: str, user_id: str, permissions: dict | None
+    ) -> ParticipantDocument | None:
+        now = datetime.now(UTC)
+        raw = await ParticipantDocument.get_pymongo_collection().find_one_and_update(
+            {"conversation_id": str(conversation_id), "user_id": str(user_id)},
+            {"$set": {"permissions": permissions, "updated_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return ParticipantDocument.model_validate(raw) if raw is not None else None
+
     async def delete_participant(
         self, *, conversation_id: str, user_id: str
     ) -> bool:
@@ -70,6 +81,45 @@ class ParticipantsRepositoryMixin:
             {"conversation_id": str(conversation_id), "user_id": str(user_id)}
         )
         return result.deleted_count > 0
+
+    async def update_participant_inbox_state(
+        self, *, conversation_id: str, user_id: str, updates: dict
+    ) -> ParticipantDocument | None:
+        """Set the caller's ``pinned``/``archived``/``folder`` inbox flags."""
+        set_fields = {
+            key: updates[key]
+            for key in ("pinned", "archived", "folder")
+            if key in updates
+        }
+        set_fields["updated_at"] = datetime.now(UTC)
+        raw = await ParticipantDocument.get_pymongo_collection().find_one_and_update(
+            {"conversation_id": str(conversation_id), "user_id": str(user_id)},
+            {"$set": set_fields},
+            return_document=ReturnDocument.AFTER,
+        )
+        return ParticipantDocument.model_validate(raw) if raw is not None else None
+
+    async def set_participant_draft(
+        self,
+        *,
+        conversation_id: str,
+        user_id: str,
+        draft_text: str | None,
+        draft_updated_at: datetime | None,
+    ) -> ParticipantDocument | None:
+        """Set or clear the caller's per-conversation draft."""
+        raw = await ParticipantDocument.get_pymongo_collection().find_one_and_update(
+            {"conversation_id": str(conversation_id), "user_id": str(user_id)},
+            {
+                "$set": {
+                    "draft_text": draft_text,
+                    "draft_updated_at": draft_updated_at,
+                    "updated_at": datetime.now(UTC),
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return ParticipantDocument.model_validate(raw) if raw is not None else None
 
     async def mark_read(
         self,
@@ -103,6 +153,7 @@ class ParticipantsRepositoryMixin:
             "conversation_id": str(message_conversation_id),
             "sender_id": {"$ne": str(user_id)},
             "thread_root_id": None,
+            "state": {"$ne": "scheduled"},
         }
         if last_read_at is not None:
             query["created_at"] = {"$gt": last_read_at}

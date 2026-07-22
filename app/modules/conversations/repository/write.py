@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from app.db.models import ConversationDocument, ConversationPreviewDocument
@@ -65,6 +66,77 @@ class ConversationsWriteMixin:
         await conversation.insert()
         return conversation
 
+    async def create_channel(
+        self,
+        *,
+        created_by: str,
+        participant_ids: list[str],
+        title: str,
+        description: str | None,
+        visibility: str,
+        posting_policy: str,
+        slug: str | None,
+    ) -> ConversationDocument:
+        """Create a ``channel`` conversation.
+
+        Raises ``DuplicateKeyError`` when ``slug`` collides with an existing
+        public conversation (partial-unique ``slug`` index); the caller maps
+        that to a conflict error.
+        """
+        now = datetime.now(UTC)
+        conversation = ConversationDocument(
+            type="channel",
+            participant_ids=participant_ids,
+            created_by=str(created_by),
+            title=title,
+            description=description,
+            visibility=visibility,  # type: ignore[arg-type]
+            posting_policy=posting_policy,  # type: ignore[arg-type]
+            slug=slug,
+            member_count=len(participant_ids),
+            encryption="none",
+            dm_key=None,
+            created_at=now,
+            updated_at=now,
+        )
+        await conversation.insert()
+        return conversation
+
+    async def get_public_by_slug(self, slug: str) -> ConversationDocument | None:
+        return await ConversationDocument.find_one(
+            {"slug": slug, "visibility": "public"}
+        )
+
+    async def ensure_thread(
+        self, *, parent_conversation_id: str, root_message_id: str, created_by: str
+    ) -> ConversationDocument:
+        """Create-or-get the ``thread`` sub-conversation for a root message."""
+        existing = await ConversationDocument.find_one(
+            {
+                "type": "thread",
+                "parent_conversation_id": str(parent_conversation_id),
+                "root_message_id": str(root_message_id),
+            }
+        )
+        if existing is not None:
+            return existing
+
+        now = datetime.now(UTC)
+        conversation = ConversationDocument(
+            type="thread",
+            participant_ids=[str(created_by)],
+            created_by=str(created_by),
+            parent_conversation_id=str(parent_conversation_id),
+            root_message_id=str(root_message_id),
+            member_count=1,
+            encryption="none",
+            dm_key=None,
+            created_at=now,
+            updated_at=now,
+        )
+        await conversation.insert()
+        return conversation
+
     async def update_group_title(
         self, *, conversation_id: str, title: str
     ) -> ConversationDocument:
@@ -115,6 +187,49 @@ class ConversationsWriteMixin:
                 "$set": {"updated_at": now},
             },
         )
+
+    async def sync_member_count(self, *, conversation_id: str) -> None:
+        """Recompute denormalized ``member_count`` from ``participant_ids``."""
+        now = datetime.now(UTC)
+        await self.raw.update_one(
+            {"_id": parse_object_id(conversation_id)},
+            [
+                {
+                    "$set": {
+                        "member_count": {"$size": "$participant_ids"},
+                        "updated_at": now,
+                    }
+                }
+            ],
+        )
+
+    async def add_pinned_message(
+        self, *, conversation_id: str, message_id: str
+    ) -> ConversationDocument | None:
+        now = datetime.now(UTC)
+        raw = await self.raw.find_one_and_update(
+            {"_id": parse_object_id(conversation_id)},
+            {
+                "$addToSet": {"pinned_message_ids": str(message_id)},
+                "$set": {"updated_at": now},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return ConversationDocument.model_validate(raw) if raw is not None else None
+
+    async def remove_pinned_message(
+        self, *, conversation_id: str, message_id: str
+    ) -> ConversationDocument | None:
+        now = datetime.now(UTC)
+        raw = await self.raw.find_one_and_update(
+            {"_id": parse_object_id(conversation_id)},
+            {
+                "$pull": {"pinned_message_ids": str(message_id)},
+                "$set": {"updated_at": now},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return ConversationDocument.model_validate(raw) if raw is not None else None
 
     async def touch_last_message(
         self,

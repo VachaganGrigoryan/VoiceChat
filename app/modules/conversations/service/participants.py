@@ -6,10 +6,76 @@ from app.core.errors import AppError
 from app.db.models import ConversationDocument, ParticipantDocument
 from app.infra.storage import get_storage, storage_key_builder
 from app.modules.conversations.group_avatar import read_group_image_upload
+from app.modules.conversations.permissions import (
+    CONVERSATION_RIGHTS,
+    participant_can,
+)
 from app.modules.conversations.service.base import BaseConversationsService
 
 
 class ParticipantsServiceMixin(BaseConversationsService):
+    async def require_permission(
+        self, *, user_id: str, conversation_id: str, right: str
+    ) -> ParticipantDocument:
+        """Shared granular-permission gate.
+
+        Authorizes ``right`` for the caller by their base role refined by their
+        optional per-participant ``permissions`` map. Raises 403 when denied.
+        """
+        participant = await self._get_participant_or_404(
+            conversation_id=conversation_id, user_id=user_id
+        )
+        if not participant_can(
+            role=participant.role, permissions=participant.permissions, right=right
+        ):
+            raise AppError(
+                code="CONVERSATION_FORBIDDEN",
+                message=f"Not permitted: {right}",
+                status_code=403,
+            )
+        return participant
+
+    async def set_member_permissions(
+        self,
+        *,
+        actor_user_id: str,
+        conversation_id: str,
+        target_user_id: str,
+        permissions: dict | None,
+    ) -> ParticipantDocument:
+        """Set (or clear) a member's granular permissions map. Owner-only."""
+        conversation = await self.repo.get_for_participant(
+            conversation_id=conversation_id, user_id=actor_user_id
+        )
+        if conversation is None:
+            raise AppError(
+                code="CONVERSATION_NOT_FOUND",
+                message="Conversation not found",
+                status_code=404,
+            )
+        await self._require_actor_role(
+            conversation_id=conversation.str_id,
+            user_id=actor_user_id,
+            allowed_roles={"owner"},
+        )
+        await self._get_participant_or_404(
+            conversation_id=conversation.str_id, user_id=target_user_id
+        )
+        if permissions is not None:
+            unknown = set(permissions) - set(CONVERSATION_RIGHTS)
+            if unknown:
+                raise AppError(
+                    code="INVALID_PERMISSIONS",
+                    message=f"Unknown permissions: {', '.join(sorted(unknown))}",
+                    status_code=400,
+                )
+        updated = await self.repo.set_participant_permissions(
+            conversation_id=conversation.str_id,
+            user_id=target_user_id,
+            permissions=permissions,
+        )
+        assert updated is not None
+        return updated
     async def _get_group_for_participant(
         self, *, conversation_id: str, user_id: str
     ) -> ConversationDocument:
@@ -182,6 +248,30 @@ class ParticipantsServiceMixin(BaseConversationsService):
             user_id=user_id,
             last_read_message_id=last_read_message_id,
         )
+
+    async def set_inbox_state(
+        self, *, user_id: str, conversation_id: str, updates: dict
+    ) -> ParticipantDocument:
+        """Update the caller's per-participant inbox flags (pin/archive/folder)."""
+        conversation = await self.repo.get_for_participant(
+            conversation_id=conversation_id, user_id=user_id
+        )
+        if conversation is None:
+            raise AppError(
+                code="CONVERSATION_NOT_FOUND",
+                message="Conversation not found",
+                status_code=404,
+            )
+        updated = await self.repo.update_participant_inbox_state(
+            conversation_id=conversation.str_id, user_id=user_id, updates=updates
+        )
+        if updated is None:
+            raise AppError(
+                code="PARTICIPANT_NOT_FOUND",
+                message="Participant not found",
+                status_code=404,
+            )
+        return updated
 
     async def list_group_participants(
         self, *, user_id: str, conversation_id: str

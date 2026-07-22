@@ -19,17 +19,26 @@ from app.core.rate_limit import rate_limit
 from app.core.security import require_verified_user
 from app.modules.conversations.dependencies import get_conversations_service
 from app.modules.conversations.repository.mappers import (
+    to_invite_link_view,
+    to_join_request_view,
     to_participant_view,
 )
 from app.modules.conversations.schemas import (
     AddGroupMembersRequest,
     ConversationSendTextRequest,
     ConversationView,
+    CreateChannelRequest,
     CreateGroupRequest,
     CreateDmRequest,
+    CreateInviteRequest,
+    InviteLinkView,
+    JoinRequestView,
     ParticipantView,
+    RedeemInviteResponse,
     TransferOwnershipRequest,
     UpdateGroupRequest,
+    UpdateInboxStateRequest,
+    UpdateParticipantPermissionsRequest,
     UpdateParticipantRoleRequest,
 )
 from app.modules.conversations.service import ConversationsService
@@ -41,10 +50,15 @@ from app.modules.messages.schemas import (
     DeleteChatResponse,
     DeleteMessageResponse,
     EditMessageRequest,
+    ForwardMessageRequest,
     MessageDoc,
+    ScheduleMessageRequest,
+    SetDraftRequest,
     ThreadSummary,
 )
 from app.modules.messages.service import MessagesService
+from app.modules.notifications.dependencies import get_notifications_service
+from app.modules.notifications.service import NotificationsService
 from app.modules.realtime import emit_to_user
 
 router = APIRouter(
@@ -52,6 +66,22 @@ router = APIRouter(
     tags=["conversations"],
     responses=build_error_responses(400, 401, 422, 500),
 )
+
+
+async def emit_message_notifications(
+    sio: socketio.AsyncServer,
+    *,
+    notifications: NotificationsService,
+    message: MessageDoc,
+) -> None:
+    generated = await notifications.generate_for_message(message=message)
+    for item in generated:
+        await emit_to_user(
+            sio,
+            item.notification.user_id,
+            "notification_created",
+            item.notification.model_dump(mode="json"),
+        )
 
 
 @router.post(
@@ -94,6 +124,200 @@ async def create_group(
     return ok(request, data=data, status_code=201)
 
 
+@router.post(
+    "/channels",
+    status_code=201,
+    response_model=SuccessResponse[ConversationView],
+    responses=build_error_responses(409),
+    dependencies=[Depends(rate_limit("20/minute", scope="channel_conversation_create"))],
+)
+async def create_channel(
+    request: Request,
+    body: CreateChannelRequest,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    conversation = await service.create_channel_conversation(
+        user_id=user.str_id,
+        title=body.title,
+        participant_ids=body.participant_ids,
+        description=body.description,
+        visibility=body.visibility,
+        posting_policy=body.posting_policy,
+        slug=body.slug,
+    )
+    data = (await service.views_for_user(user_id=user.str_id, conversations=[conversation]))[0]
+    return ok(request, data=data, status_code=201)
+
+
+@router.get(
+    "/public/{slug}",
+    response_model=SuccessResponse[ConversationView],
+    responses=build_error_responses(404),
+    dependencies=[Depends(rate_limit("30/minute", scope="conversation_public_lookup"))],
+)
+async def get_public_conversation(
+    request: Request,
+    slug: str,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    conversation = await service.get_public_conversation_by_slug(slug=slug)
+    data = (await service.views_for_user(user_id=user.str_id, conversations=[conversation]))[0]
+    return ok(request, data=data)
+
+
+@router.post(
+    "/invites/{code}/redeem",
+    response_model=SuccessResponse[RedeemInviteResponse],
+    responses=build_error_responses(404, 410),
+    dependencies=[Depends(rate_limit("20/minute", scope="conversation_invite_redeem"))],
+)
+async def redeem_invite(
+    request: Request,
+    code: str,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    status, conversation, join_request = await service.redeem_invite(
+        user_id=user.str_id, code=code
+    )
+    conversation_view = (
+        (await service.views_for_user(user_id=user.str_id, conversations=[conversation]))[0]
+        if conversation is not None
+        else None
+    )
+    return ok(
+        request,
+        data=RedeemInviteResponse(
+            status=status,
+            conversation=conversation_view,
+            join_request=(
+                to_join_request_view(join_request)
+                if join_request is not None
+                else None
+            ),
+        ),
+    )
+
+
+@router.post(
+    "/{conversation_id}/invites",
+    status_code=201,
+    response_model=SuccessResponse[InviteLinkView],
+    dependencies=[Depends(rate_limit("20/minute", scope="conversation_invite_create"))],
+)
+async def create_invite(
+    request: Request,
+    conversation_id: str,
+    body: CreateInviteRequest,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    invite = await service.create_invite(
+        actor_user_id=user.str_id,
+        conversation_id=conversation_id,
+        expires_at=body.expires_at,
+        max_uses=body.max_uses,
+        requires_approval=body.requires_approval,
+    )
+    return ok(request, data=to_invite_link_view(invite), status_code=201)
+
+
+@router.get(
+    "/{conversation_id}/invites",
+    response_model=SuccessResponse[list[InviteLinkView]],
+    dependencies=[Depends(rate_limit("30/minute", scope="conversation_invite_list"))],
+)
+async def list_invites(
+    request: Request,
+    conversation_id: str,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    invites = await service.list_invites(
+        actor_user_id=user.str_id, conversation_id=conversation_id
+    )
+    return ok(request, data=[to_invite_link_view(item) for item in invites])
+
+
+@router.delete(
+    "/{conversation_id}/invites/{invite_id}",
+    status_code=204,
+    dependencies=[Depends(rate_limit("20/minute", scope="conversation_invite_revoke"))],
+)
+async def revoke_invite(
+    request: Request,
+    conversation_id: str,
+    invite_id: str,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    await service.revoke_invite(
+        actor_user_id=user.str_id,
+        conversation_id=conversation_id,
+        invite_id=invite_id,
+    )
+    return ok(request, data=None, status_code=204)
+
+
+@router.get(
+    "/{conversation_id}/join-requests",
+    response_model=SuccessResponse[list[JoinRequestView]],
+    dependencies=[Depends(rate_limit("30/minute", scope="conversation_join_requests"))],
+)
+async def list_join_requests(
+    request: Request,
+    conversation_id: str,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    requests = await service.list_join_requests(
+        actor_user_id=user.str_id, conversation_id=conversation_id
+    )
+    return ok(request, data=[to_join_request_view(item) for item in requests])
+
+
+@router.post(
+    "/{conversation_id}/join-requests/{request_id}/approve",
+    response_model=SuccessResponse[JoinRequestView],
+    dependencies=[Depends(rate_limit("30/minute", scope="conversation_join_approve"))],
+)
+async def approve_join_request(
+    request: Request,
+    conversation_id: str,
+    request_id: str,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    updated = await service.approve_join_request(
+        actor_user_id=user.str_id,
+        conversation_id=conversation_id,
+        request_id=request_id,
+    )
+    return ok(request, data=to_join_request_view(updated))
+
+
+@router.post(
+    "/{conversation_id}/join-requests/{request_id}/reject",
+    response_model=SuccessResponse[JoinRequestView],
+    dependencies=[Depends(rate_limit("30/minute", scope="conversation_join_reject"))],
+)
+async def reject_join_request(
+    request: Request,
+    conversation_id: str,
+    request_id: str,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    updated = await service.reject_join_request(
+        actor_user_id=user.str_id,
+        conversation_id=conversation_id,
+        request_id=request_id,
+    )
+    return ok(request, data=to_join_request_view(updated))
+
+
 @router.get(
     "",
     response_model=PaginatedResponse[list[ConversationView]],
@@ -103,11 +327,17 @@ async def list_conversations(
     request: Request,
     limit: int = Query(50, ge=1, le=100),
     cursor: Optional[str] = Query(None),
+    archived: bool = Query(False),
+    folder: Optional[str] = Query(None),
     user=Depends(require_verified_user),
     service: ConversationsService = Depends(get_conversations_service),
 ):
     items, next_cursor = await service.list_for_user(
-        user_id=user.str_id, limit=limit, cursor=cursor
+        user_id=user.str_id,
+        limit=limit,
+        cursor=cursor,
+        archived=archived,
+        folder=folder,
     )
     data = await service.views_for_user(user_id=user.str_id, conversations=items)
     return ok_paginated(
@@ -132,6 +362,26 @@ async def mark_read(
         user_id=user.str_id, conversation_id=conversation_id
     )
     return ok(request, data=None, status_code=204)
+
+
+@router.patch(
+    "/{conversation_id}/inbox",
+    response_model=SuccessResponse[ParticipantView],
+    dependencies=[Depends(rate_limit("60/minute", scope="conversation_inbox_state"))],
+)
+async def update_inbox_state(
+    request: Request,
+    conversation_id: str,
+    body: UpdateInboxStateRequest,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    participant = await service.set_inbox_state(
+        user_id=user.str_id,
+        conversation_id=conversation_id,
+        updates=body.model_dump(exclude_unset=True),
+    )
+    return ok(request, data=to_participant_view(participant))
 
 
 @router.get(
@@ -194,6 +444,31 @@ async def update_member_role(
         conversation_id=conversation_id,
         target_user_id=member_user_id,
         role=body.role,
+    )
+    return ok(request, data=to_participant_view(participant))
+
+
+@router.patch(
+    "/{conversation_id}/members/{member_user_id}/permissions",
+    response_model=SuccessResponse[ParticipantView],
+    responses=build_error_responses(403, 404),
+    dependencies=[
+        Depends(rate_limit("20/minute", scope="conversation_members_permissions"))
+    ],
+)
+async def update_member_permissions(
+    request: Request,
+    conversation_id: str,
+    member_user_id: str,
+    body: UpdateParticipantPermissionsRequest,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    participant = await service.set_member_permissions(
+        actor_user_id=user.str_id,
+        conversation_id=conversation_id,
+        target_user_id=member_user_id,
+        permissions=body.permissions,
     )
     return ok(request, data=to_participant_view(participant))
 
@@ -387,8 +662,9 @@ async def send_text(
     user=Depends(require_verified_user),
     service: ConversationsService = Depends(get_conversations_service),
     messages: MessagesService = Depends(get_messages_service),
+    notifications: NotificationsService = Depends(get_notifications_service),
 ):
-    conversation = await service.require_participant(
+    conversation = await service.require_can_post(
         user_id=user.str_id, conversation_id=conversation_id
     )
     result = await messages.send_text_to_conversation(
@@ -405,6 +681,12 @@ async def send_text(
             str(participant_id) for participant_id in conversation.participant_ids
         ],
     )
+    await emit_message_notifications(
+        sio,
+        notifications=notifications,
+        message=result.message,
+    )
+    await service.clear_draft(user_id=user.str_id, conversation_id=conversation_id)
     return ok(request, data=result.message, status_code=201)
 
 
@@ -428,8 +710,9 @@ async def send_media(
     user=Depends(require_verified_user),
     service: ConversationsService = Depends(get_conversations_service),
     messages: MessagesService = Depends(get_messages_service),
+    notifications: NotificationsService = Depends(get_notifications_service),
 ):
-    conversation = await service.require_participant(
+    conversation = await service.require_can_post(
         user_id=user.str_id, conversation_id=conversation_id
     )
     result = await messages.upload_media_to_conversation(
@@ -450,7 +733,35 @@ async def send_media(
             str(participant_id) for participant_id in conversation.participant_ids
         ],
     )
+    await emit_message_notifications(
+        sio,
+        notifications=notifications,
+        message=result.message,
+    )
     return ok(request, data=result.message, status_code=201)
+
+
+@router.post(
+    "/{conversation_id}/messages/{message_id}/thread-conversation",
+    status_code=200,
+    response_model=SuccessResponse[ConversationView],
+    responses=build_error_responses(404),
+    dependencies=[Depends(rate_limit("30/minute", scope="thread_conversation_open"))],
+)
+async def open_thread_conversation(
+    request: Request,
+    conversation_id: str,
+    message_id: str,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    thread = await service.ensure_thread_conversation(
+        user_id=user.str_id,
+        parent_conversation_id=conversation_id,
+        root_message_id=message_id,
+    )
+    data = (await service.views_for_user(user_id=user.str_id, conversations=[thread]))[0]
+    return ok(request, data=data)
 
 
 @router.get(
@@ -667,6 +978,247 @@ async def edit_message(
     for participant_id in conversation.participant_ids:
         await emit_to_user(sio, str(participant_id), "message_edited", payload)
     return ok(request, data=message)
+
+
+@router.post(
+    "/{conversation_id}/messages/{message_id}/pin",
+    response_model=SuccessResponse[ConversationView],
+    responses=build_error_responses(403, 404),
+    dependencies=[Depends(rate_limit("30/minute", scope="message_pin"))],
+)
+async def pin_message(
+    request: Request,
+    conversation_id: str,
+    message_id: str,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    conversation = await service.pin_message(
+        user_id=user.str_id, conversation_id=conversation_id, message_id=message_id
+    )
+    payload = {
+        "conversation_id": conversation.str_id,
+        "pinned_message_ids": conversation.pinned_message_ids,
+    }
+    for participant_id in conversation.participant_ids:
+        await emit_to_user(sio, str(participant_id), "conversation_pins_updated", payload)
+    data = (await service.views_for_user(user_id=user.str_id, conversations=[conversation]))[0]
+    return ok(request, data=data)
+
+
+@router.delete(
+    "/{conversation_id}/messages/{message_id}/pin",
+    response_model=SuccessResponse[ConversationView],
+    responses=build_error_responses(403, 404),
+    dependencies=[Depends(rate_limit("30/minute", scope="message_unpin"))],
+)
+async def unpin_message(
+    request: Request,
+    conversation_id: str,
+    message_id: str,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    conversation = await service.unpin_message(
+        user_id=user.str_id, conversation_id=conversation_id, message_id=message_id
+    )
+    payload = {
+        "conversation_id": conversation.str_id,
+        "pinned_message_ids": conversation.pinned_message_ids,
+    }
+    for participant_id in conversation.participant_ids:
+        await emit_to_user(sio, str(participant_id), "conversation_pins_updated", payload)
+    data = (await service.views_for_user(user_id=user.str_id, conversations=[conversation]))[0]
+    return ok(request, data=data)
+
+
+@router.get(
+    "/{conversation_id}/pinned-messages",
+    response_model=SuccessResponse[list[MessageDoc]],
+    dependencies=[Depends(rate_limit("30/minute", scope="pinned_messages"))],
+)
+async def list_pinned_messages(
+    request: Request,
+    conversation_id: str,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+    messages: MessagesService = Depends(get_messages_service),
+):
+    pinned_ids = await service.list_pinned_message_ids(
+        user_id=user.str_id, conversation_id=conversation_id
+    )
+    items = await messages.get_messages_by_ids_for_conversation(
+        conversation_id=conversation_id,
+        message_ids=pinned_ids,
+        user_id=user.str_id,
+    )
+    return ok(request, data=items)
+
+
+@router.post(
+    "/{conversation_id}/messages/{message_id}/forward",
+    status_code=201,
+    response_model=SuccessResponse[MessageDoc],
+    responses=build_error_responses(403, 404),
+    dependencies=[Depends(rate_limit("30/minute", scope="message_forward"))],
+)
+async def forward_message(
+    request: Request,
+    conversation_id: str,
+    message_id: str,
+    body: ForwardMessageRequest,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+    messages: MessagesService = Depends(get_messages_service),
+    notifications: NotificationsService = Depends(get_notifications_service),
+):
+    await service.require_participant(
+        user_id=user.str_id, conversation_id=conversation_id
+    )
+    target = await service.require_can_post(
+        user_id=user.str_id, conversation_id=body.target_conversation_id
+    )
+    result = await messages.forward_message_to_conversation(
+        source_conversation_id=conversation_id,
+        message_id=message_id,
+        target_conversation_id=body.target_conversation_id,
+        sender_id=user.str_id,
+    )
+    await emit_send_result(
+        sio,
+        result=result,
+        participant_ids=[str(pid) for pid in target.participant_ids],
+    )
+    await emit_message_notifications(
+        sio, notifications=notifications, message=result.message
+    )
+    return ok(request, data=result.message, status_code=201)
+
+
+@router.post(
+    "/{conversation_id}/messages/schedule",
+    status_code=201,
+    response_model=SuccessResponse[MessageDoc],
+    responses=build_error_responses(400, 403, 404),
+    dependencies=[Depends(rate_limit("30/minute", scope="message_schedule"))],
+)
+async def schedule_message(
+    request: Request,
+    conversation_id: str,
+    body: ScheduleMessageRequest,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+    messages: MessagesService = Depends(get_messages_service),
+):
+    await service.require_can_post(
+        user_id=user.str_id, conversation_id=conversation_id
+    )
+    message = await messages.schedule_conversation_message(
+        conversation_id=conversation_id,
+        sender_id=user.str_id,
+        text=body.text,
+        scheduled_for=body.scheduled_for,
+    )
+    return ok(request, data=message, status_code=201)
+
+
+@router.get(
+    "/{conversation_id}/messages/scheduled",
+    response_model=SuccessResponse[list[MessageDoc]],
+    dependencies=[Depends(rate_limit("30/minute", scope="scheduled_messages"))],
+)
+async def list_scheduled_messages(
+    request: Request,
+    conversation_id: str,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+    messages: MessagesService = Depends(get_messages_service),
+):
+    await service.require_participant(
+        user_id=user.str_id, conversation_id=conversation_id
+    )
+    items = await messages.list_scheduled_messages(
+        conversation_id=conversation_id, sender_id=user.str_id
+    )
+    return ok(request, data=items)
+
+
+@router.delete(
+    "/{conversation_id}/messages/scheduled/{message_id}",
+    status_code=204,
+    responses=build_error_responses(404),
+    dependencies=[Depends(rate_limit("30/minute", scope="scheduled_message_cancel"))],
+)
+async def cancel_scheduled_message(
+    request: Request,
+    conversation_id: str,
+    message_id: str,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+    messages: MessagesService = Depends(get_messages_service),
+):
+    await service.require_participant(
+        user_id=user.str_id, conversation_id=conversation_id
+    )
+    await messages.cancel_scheduled_message(
+        conversation_id=conversation_id,
+        message_id=message_id,
+        sender_id=user.str_id,
+    )
+    return ok(request, data=None, status_code=204)
+
+
+@router.put(
+    "/{conversation_id}/draft",
+    response_model=SuccessResponse[ParticipantView],
+    dependencies=[Depends(rate_limit("120/minute", scope="conversation_draft_set"))],
+)
+async def set_draft(
+    request: Request,
+    conversation_id: str,
+    body: SetDraftRequest,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    participant = await service.set_draft(
+        user_id=user.str_id, conversation_id=conversation_id, text=body.text
+    )
+    return ok(request, data=to_participant_view(participant))
+
+
+@router.get(
+    "/{conversation_id}/draft",
+    response_model=SuccessResponse[ParticipantView],
+    dependencies=[Depends(rate_limit("120/minute", scope="conversation_draft_get"))],
+)
+async def get_draft(
+    request: Request,
+    conversation_id: str,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    participant = await service.get_draft(
+        user_id=user.str_id, conversation_id=conversation_id
+    )
+    return ok(request, data=to_participant_view(participant))
+
+
+@router.delete(
+    "/{conversation_id}/draft",
+    status_code=204,
+    dependencies=[Depends(rate_limit("120/minute", scope="conversation_draft_clear"))],
+)
+async def clear_draft(
+    request: Request,
+    conversation_id: str,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    await service.clear_draft(user_id=user.str_id, conversation_id=conversation_id)
+    return ok(request, data=None, status_code=204)
 
 
 @router.delete(

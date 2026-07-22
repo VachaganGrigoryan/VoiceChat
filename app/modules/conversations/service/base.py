@@ -4,6 +4,7 @@ from typing import Any, Protocol
 
 from app.core.errors import AppError
 from app.modules.conversations.repository import ConversationsRepository
+from app.modules.realtime.presence import PresenceState
 
 
 class PingsPermissionProto(Protocol):
@@ -18,6 +19,8 @@ class UsersRepositoryProto(Protocol):
 
 class PresenceServiceProto(Protocol):
     async def is_online(self, user_id: str) -> bool: ...
+
+    async def get_state(self, user_id: str) -> PresenceState: ...
 
 
 class BaseConversationsService:
