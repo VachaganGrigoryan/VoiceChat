@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.errors import AppError
+from app.modules.pings.schemas import ContactState
 from app.modules.users.service import UsersService
 
 
@@ -24,6 +25,11 @@ def user_doc():
         "default_discovery_enabled": True,
         "last_seen_at": None,
         "username_updated_at": None,
+        "status_emoji": None,
+        "status_text": None,
+        "status_expires_at": None,
+        "pronouns": None,
+        "timezone": None,
         "created_at": now,
         "updated_at": now,
     }
@@ -41,7 +47,7 @@ def service():
 async def test_get_user_profile_returns_minimal_payload_for_self(service, user_doc):
     svc, users_repo, pings_repo, presence_service = service
     users_repo.find_by_id.return_value = user_doc
-    presence_service.is_online.return_value = True
+    presence_service.get_state.return_value = "online"
 
     result = await svc.get_user_profile(
         current_user_id=str(user_doc["_id"]),
@@ -60,17 +66,31 @@ async def test_get_user_profile_returns_minimal_payload_for_self(service, user_d
         "pronouns": None,
         "timezone": None,
         "is_online": True,
+        "presence_state": "online",
+        "last_seen_at": None,
+        "profile_visibility": "full",
+        "relationship": {
+            "can_ping": False,
+            "chat_allowed": False,
+            "ping_status": "none",
+            "blocked_by_me": False,
+            "blocks_me": False,
+        },
     }
-    pings_repo.has_accepted_permission.assert_not_awaited()
-    presence_service.is_online.assert_awaited_once_with(str(user_doc["_id"]))
+    pings_repo.get_contact_state.assert_not_awaited()
+    presence_service.get_state.assert_awaited_once_with(str(user_doc["_id"]))
 
 
 @pytest.mark.asyncio
 async def test_get_user_profile_returns_minimal_payload_for_accepted_ping(service, user_doc):
     svc, users_repo, pings_repo, presence_service = service
     users_repo.find_by_id.return_value = user_doc
-    pings_repo.has_accepted_permission.return_value = True
-    presence_service.is_online.return_value = False
+    pings_repo.get_contact_state.return_value = ContactState(
+        can_ping=False,
+        chat_allowed=True,
+        ping_status="accepted",
+    )
+    presence_service.get_state.return_value = "offline"
 
     result = await svc.get_user_profile(
         current_user_id="viewer-id",
@@ -82,28 +102,39 @@ async def test_get_user_profile_returns_minimal_payload_for_accepted_ping(servic
     assert result.display_name == "Target User"
     assert result.bio == "Visible profile"
     assert result.is_online is False
-    pings_repo.has_accepted_permission.assert_awaited_once_with(
-        user_a="viewer-id",
-        user_b=str(user_doc["_id"]),
+    assert result.presence_state == "offline"
+    assert result.profile_visibility == "full"
+    assert result.relationship.chat_allowed is True
+    pings_repo.get_contact_state.assert_awaited_once_with(
+        viewer_user_id="viewer-id",
+        peer_user_id=str(user_doc["_id"]),
     )
-    presence_service.is_online.assert_awaited_once_with(str(user_doc["_id"]))
+    presence_service.get_state.assert_awaited_once_with(str(user_doc["_id"]))
 
 
 @pytest.mark.asyncio
-async def test_get_user_profile_rejects_without_accepted_ping(service, user_doc):
+async def test_get_user_profile_returns_limited_private_payload_without_accepted_ping(service, user_doc):
     svc, users_repo, pings_repo, presence_service = service
+    user_doc["is_private"] = True
     users_repo.find_by_id.return_value = user_doc
-    pings_repo.has_accepted_permission.return_value = False
+    pings_repo.get_contact_state.return_value = ContactState(
+        can_ping=True,
+        chat_allowed=False,
+        ping_status="none",
+    )
+    presence_service.get_state.return_value = "online"
 
-    with pytest.raises(AppError) as exc:
-        await svc.get_user_profile(
-            current_user_id="viewer-id",
-            selected_user_id=str(user_doc["_id"]),
-        )
+    result = await svc.get_user_profile(
+        current_user_id="viewer-id",
+        selected_user_id=str(user_doc["_id"]),
+    )
 
-    assert exc.value.code == "PROFILE_ACCESS_FORBIDDEN"
-    assert exc.value.status_code == 403
-    presence_service.is_online.assert_not_awaited()
+    assert result.profile_visibility == "limited"
+    assert result.bio is None
+    assert result.pronouns is None
+    assert result.presence_state == "offline"
+    assert result.last_seen_at is None
+    assert result.relationship.can_ping is True
 
 
 @pytest.mark.asyncio
@@ -119,5 +150,5 @@ async def test_get_user_profile_rejects_missing_user(service):
 
     assert exc.value.code == "USER_NOT_FOUND"
     assert exc.value.status_code == 404
-    pings_repo.has_accepted_permission.assert_not_awaited()
-    presence_service.is_online.assert_not_awaited()
+    pings_repo.get_contact_state.assert_not_awaited()
+    presence_service.get_state.assert_not_awaited()
