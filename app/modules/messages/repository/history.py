@@ -28,6 +28,8 @@ class HistoryRepositoryMixin:
             "conversation_id": conversation_id,
             "thread_root_id": None,
             "hidden_for_user_ids": {"$ne": user_id},
+            # Scheduled messages are withheld from the timeline until released.
+            "state": {"$ne": "scheduled"},
         }
 
         if cursor:
@@ -60,6 +62,64 @@ class HistoryRepositoryMixin:
             items = items[:limit]
 
         return [MessageDocument.model_validate(item) for item in items], next_cursor
+
+    async def search_messages(
+        self,
+        *,
+        conversation_ids: list[str],
+        user_id: str,
+        query: str,
+        limit: int,
+        skip: int,
+    ) -> tuple[list[MessageDocument], bool]:
+        """Full-text search over message plaintext in accessible conversations.
+
+        Returns the page plus a ``has_more`` flag. Deleted messages are absent
+        (hard-deleted), and messages hidden for the caller or still scheduled are
+        excluded from results.
+        """
+        if not conversation_ids:
+            return [], False
+
+        q: dict[str, Any] = {
+            "$text": {"$search": query},
+            "conversation_id": {"$in": conversation_ids},
+            "hidden_for_user_ids": {"$ne": user_id},
+            "state": {"$ne": "scheduled"},
+        }
+        cur = (
+            self.col.find(q, {"score": {"$meta": "textScore"}})
+            .sort([("score", {"$meta": "textScore"})])
+            .skip(skip)
+            .limit(limit + 1)
+        )
+        items = await cur.to_list(length=limit + 1)
+        has_more = len(items) > limit
+        return (
+            [MessageDocument.model_validate(item) for item in items[:limit]],
+            has_more,
+        )
+
+    async def list_by_ids_for_conversation(
+        self, *, conversation_id: str, message_ids: list[str], user_id: str
+    ) -> list[MessageDocument]:
+        """Fetch a set of messages in a conversation, preserving ``message_ids`` order."""
+        if not message_ids:
+            return []
+        oids = [_oid(mid) for mid in message_ids]
+        raw = await self.col.find(
+            {
+                "_id": {"$in": oids},
+                "conversation_id": conversation_id,
+                "hidden_for_user_ids": {"$ne": user_id},
+            }
+        ).to_list(length=None)
+        by_id = {str(item["_id"]): item for item in raw}
+        return [
+            MessageDocument.model_validate(by_id[mid])
+            for mid in message_ids
+            if mid in by_id
+        ]
 
     async def get_by_id(self, *, message_id: str) -> MessageDocument | None:
         return await MessageDocument.get(_oid(message_id))

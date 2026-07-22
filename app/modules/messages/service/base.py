@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import re
 from typing import Any, Optional, Protocol
 
 from fastapi import UploadFile
@@ -14,6 +15,7 @@ from app.modules.messages.schemas import MessageDoc, ReplyMode, ThreadSummary
 
 EDIT_WINDOW_MINUTES = 15
 MAX_TEXT_LENGTH = 4000
+MENTION_PATTERN = re.compile(r"(?<![\w])@([A-Za-z0-9_][A-Za-z0-9_.-]{1,63}|all|here)\b")
 
 
 def _media_dict(media: Any) -> dict[str, Any] | None:
@@ -30,6 +32,14 @@ def _media_dict(media: Any) -> dict[str, Any] | None:
 class SendMessageResult:
     message: MessageDoc
     thread_summary: ThreadSummary | None = None
+
+
+@dataclass
+class ReleasedScheduledMessage:
+    """A scheduled message that has just been released, with its fan-out targets."""
+
+    result: SendMessageResult
+    participant_ids: list[str]
 
 
 class PingsServiceProto(Protocol):
@@ -49,6 +59,16 @@ class ConversationsServiceProto(Protocol):
         preview_text: str | None,
         created_at: datetime,
     ) -> None: ...
+
+    async def mention_targets_for_conversation(
+        self, *, conversation_id: str
+    ) -> dict[str, str]: ...
+
+    async def accessible_conversation_ids(self, *, user_id: str) -> list[str]: ...
+
+    async def conversation_participant_ids(
+        self, *, conversation_id: str
+    ) -> list[str]: ...
 
 
 class BaseMessagesService:
@@ -151,6 +171,29 @@ class BaseMessagesService:
                 status_code=400,
             )
         return reply_mode, normalized_reply_to_message_id
+
+    async def _resolve_mentions(
+        self, *, conversation_id: str, text: str | None
+    ) -> tuple[list[str], str | None]:
+        if not text or self.conversations_service is None:
+            return [], None
+
+        mention_user_ids: list[str] = []
+        mention_scope: str | None = None
+        targets = await self.conversations_service.mention_targets_for_conversation(
+            conversation_id=conversation_id
+        )
+        for match in MENTION_PATTERN.finditer(text):
+            handle = match.group(1).lower()
+            if handle in {"all", "here"}:
+                mention_scope = handle
+                continue
+
+            user_id = targets.get(handle)
+            if user_id is not None and user_id not in mention_user_ids:
+                mention_user_ids.append(user_id)
+
+        return mention_user_ids, mention_scope
 
     def _normalize_emoji(self, emoji: str) -> str:
         normalized = (emoji or "").strip()

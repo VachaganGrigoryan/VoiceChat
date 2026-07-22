@@ -8,6 +8,7 @@ from pymongo.errors import DuplicateKeyError
 from app.db.models import (
     CallDocument,
     CallMessageDocument,
+    ForwardedFromDocument,
     MediaDocument,
     MessageContentDocument,
     MessageDocument,
@@ -30,6 +31,8 @@ class WriteRepositoryMixin:
         text: str | None = None,
         media: MediaDocument | None = None,
         call: CallMessageDocument | None = None,
+        mention_user_ids: list[str] | None = None,
+        mention_scope: str | None = None,
         created_at: datetime | None = None,
         updated_at: datetime | None = None,
     ) -> MessageDocument:
@@ -45,6 +48,8 @@ class WriteRepositoryMixin:
             sender_id=sender_id,
             type=message_type,
             content=content,
+            mention_user_ids=mention_user_ids or [],
+            mention_scope=mention_scope,
             created_at=created_ts,
             updated_at=updated_ts,
         )
@@ -99,6 +104,119 @@ class WriteRepositoryMixin:
                 return existing
             raise
 
+    async def create_forwarded_message(
+        self,
+        *,
+        source: MessageDocument,
+        target_conversation_id: str,
+        sender_id: str,
+    ) -> MessageDocument:
+        """Copy ``source``'s content into ``target_conversation_id`` preserving a
+        ``forwarded_from`` origin header referencing the original message."""
+        now = datetime.now(UTC)
+        content = (
+            source.content.model_copy(deep=True)
+            if source.content is not None
+            else MessageContentDocument(encryption="none", type=source.type)
+        )
+        message = MessageDocument(
+            conversation_id=target_conversation_id,
+            sender_id=sender_id,
+            type=source.type,
+            content=content,
+            forwarded_from=ForwardedFromDocument(
+                conversation_id=str(source.conversation_id),
+                message_id=source.str_id,
+                sender_id=str(source.sender_id),
+                forwarded_at=now,
+            ),
+            created_at=now,
+            updated_at=now,
+        )
+        await message.insert()
+        return message
+
+    async def create_scheduled_message(
+        self,
+        *,
+        conversation_id: str,
+        sender_id: str,
+        text: str,
+        scheduled_for: datetime,
+    ) -> MessageDocument:
+        now = datetime.now(UTC)
+        message = MessageDocument(
+            conversation_id=conversation_id,
+            sender_id=sender_id,
+            type="text",
+            content=MessageContentDocument(
+                encryption="none",
+                type="text",
+                plaintext=PlaintextContentDocument(text=text),
+            ),
+            scheduled_for=scheduled_for,
+            state="scheduled",
+            created_at=now,
+            updated_at=now,
+        )
+        await message.insert()
+        return message
+
+    async def list_scheduled_for_sender(
+        self, *, conversation_id: str, sender_id: str
+    ) -> list[MessageDocument]:
+        raw = await self.col.find(
+            {
+                "conversation_id": conversation_id,
+                "sender_id": sender_id,
+                "state": "scheduled",
+            }
+        ).sort([("scheduled_for", 1)]).to_list(length=None)
+        return [MessageDocument.model_validate(item) for item in raw]
+
+    async def cancel_scheduled_message(
+        self, *, conversation_id: str, message_id: str, sender_id: str
+    ) -> bool:
+        result = await self.col.delete_one(
+            {
+                "_id": _oid(message_id),
+                "conversation_id": conversation_id,
+                "sender_id": sender_id,
+                "state": "scheduled",
+            }
+        )
+        return result.deleted_count > 0
+
+    async def claim_due_scheduled_messages(
+        self, *, now: datetime, limit: int = 100
+    ) -> list[MessageDocument]:
+        """Flip due scheduled messages to ``sent`` and return the released docs.
+
+        Each message is claimed with an atomic conditional update so concurrent
+        workers never release the same message twice.
+        """
+        due = await self.col.find(
+            {"state": "scheduled", "scheduled_for": {"$lte": now}}
+        ).sort([("scheduled_for", 1)]).limit(limit).to_list(length=limit)
+
+        released: list[MessageDocument] = []
+        for item in due:
+            updated = await self.col.find_one_and_update(
+                {"_id": item["_id"], "state": "scheduled"},
+                {
+                    "$set": {
+                        "state": "sent",
+                        "created_at": now,
+                        "updated_at": now,
+                        "scheduled_for": None,
+                    }
+                },
+                return_document=ReturnDocument.AFTER,
+            )
+            if updated is not None:
+                released.append(MessageDocument.model_validate(updated))
+        return released
+
     async def create_conversation_quote_reply(
         self,
         *,
@@ -108,6 +226,8 @@ class WriteRepositoryMixin:
         reply_to_message_id: str,
         text: str | None = None,
         media: MediaDocument | None = None,
+        mention_user_ids: list[str] | None = None,
+        mention_scope: str | None = None,
     ) -> MessageDocument:
         target = await self._load_reply_target_by_conversation(
             conversation_id=conversation_id,
@@ -119,6 +239,8 @@ class WriteRepositoryMixin:
             message_type=message_type,
             text=text,
             media=media,
+            mention_user_ids=mention_user_ids,
+            mention_scope=mention_scope,
         )
         return await doc.set(
             {
@@ -138,6 +260,8 @@ class WriteRepositoryMixin:
         reply_to_message_id: str,
         text: str | None = None,
         media: MediaDocument | None = None,
+        mention_user_ids: list[str] | None = None,
+        mention_scope: str | None = None,
     ) -> MessageDocument:
         target = await self._load_reply_target_by_conversation(
             conversation_id=conversation_id,
@@ -158,6 +282,8 @@ class WriteRepositoryMixin:
             reply_to_message_id=target.str_id,
             thread_root_id=thread_root_id,
             reply_preview=build_reply_preview(target),
+            mention_user_ids=mention_user_ids or [],
+            mention_scope=mention_scope,
             created_at=now,
             updated_at=now,
         )

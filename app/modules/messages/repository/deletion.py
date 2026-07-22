@@ -34,6 +34,20 @@ class DeletionRepositoryMixin:
         update: dict = {"edited_at": now, "updated_at": now}
         if existing.content is not None and existing.content.plaintext is not None:
             update["content.plaintext.text"] = text
+        # Append the pre-edit content to the append-only edit history so prior
+        # versions are retained with the timestamp at which they were replaced.
+        if existing.content is not None:
+            await self.col.update_one(
+                {"_id": _oid(message_id)},
+                {
+                    "$push": {
+                        "edit_history": {
+                            "content": existing.content.model_dump(mode="python"),
+                            "edited_at": now,
+                        }
+                    }
+                },
+            )
         return await existing.set(update)
 
     async def hard_delete_owned_message(
