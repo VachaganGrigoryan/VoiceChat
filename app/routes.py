@@ -13,6 +13,9 @@ from app.modules.pings.router import router as pings_router
 from app.modules.discovery.router import router as discovery_router
 from app.modules.calls.router import router as calls_router
 from app.modules.webrtc.router import router as webrtc_router
+from app.modules.notifications.router import router as notifications_router
+from app.modules.saved.router import router as saved_router
+from app.modules.search.router import router as search_router
 
 
 def register_routers(app: FastAPI) -> None:
@@ -28,4 +31,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(devices_router)
     app.include_router(calls_router)
     app.include_router(webrtc_router)
+    app.include_router(notifications_router)
+    app.include_router(saved_router)
+    app.include_router(search_router)
     app.include_router(realtime_router)
