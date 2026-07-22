@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import socketio
 from fastapi.encoders import jsonable_encoder
+
+from app.modules.realtime.presence.base import PresenceState
 
 
 def user_room(user_id: str) -> str:
@@ -88,10 +91,25 @@ async def emit_thread_summary_updated(
     await emit_to_user(sio, receiver_id, "thread_summary_updated", payload)
 
 
-async def emit_presence_update(sio: socketio.AsyncServer, user_id: str, online: bool, skip_sid: str | None = None) -> None:
+async def emit_presence_update(
+    sio: socketio.AsyncServer,
+    user_id: str,
+    state: PresenceState,
+    *,
+    last_seen_at: datetime | None = None,
+    skip_sid: str | None = None,
+) -> None:
     await sio.emit(
         "presence_update",
-        jsonable_encoder({"user_id": user_id, "online": online}),
+        jsonable_encoder(
+            {
+                "user_id": user_id,
+                "state": state,
+                "status": state,
+                "online": state != "offline",
+                "last_seen_at": last_seen_at,
+            }
+        ),
         skip_sid=skip_sid,
     )
 

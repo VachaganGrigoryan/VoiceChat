@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from app.core.errors import AppError
+from app.modules.auth.repository import UsersRepository
 from app.modules.calls.ws import (
     handle_call_socket_connect,
     handle_call_socket_disconnect,
@@ -14,6 +17,9 @@ from app.modules.realtime.emits import (
     emit_presence_update,
 )
 from app.modules.realtime.presence import get_presence_backend
+from app.modules.realtime.presence.base import PresenceState
+
+PRESENCE_STATES: set[PresenceState] = {"online", "away", "dnd", "offline"}
 
 
 def register_events(sio) -> None:
@@ -42,7 +48,7 @@ def register_events(sio) -> None:
         presence = get_presence_backend()
         became_online = await presence.add_connection(user_id, sid)
         if became_online:
-            await emit_presence_update(sio, user_id, True, skip_sid=sid)
+            await emit_presence_update(sio, user_id, "online", skip_sid=sid)
 
         await handle_call_socket_connect(sio, sid=sid, user_id=user_id)
         return True
@@ -58,7 +64,44 @@ def register_events(sio) -> None:
         presence = get_presence_backend()
         became_offline = await presence.remove_connection(user_id, sid)
         if became_offline:
-            await emit_presence_update(sio, user_id, False)
+            last_seen_at = datetime.now(UTC)
+            await UsersRepository().record_last_seen(
+                user_id=user_id,
+                last_seen_at=last_seen_at,
+            )
+            await emit_presence_update(sio, user_id, "offline", last_seen_at=last_seen_at)
+
+    @sio.event
+    async def presence_state(sid, data):
+        user_id = await get_socket_user_id(sio, sid)
+        if not user_id:
+            return
+
+        requested_state = (data or {}).get("state") or (data or {}).get("status")
+        if requested_state not in PRESENCE_STATES or requested_state == "offline":
+            await sio.emit(
+                "error",
+                {"code": "INVALID_PAYLOAD", "message": "state is invalid"},
+                to=sid,
+            )
+            return
+
+        presence = get_presence_backend()
+        state = await presence.set_state(user_id, requested_state)
+        last_seen_at = None
+        if state == "away":
+            last_seen_at = datetime.now(UTC)
+            await UsersRepository().record_last_seen(
+                user_id=user_id,
+                last_seen_at=last_seen_at,
+            )
+        await emit_presence_update(
+            sio,
+            user_id,
+            state,
+            last_seen_at=last_seen_at,
+            skip_sid=sid,
+        )
 
     @sio.event
     async def ping(sid, data):
