@@ -97,6 +97,37 @@ async def test_pin_authorization_and_listing(inprocess_client):
 
 
 @pytest.mark.asyncio
+async def test_dm_participants_can_pin_and_unpin_messages(inprocess_client):
+    _sender, sender_tokens, _receiver, receiver_tokens, conversation_id = await _dm(
+        "pin-dm-a@test.com", "pin-dm-b@test.com", inprocess_client
+    )
+    message = await _send_text(
+        inprocess_client, conversation_id, sender_tokens, "pin in dm"
+    )
+
+    pinned = await inprocess_client.post(
+        f"/conversations/{conversation_id}/messages/{message['id']}/pin",
+        headers=_auth(receiver_tokens["access_token"]),
+    )
+    assert pinned.status_code == 200, pinned.text
+    assert message["id"] in pinned.json()["data"]["pinned_message_ids"]
+
+    listing = await inprocess_client.get(
+        f"/conversations/{conversation_id}/pinned-messages",
+        headers=_auth(sender_tokens["access_token"]),
+    )
+    assert listing.status_code == 200, listing.text
+    assert [item["id"] for item in listing.json()["data"]] == [message["id"]]
+
+    unpinned = await inprocess_client.delete(
+        f"/conversations/{conversation_id}/messages/{message['id']}/pin",
+        headers=_auth(receiver_tokens["access_token"]),
+    )
+    assert unpinned.status_code == 200, unpinned.text
+    assert unpinned.json()["data"]["pinned_message_ids"] == []
+
+
+@pytest.mark.asyncio
 async def test_forward_message_carries_origin_header(inprocess_client):
     sender, sender_tokens, receiver, receiver_tokens, source_id = await _dm(
         "fwd-a@test.com", "fwd-b@test.com", inprocess_client

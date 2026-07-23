@@ -24,12 +24,25 @@ class PowerFeaturesServiceMixin(BaseConversationsService):
             )
         return message
 
+    async def _require_pin_permission(
+        self, *, user_id: str, conversation_id: str
+    ) -> ConversationDocument:
+        conversation = await self.require_participant(
+            user_id=user_id, conversation_id=conversation_id
+        )
+        if conversation.type == "dm":
+            return conversation
+
+        await self.require_permission(
+            user_id=user_id, conversation_id=conversation_id, right="can_pin"
+        )
+        return conversation
+
     async def pin_message(
         self, *, user_id: str, conversation_id: str, message_id: str
     ) -> ConversationDocument:
-        # `require_permission` (owner/admin unless narrowed) is the shared pin gate.
-        await self.require_permission(
-            user_id=user_id, conversation_id=conversation_id, right="can_pin"
+        await self._require_pin_permission(
+            user_id=user_id, conversation_id=conversation_id
         )
         await self._require_conversation_message(
             conversation_id=conversation_id, message_id=message_id
@@ -48,8 +61,8 @@ class PowerFeaturesServiceMixin(BaseConversationsService):
     async def unpin_message(
         self, *, user_id: str, conversation_id: str, message_id: str
     ) -> ConversationDocument:
-        await self.require_permission(
-            user_id=user_id, conversation_id=conversation_id, right="can_pin"
+        await self._require_pin_permission(
+            user_id=user_id, conversation_id=conversation_id
         )
         updated = await self.repo.remove_pinned_message(
             conversation_id=conversation_id, message_id=message_id
