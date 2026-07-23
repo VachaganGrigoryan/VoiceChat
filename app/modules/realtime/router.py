@@ -57,16 +57,17 @@ async def online_users(
 @router.get("/presence", response_model=SuccessResponse[dict[str, PresenceStatusResponse]])
 async def presence_status(
     request: Request,
-    user_ids: list[str] = Query(...),
+    user_ids: list[str] | None = Query(default=None),
     current_user_id: str = Depends(get_current_user_id),
 ):
+    requested = user_ids or []
     presence = get_presence_backend()
     users_repo = UsersRepository()
     pings = get_pings_service()
-    users_by_id = await users_repo.find_by_ids(list(dict.fromkeys(user_ids)))
+    users_by_id = await users_repo.find_by_ids(list(dict.fromkeys(requested)))
 
     data: dict[str, PresenceStatusResponse] = {}
-    for user_id in user_ids:
+    for user_id in requested:
         target = users_by_id.get(user_id)
         state = await presence.get_state(user_id)
         can_view_presence = current_user_id == user_id

@@ -32,6 +32,8 @@ class WriteRepositoryMixin:
         text: str | None = None,
         media: MediaDocument | None = None,
         call: CallMessageDocument | None = None,
+        plaintext: PlaintextContentDocument | None = None,
+        attachments: list[MediaDocument] | None = None,
         mention_user_ids: list[str] | None = None,
         mention_scope: str | None = None,
         created_at: datetime | None = None,
@@ -42,7 +44,9 @@ class WriteRepositoryMixin:
         content = MessageContentDocument(
             encryption="none",
             type=message_type,
-            plaintext=PlaintextContentDocument(text=text, media=media, call=call),
+            plaintext=plaintext
+            or PlaintextContentDocument(text=text, media=media, call=call),
+            attachments=attachments or [],
         )
         message = MessageDocument(
             conversation_id=conversation_id,
@@ -197,13 +201,17 @@ class WriteRepositoryMixin:
     async def list_scheduled_for_sender(
         self, *, conversation_id: str, sender_id: str
     ) -> list[MessageDocument]:
-        raw = await self.col.find(
-            {
-                "conversation_id": conversation_id,
-                "sender_id": sender_id,
-                "state": "scheduled",
-            }
-        ).sort([("scheduled_for", 1)]).to_list(length=None)
+        raw = (
+            await self.col.find(
+                {
+                    "conversation_id": conversation_id,
+                    "sender_id": sender_id,
+                    "state": "scheduled",
+                }
+            )
+            .sort([("scheduled_for", 1)])
+            .to_list(length=None)
+        )
         return [MessageDocument.model_validate(item) for item in raw]
 
     async def cancel_scheduled_message(
@@ -227,9 +235,12 @@ class WriteRepositoryMixin:
         Each message is claimed with an atomic conditional update so concurrent
         workers never release the same message twice.
         """
-        due = await self.col.find(
-            {"state": "scheduled", "scheduled_for": {"$lte": now}}
-        ).sort([("scheduled_for", 1)]).limit(limit).to_list(length=limit)
+        due = (
+            await self.col.find({"state": "scheduled", "scheduled_for": {"$lte": now}})
+            .sort([("scheduled_for", 1)])
+            .limit(limit)
+            .to_list(length=limit)
+        )
 
         released: list[MessageDocument] = []
         for item in due:
@@ -258,6 +269,8 @@ class WriteRepositoryMixin:
         reply_to_message_id: str,
         text: str | None = None,
         media: MediaDocument | None = None,
+        plaintext: PlaintextContentDocument | None = None,
+        attachments: list[MediaDocument] | None = None,
         mention_user_ids: list[str] | None = None,
         mention_scope: str | None = None,
     ) -> MessageDocument:
@@ -271,6 +284,8 @@ class WriteRepositoryMixin:
             message_type=message_type,
             text=text,
             media=media,
+            plaintext=plaintext,
+            attachments=attachments,
             mention_user_ids=mention_user_ids,
             mention_scope=mention_scope,
         )
@@ -292,6 +307,8 @@ class WriteRepositoryMixin:
         reply_to_message_id: str,
         text: str | None = None,
         media: MediaDocument | None = None,
+        plaintext: PlaintextContentDocument | None = None,
+        attachments: list[MediaDocument] | None = None,
         mention_user_ids: list[str] | None = None,
         mention_scope: str | None = None,
     ) -> MessageDocument:
@@ -324,7 +341,8 @@ class WriteRepositoryMixin:
             content=MessageContentDocument(
                 encryption="none",
                 type=message_type,
-                plaintext=PlaintextContentDocument(text=text, media=media),
+                plaintext=plaintext or PlaintextContentDocument(text=text, media=media),
+                attachments=attachments or [],
             ),
             reply_mode="thread",
             reply_to_message_id=target.str_id,

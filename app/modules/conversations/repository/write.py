@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
@@ -166,6 +167,18 @@ class ConversationsWriteMixin:
         await self.raw.update_one(
             {"_id": parse_object_id(conversation_id)},
             {"$set": {"title": title, "updated_at": now}},
+        )
+        updated = await self.get_by_id(conversation_id)
+        assert updated is not None
+        return updated
+
+    async def set_conversation_setting(
+        self, *, conversation_id: str, key: str, value: Any
+    ) -> ConversationDocument:
+        now = datetime.now(UTC)
+        await self.raw.update_one(
+            {"_id": parse_object_id(conversation_id)},
+            {"$set": {f"settings.{key}": value, "updated_at": now}},
         )
         updated = await self.get_by_id(conversation_id)
         assert updated is not None

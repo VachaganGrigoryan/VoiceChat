@@ -16,7 +16,7 @@ from app.db.mongo import connect_mongo
 from app.modules.messages.dependencies import get_messages_service
 from app.modules.notifications.dependencies import get_notifications_service
 from app.workers.email_worker import consume_forever
-from app.workers.scheduled_worker import poll_forever
+from app.workers.scheduled_worker import poll_close_forever, poll_forever
 from app.workers.socket_emitter import create_worker_emitter
 
 log = logging.getLogger("app.worker")
@@ -27,14 +27,16 @@ async def main() -> None:
     await connect_mongo()
     await init_database()
 
-    log.info("worker starting: email consumer + scheduled poller")
+    log.info("worker starting: email consumer + scheduled poller + poll auto-close")
+    emitter = create_worker_emitter()
     await asyncio.gather(
         consume_forever(),
         poll_forever(
-            sio=create_worker_emitter(),
+            sio=emitter,
             messages=get_messages_service(),
             notifications=get_notifications_service(),
         ),
+        poll_close_forever(sio=emitter),
     )
 
 

@@ -39,6 +39,18 @@ class ReplyPreviewDocument(EmbeddedBase):
     is_deleted: bool = False
 
 
+class PollRefDocument(EmbeddedBase):
+    """Link from a message to a first-class poll entity.
+
+    Carries only the poll id plus a denormalized ``question`` for inbox preview and
+    opaque fallback; the poll's mutable state (options, votes, tallies) lives in the
+    linked ``PollDocument``.
+    """
+
+    poll_id: StrId
+    question: str
+
+
 class PlaintextContentDocument(EmbeddedBase):
     """Cleartext message body, present when the envelope encryption mode is "none".
 
@@ -48,6 +60,14 @@ class PlaintextContentDocument(EmbeddedBase):
     text: str | None = None
     media: MediaDocument | None = None
     call: CallMessageDocument | None = None
+    # `poll` (embedded payload) is retained for opaque tolerance of legacy records;
+    # new poll messages link via `poll_ref` instead of embedding poll data.
+    poll: dict[str, object] | None = None
+    poll_ref: PollRefDocument | None = None
+    sticker: dict[str, object] | None = None
+    location: dict[str, object] | None = None
+    contact: dict[str, object] | None = None
+    link_preview: dict[str, object] | None = None
 
 
 class EncryptionEnvelopeDocument(EmbeddedBase):
@@ -121,7 +141,7 @@ class ConversationPreviewDocument(EmbeddedBase):
 
     message_id: str
     sender_id: StrId
-    type: Literal["text", "media", "file", "call", "system"]
+    type: ContentType
     text: str | None = None
     created_at: datetime
 

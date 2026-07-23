@@ -15,7 +15,19 @@ ReplyMode = Literal["quote", "thread"]
 ConversationType = Literal["dm", "group", "channel", "thread"]
 EncryptionMode = Literal["none", "e2ee"]
 ParticipantRole = Literal["owner", "admin", "member", "subscriber"]
-PreviewType = Literal["text", "media", "file", "call", "system"]
+PreviewType = Literal[
+    "text",
+    "media",
+    "file",
+    "call",
+    "system",
+    "poll",
+    "sticker",
+    "voice",
+    "location",
+    "contact",
+    "link_preview",
+]
 ConversationVisibility = Literal["private", "public"]
 PostingPolicy = Literal["everyone", "admins"]
 NotificationLevel = Literal["all", "mentions", "none"]
@@ -148,6 +160,12 @@ class CreateChannelRequest(BaseModel):
 
 class UpdateGroupRequest(BaseModel):
     title: str = Field(min_length=1, max_length=80)
+
+
+class UpdateConversationSettingsRequest(BaseModel):
+    """Whitelisted conversation settings mutations (group/channel, owner/admin)."""
+
+    allow_member_polls: bool
 
 
 class AddGroupMembersRequest(BaseModel):

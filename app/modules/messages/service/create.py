@@ -4,7 +4,12 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from app.core.errors import AppError
-from app.db.models import MediaDocument, MessageDocument
+from app.db.models import (
+    MediaDocument,
+    MessageDocument,
+    PlaintextContentDocument,
+    PollRefDocument,
+)
 from app.infra.storage import get_storage
 from app.modules.messages.media_policy import resolve_media_policy
 from app.modules.messages.repository.mappers import (
@@ -12,7 +17,13 @@ from app.modules.messages.repository.mappers import (
     to_message_doc,
     to_thread_summary,
 )
-from app.modules.messages.schemas import MessageDoc, ReplyMode, ThreadSummary
+from app.modules.messages.schemas import (
+    MediaAttachmentInput,
+    MessageDoc,
+    ReplyMode,
+    SendRichContentRequest,
+    ThreadSummary,
+)
 from app.modules.messages.service.base import (
     ReleasedScheduledMessage,
     SendMessageResult,
@@ -91,6 +102,82 @@ class CreateMessagesMixin:
             text=self._normalize_text(text),
             reply_mode=normalized_reply_mode,
             reply_to_message_id=normalized_reply_to_message_id,
+        )
+
+    async def send_rich_content_to_conversation(
+        self,
+        *,
+        conversation_id: str,
+        sender_id: str,
+        body: SendRichContentRequest,
+    ) -> SendMessageResult:
+        text = self._normalize_optional_text(body.text)
+        attachments = [
+            self._attachment_input_to_document(attachment)
+            for attachment in body.attachments
+        ]
+        plaintext = PlaintextContentDocument(
+            text=text,
+            media=attachments[0] if body.type == "voice" and attachments else None,
+            sticker=(
+                body.sticker.model_dump(mode="json")
+                if body.sticker is not None
+                else None
+            ),
+            location=(
+                body.location.model_dump(mode="json")
+                if body.location is not None
+                else None
+            ),
+            contact=(
+                body.contact.model_dump(mode="json")
+                if body.contact is not None
+                else None
+            ),
+            link_preview=(
+                body.link_preview.model_dump(mode="json")
+                if body.link_preview is not None
+                else None
+            ),
+        )
+        normalized_reply_mode, normalized_reply_to_message_id = (
+            self._normalize_reply_fields(
+                reply_mode=body.reply_mode,
+                reply_to_message_id=body.reply_to_message_id,
+            )
+        )
+        return await self._create_conversation_message(
+            conversation_id=conversation_id,
+            sender_id=sender_id,
+            message_type=body.type,
+            text=text,
+            plaintext=plaintext,
+            attachments=attachments,
+            reply_mode=normalized_reply_mode,
+            reply_to_message_id=normalized_reply_to_message_id,
+        )
+
+    async def send_poll_ref_message_to_conversation(
+        self,
+        *,
+        conversation_id: str,
+        sender_id: str,
+        poll_id: str,
+        question: str,
+    ) -> SendMessageResult:
+        """Post a ``poll``-type message that links to a first-class poll entity.
+
+        The message embeds only a ``poll_ref`` (poll id + denormalized question);
+        the poll's options/votes/tallies live in the linked ``PollDocument``.
+        """
+        plaintext = PlaintextContentDocument(
+            poll_ref=PollRefDocument(poll_id=poll_id, question=question)
+        )
+        return await self._create_conversation_message(
+            conversation_id=conversation_id,
+            sender_id=sender_id,
+            message_type="poll",
+            plaintext=plaintext,
         )
 
     async def forward_message_to_conversation(
@@ -263,6 +350,8 @@ class CreateMessagesMixin:
         message_type: str,
         text: str | None = None,
         media: MediaDocument | None = None,
+        plaintext: PlaintextContentDocument | None = None,
+        attachments: list[MediaDocument] | None = None,
         reply_mode: ReplyMode | None = None,
         reply_to_message_id: str | None = None,
     ) -> SendMessageResult:
@@ -279,6 +368,8 @@ class CreateMessagesMixin:
                 message_type=message_type,
                 text=text,
                 media=media,
+                plaintext=plaintext,
+                attachments=attachments,
                 reply_to_message_id=reply_to_message_id,
                 mention_user_ids=mention_user_ids,
                 mention_scope=mention_scope,
@@ -290,6 +381,8 @@ class CreateMessagesMixin:
                 message_type=message_type,
                 text=text,
                 media=media,
+                plaintext=plaintext,
+                attachments=attachments,
                 reply_to_message_id=reply_to_message_id,
                 mention_user_ids=mention_user_ids,
                 mention_scope=mention_scope,
@@ -307,6 +400,8 @@ class CreateMessagesMixin:
                 message_type=message_type,
                 text=text,
                 media=media,
+                plaintext=plaintext,
+                attachments=attachments,
                 mention_user_ids=mention_user_ids,
                 mention_scope=mention_scope,
             )
@@ -332,4 +427,16 @@ class CreateMessagesMixin:
             message_type=doc.type,
             preview_text=message_text(doc),
             created_at=doc.created_at,
+        )
+
+    def _attachment_input_to_document(
+        self, attachment: MediaAttachmentInput
+    ) -> MediaDocument:
+        return MediaDocument(
+            kind=attachment.kind,
+            storage=attachment.storage,
+            key=attachment.key,
+            mime=attachment.mime,
+            size_bytes=attachment.size_bytes,
+            duration_ms=attachment.duration_ms,
         )

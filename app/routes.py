@@ -16,6 +16,7 @@ from app.modules.webrtc.router import router as webrtc_router
 from app.modules.notifications.router import router as notifications_router
 from app.modules.saved.router import router as saved_router
 from app.modules.search.router import router as search_router
+from app.bots.poll.router import router as polls_router
 
 
 def register_routers(app: FastAPI) -> None:
@@ -34,4 +35,5 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(notifications_router)
     app.include_router(saved_router)
     app.include_router(search_router)
+    app.include_router(polls_router)
     app.include_router(realtime_router)

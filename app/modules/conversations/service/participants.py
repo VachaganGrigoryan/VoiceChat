@@ -150,6 +150,40 @@ class ParticipantsServiceMixin(BaseConversationsService):
         )
         return conversation
 
+    async def set_allow_member_polls(
+        self, *, actor_user_id: str, conversation_id: str, allow: bool
+    ) -> ConversationDocument:
+        """Toggle whether non-admin members may create polls in a group/channel.
+
+        Owner/admin only. Unlike ``require_group_manager`` (group-only) this also
+        covers channels, since both restrict poll creation to admins by default.
+        """
+        conversation = await self.repo.get_for_participant(
+            conversation_id=conversation_id, user_id=actor_user_id
+        )
+        if conversation is None:
+            raise AppError(
+                code="CONVERSATION_NOT_FOUND",
+                message="Conversation not found",
+                status_code=404,
+            )
+        if conversation.type not in {"group", "channel"}:
+            raise AppError(
+                code="CONVERSATION_SETTINGS_UNSUPPORTED",
+                message="This setting only applies to groups and channels",
+                status_code=400,
+            )
+        await self._require_actor_role(
+            conversation_id=conversation.str_id,
+            user_id=actor_user_id,
+            allowed_roles={"owner", "admin"},
+        )
+        return await self.repo.set_conversation_setting(
+            conversation_id=conversation.str_id,
+            key="allow_member_polls",
+            value=allow,
+        )
+
     async def rename_group(
         self, *, actor_user_id: str, conversation_id: str, title: str
     ) -> ConversationDocument:

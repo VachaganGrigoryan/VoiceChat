@@ -116,6 +116,43 @@ class ReadConversationsMixin(BaseConversationsService):
             )
         return conversation
 
+    async def require_can_create_poll(
+        self, *, user_id: str, conversation_id: str
+    ) -> ConversationDocument:
+        """Assert the caller may create a poll in the conversation.
+
+        Builds on ``require_can_post`` (membership + posting policy), then adds the
+        poll-specific rule: in ``group``/``channel`` conversations only ``owner``/
+        ``admin`` may create a poll, unless ``settings.allow_member_polls`` is set.
+        ``dm``/``thread`` conversations allow any participant.
+        """
+        conversation = await self.require_can_post(
+            user_id=user_id, conversation_id=conversation_id
+        )
+        if conversation.type not in {"group", "channel"}:
+            return conversation
+        if conversation.settings.get("allow_member_polls"):
+            return conversation
+
+        participant = await self.repo.get_participant(
+            conversation_id=conversation.str_id, user_id=user_id
+        )
+        if participant is None or participant.role not in {"owner", "admin"}:
+            raise AppError(
+                code="POLL_CREATE_FORBIDDEN",
+                message="Only admins can create polls in this conversation",
+                status_code=403,
+            )
+        return conversation
+
+    async def get_participant_role(
+        self, *, user_id: str, conversation_id: str
+    ) -> str | None:
+        participant = await self.repo.get_participant(
+            conversation_id=conversation_id, user_id=user_id
+        )
+        return participant.role if participant is not None else None
+
     async def accessible_conversation_ids(self, *, user_id: str) -> list[str]:
         return await self.repo.accessible_conversation_ids(user_id=user_id)
 

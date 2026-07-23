@@ -69,6 +69,17 @@ async def emit_message_reacted(
     await emit_to_user(sio, receiver_id, "message_reacted", payload)
 
 
+async def emit_poll_updated(
+    sio: socketio.AsyncServer,
+    *,
+    participant_ids: list[str],
+    payload: dict[str, Any],
+) -> None:
+    """Fan out a poll tally/close change to every conversation participant."""
+    for participant_id in participant_ids:
+        await emit_to_user(sio, participant_id, "poll_updated", payload)
+
+
 async def emit_thread_reply_created(
         sio: socketio.AsyncServer,
         *,

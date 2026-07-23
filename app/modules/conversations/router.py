@@ -46,6 +46,7 @@ from app.modules.conversations.schemas import (
     RenameFolderResult,
     ThreadConversationView,
     TransferOwnershipRequest,
+    UpdateConversationSettingsRequest,
     UpdateGroupRequest,
     UpdateInboxStateRequest,
     UpdateParticipantPermissionsRequest,
@@ -63,6 +64,7 @@ from app.modules.messages.schemas import (
     ForwardMessageRequest,
     MessageDoc,
     ScheduleMessageRequest,
+    SendRichContentRequest,
     SetDraftRequest,
     ThreadSummary,
 )
@@ -101,7 +103,9 @@ async def build_thread_conversation_view(
     service: ConversationsService,
     messages: MessagesService,
 ) -> ThreadConversationView:
-    thread_view = (await service.views_for_user(user_id=user_id, conversations=[thread]))[0]
+    thread_view = (
+        await service.views_for_user(user_id=user_id, conversations=[thread])
+    )[0]
     parent_view: ConversationView | None = None
     root_message: MessageDoc | None = None
 
@@ -177,7 +181,9 @@ async def create_or_get_dm(
     conversation = await service.ensure_dm_conversation(
         user_id=user.str_id, peer_user_id=body.peer_user_id
     )
-    data = (await service.views_for_user(user_id=user.str_id, conversations=[conversation]))[0]
+    data = (
+        await service.views_for_user(user_id=user.str_id, conversations=[conversation])
+    )[0]
     return ok(request, data=data)
 
 
@@ -198,7 +204,9 @@ async def create_group(
         title=body.title,
         participant_ids=body.participant_ids,
     )
-    data = (await service.views_for_user(user_id=user.str_id, conversations=[conversation]))[0]
+    data = (
+        await service.views_for_user(user_id=user.str_id, conversations=[conversation])
+    )[0]
     return ok(request, data=data, status_code=201)
 
 
@@ -207,7 +215,9 @@ async def create_group(
     status_code=201,
     response_model=SuccessResponse[ConversationView],
     responses=build_error_responses(409),
-    dependencies=[Depends(rate_limit("20/minute", scope="channel_conversation_create"))],
+    dependencies=[
+        Depends(rate_limit("20/minute", scope="channel_conversation_create"))
+    ],
 )
 async def create_channel(
     request: Request,
@@ -224,7 +234,9 @@ async def create_channel(
         posting_policy=body.posting_policy,
         slug=body.slug,
     )
-    data = (await service.views_for_user(user_id=user.str_id, conversations=[conversation]))[0]
+    data = (
+        await service.views_for_user(user_id=user.str_id, conversations=[conversation])
+    )[0]
     return ok(request, data=data, status_code=201)
 
 
@@ -241,7 +253,9 @@ async def get_public_conversation(
     service: ConversationsService = Depends(get_conversations_service),
 ):
     conversation = await service.get_public_conversation_by_slug(slug=slug)
-    data = (await service.views_for_user(user_id=user.str_id, conversations=[conversation]))[0]
+    data = (
+        await service.views_for_user(user_id=user.str_id, conversations=[conversation])
+    )[0]
     return ok(request, data=data)
 
 
@@ -261,7 +275,11 @@ async def redeem_invite(
         user_id=user.str_id, code=code
     )
     conversation_view = (
-        (await service.views_for_user(user_id=user.str_id, conversations=[conversation]))[0]
+        (
+            await service.views_for_user(
+                user_id=user.str_id, conversations=[conversation]
+            )
+        )[0]
         if conversation is not None
         else None
     )
@@ -271,9 +289,7 @@ async def redeem_invite(
             status=status,
             conversation=conversation_view,
             join_request=(
-                to_join_request_view(join_request)
-                if join_request is not None
-                else None
+                to_join_request_view(join_request) if join_request is not None else None
             ),
         ),
     )
@@ -496,7 +512,9 @@ async def get_thread_conversation(
     "/threads/{thread_id}/messages",
     response_model=SuccessResponse[list[MessageDoc]],
     responses=build_error_responses(404),
-    dependencies=[Depends(rate_limit("60/minute", scope="conversation_thread_messages"))],
+    dependencies=[
+        Depends(rate_limit("60/minute", scope="conversation_thread_messages"))
+    ],
 )
 async def get_thread_conversation_messages(
     request: Request,
@@ -542,7 +560,9 @@ async def convert_thread_to_group(
     service: ConversationsService = Depends(get_conversations_service),
     messages: MessagesService = Depends(get_messages_service),
 ):
-    thread = await service.require_thread_owner(user_id=user.str_id, thread_id=thread_id)
+    thread = await service.require_thread_owner(
+        user_id=user.str_id, thread_id=thread_id
+    )
     if thread.parent_conversation_id is None or not thread.root_message_id:
         raise AppError(
             code="INVALID_CONVERSATION",
@@ -550,7 +570,10 @@ async def convert_thread_to_group(
             status_code=400,
         )
 
-    transcript, truncated = await messages.get_thread_transcript_documents_for_conversion(
+    (
+        transcript,
+        truncated,
+    ) = await messages.get_thread_transcript_documents_for_conversion(
         parent_conversation_id=str(thread.parent_conversation_id),
         thread_conversation_id=thread.str_id,
         root_message_id=str(thread.root_message_id),
@@ -667,9 +690,7 @@ async def update_inbox_state_bulk(
     updated = await service.set_inbox_state_bulk(
         user_id=user.str_id,
         conversation_ids=body.conversation_ids,
-        updates=body.model_dump(
-            exclude_unset=True, exclude={"conversation_ids"}
-        ),
+        updates=body.model_dump(exclude_unset=True, exclude={"conversation_ids"}),
     )
     return ok(request, data=BulkInboxStateResult(updated=updated))
 
@@ -908,9 +929,30 @@ async def rename_group(
         title=body.title,
     )
     data = (
-        await service.views_for_user(
-            user_id=user.str_id, conversations=[conversation]
-        )
+        await service.views_for_user(user_id=user.str_id, conversations=[conversation])
+    )[0]
+    return ok(request, data=data)
+
+
+@router.patch(
+    "/{conversation_id}/settings",
+    response_model=SuccessResponse[ConversationView],
+    dependencies=[Depends(rate_limit("30/minute", scope="conversation_settings"))],
+)
+async def update_conversation_settings(
+    request: Request,
+    conversation_id: str,
+    body: UpdateConversationSettingsRequest,
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+):
+    conversation = await service.set_allow_member_polls(
+        actor_user_id=user.str_id,
+        conversation_id=conversation_id,
+        allow=body.allow_member_polls,
+    )
+    data = (
+        await service.views_for_user(user_id=user.str_id, conversations=[conversation])
     )[0]
     return ok(request, data=data)
 
@@ -933,9 +975,7 @@ async def set_group_avatar(
         file=file,
     )
     data = (
-        await service.views_for_user(
-            user_id=user.str_id, conversations=[conversation]
-        )
+        await service.views_for_user(user_id=user.str_id, conversations=[conversation])
     )[0]
     return ok(request, data=data)
 
@@ -956,9 +996,7 @@ async def remove_group_avatar(
         conversation_id=conversation_id,
     )
     data = (
-        await service.views_for_user(
-            user_id=user.str_id, conversations=[conversation]
-        )
+        await service.views_for_user(user_id=user.str_id, conversations=[conversation])
     )[0]
     return ok(request, data=data)
 
@@ -1107,6 +1145,56 @@ async def send_media(
 
 
 @router.post(
+    "/{conversation_id}/messages/content",
+    status_code=201,
+    response_model=SuccessResponse[MessageDoc],
+    dependencies=[Depends(rate_limit("60/minute", scope="rich_message"))],
+)
+async def send_rich_content(
+    request: Request,
+    conversation_id: str,
+    body: SendRichContentRequest,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    user=Depends(require_verified_user),
+    service: ConversationsService = Depends(get_conversations_service),
+    messages: MessagesService = Depends(get_messages_service),
+    notifications: NotificationsService = Depends(get_notifications_service),
+):
+    conversation = await service.require_can_post(
+        user_id=user.str_id, conversation_id=conversation_id
+    )
+    result = await messages.send_rich_content_to_conversation(
+        sender_id=user.str_id,
+        conversation_id=conversation_id,
+        body=body,
+    )
+    await emit_send_result(
+        sio,
+        result=result,
+        participant_ids=[
+            str(participant_id) for participant_id in conversation.participant_ids
+        ],
+    )
+    await emit_thread_root_summary_if_needed(
+        sio=sio,
+        conversation=conversation,
+        message=result.message,
+        service=service,
+        messages=messages,
+    )
+    await emit_message_notifications(
+        sio,
+        notifications=notifications,
+        message=result.message,
+    )
+    await service.clear_draft(user_id=user.str_id, conversation_id=conversation_id)
+    await service.resurface_on_send(
+        user_id=user.str_id, conversation_id=conversation_id
+    )
+    return ok(request, data=result.message, status_code=201)
+
+
+@router.post(
     "/{conversation_id}/messages/{message_id}/thread-conversation",
     status_code=200,
     response_model=SuccessResponse[ConversationView],
@@ -1125,7 +1213,9 @@ async def open_thread_conversation(
         parent_conversation_id=conversation_id,
         root_message_id=message_id,
     )
-    data = (await service.views_for_user(user_id=user.str_id, conversations=[thread]))[0]
+    data = (await service.views_for_user(user_id=user.str_id, conversations=[thread]))[
+        0
+    ]
     return ok(request, data=data)
 
 
@@ -1367,8 +1457,12 @@ async def pin_message(
         "pinned_message_ids": conversation.pinned_message_ids,
     }
     for participant_id in conversation.participant_ids:
-        await emit_to_user(sio, str(participant_id), "conversation_pins_updated", payload)
-    data = (await service.views_for_user(user_id=user.str_id, conversations=[conversation]))[0]
+        await emit_to_user(
+            sio, str(participant_id), "conversation_pins_updated", payload
+        )
+    data = (
+        await service.views_for_user(user_id=user.str_id, conversations=[conversation])
+    )[0]
     return ok(request, data=data)
 
 
@@ -1394,8 +1488,12 @@ async def unpin_message(
         "pinned_message_ids": conversation.pinned_message_ids,
     }
     for participant_id in conversation.participant_ids:
-        await emit_to_user(sio, str(participant_id), "conversation_pins_updated", payload)
-    data = (await service.views_for_user(user_id=user.str_id, conversations=[conversation]))[0]
+        await emit_to_user(
+            sio, str(participant_id), "conversation_pins_updated", payload
+        )
+    data = (
+        await service.views_for_user(user_id=user.str_id, conversations=[conversation])
+    )[0]
     return ok(request, data=data)
 
 
@@ -1478,9 +1576,7 @@ async def schedule_message(
     service: ConversationsService = Depends(get_conversations_service),
     messages: MessagesService = Depends(get_messages_service),
 ):
-    await service.require_can_post(
-        user_id=user.str_id, conversation_id=conversation_id
-    )
+    await service.require_can_post(user_id=user.str_id, conversation_id=conversation_id)
     message = await messages.schedule_conversation_message(
         conversation_id=conversation_id,
         sender_id=user.str_id,

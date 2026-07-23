@@ -28,6 +28,7 @@ from app.db.models.embedded import (
     MessageEditDocument,
     MessageReactionDocument,
     PlaintextContentDocument,
+    PollRefDocument,
     ReplyPreviewDocument,
 )
 from app.db.models.invite_link import InviteLinkDocument
@@ -38,6 +39,11 @@ from app.db.models.notification import NotificationDocument
 from app.db.models.participant import ParticipantDocument
 from app.db.models.passkey import PasskeyChallengeDocument, PasskeyDocument
 from app.db.models.ping import PingDocument
+from app.db.models.poll import (
+    PollDocument,
+    PollOptionDocument,
+    PollVoteDocument,
+)
 from app.db.models.push_token import PushTokenDocument
 from app.db.models.report import ReportDocument
 from app.db.models.saved_message import SavedMessageDocument
@@ -73,6 +79,7 @@ DOCUMENT_MODELS: list[type[Document]] = [
     SavedMessageDocument,
     NotificationDocument,
     BotDocument,
+    PollDocument,
     WebhookDocument,
     ReportDocument,
     AuditLogDocument,
@@ -107,6 +114,10 @@ __all__ = [
     "PasskeyDocument",
     "PingDocument",
     "PlaintextContentDocument",
+    "PollDocument",
+    "PollOptionDocument",
+    "PollRefDocument",
+    "PollVoteDocument",
     "PushTokenDocument",
     "RefreshTokenDocument",
     "ReplyPreviewDocument",
