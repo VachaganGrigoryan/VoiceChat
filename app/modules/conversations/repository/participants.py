@@ -99,6 +99,98 @@ class ParticipantsRepositoryMixin:
         )
         return ParticipantDocument.model_validate(raw) if raw is not None else None
 
+    async def update_many_inbox_state(
+        self, *, conversation_ids: list[str], user_id: str, updates: dict
+    ) -> int:
+        """Apply whitelisted inbox flags to several of the caller's rows at once.
+
+        Returns the number of participant rows modified.
+        """
+        set_fields = {
+            key: updates[key]
+            for key in ("pinned", "archived", "folder")
+            if key in updates
+        }
+        if not set_fields:
+            return 0
+        set_fields["updated_at"] = datetime.now(UTC)
+        result = await ParticipantDocument.get_pymongo_collection().update_many(
+            {
+                "conversation_id": {"$in": [str(cid) for cid in conversation_ids]},
+                "user_id": str(user_id),
+            },
+            {"$set": set_fields},
+        )
+        return result.modified_count
+
+    async def clear_archived_if_set(
+        self, *, conversation_id: str, user_id: str
+    ) -> ParticipantDocument | None:
+        """Unarchive the caller's row only if it is currently archived.
+
+        Conditional so ordinary sends to non-archived conversations perform no
+        write and don't churn ``updated_at``. Returns the updated row, or ``None``
+        when nothing was archived.
+        """
+        raw = await ParticipantDocument.get_pymongo_collection().find_one_and_update(
+            {
+                "conversation_id": str(conversation_id),
+                "user_id": str(user_id),
+                "archived": True,
+            },
+            {"$set": {"archived": False, "updated_at": datetime.now(UTC)}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return ParticipantDocument.model_validate(raw) if raw is not None else None
+
+    async def aggregate_folders(self, *, user_id: str) -> list[dict]:
+        """Return the caller's folders with total and archived conversation counts.
+
+        Discovered from the per-participant ``folder`` label, so folders survive
+        even when all their conversations are archived or past a listing page.
+        """
+        cursor = await ParticipantDocument.get_pymongo_collection().aggregate(
+            [
+                {"$match": {"user_id": str(user_id), "folder": {"$ne": None}}},
+                {
+                    "$group": {
+                        "_id": "$folder",
+                        "count": {"$sum": 1},
+                        "archived_count": {
+                            "$sum": {"$cond": ["$archived", 1, 0]},
+                        },
+                    }
+                },
+                {"$sort": {"_id": 1}},
+            ]
+        )
+        return [
+            {
+                "name": row["_id"],
+                "count": row["count"],
+                "archived_count": row["archived_count"],
+            }
+            async for row in cursor
+        ]
+
+    async def rename_folder(
+        self, *, user_id: str, old_name: str, new_name: str
+    ) -> int:
+        """Rename a folder across all the caller's conversations."""
+        result = await ParticipantDocument.get_pymongo_collection().update_many(
+            {"user_id": str(user_id), "folder": old_name},
+            {"$set": {"folder": new_name, "updated_at": datetime.now(UTC)}},
+        )
+        return result.modified_count
+
+    async def clear_folder(self, *, user_id: str, name: str) -> int:
+        """Remove a folder label from all the caller's conversations."""
+        result = await ParticipantDocument.get_pymongo_collection().update_many(
+            {"user_id": str(user_id), "folder": name},
+            {"$set": {"folder": None, "updated_at": datetime.now(UTC)}},
+        )
+        return result.modified_count
+
     async def set_participant_draft(
         self,
         *,

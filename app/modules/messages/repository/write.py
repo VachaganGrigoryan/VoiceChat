@@ -8,6 +8,7 @@ from pymongo.errors import DuplicateKeyError
 from app.db.models import (
     CallDocument,
     CallMessageDocument,
+    ConversationDocument,
     ForwardedFromDocument,
     MediaDocument,
     MessageContentDocument,
@@ -135,6 +136,37 @@ class WriteRepositoryMixin:
         )
         await message.insert()
         return message
+
+    async def import_thread_transcript_messages(
+        self,
+        *,
+        messages: list[MessageDocument],
+        target_conversation_id: str,
+    ) -> int:
+        imported = 0
+        for source in messages:
+            content = (
+                source.content.model_copy(deep=True)
+                if source.content is not None
+                else MessageContentDocument(encryption="none", type=source.type)
+            )
+            message = MessageDocument(
+                conversation_id=target_conversation_id,
+                sender_id=source.sender_id,
+                type=source.type,
+                content=content,
+                forwarded_from=ForwardedFromDocument(
+                    conversation_id=str(source.conversation_id),
+                    message_id=source.str_id,
+                    sender_id=str(source.sender_id),
+                    forwarded_at=datetime.now(UTC),
+                ),
+                created_at=source.created_at,
+                updated_at=source.updated_at,
+            )
+            await message.insert()
+            imported += 1
+        return imported
 
     async def create_scheduled_message(
         self,
@@ -268,6 +300,22 @@ class WriteRepositoryMixin:
             reply_to_message_id=reply_to_message_id,
         )
         thread_root_id = target.thread_root_id or target.str_id
+        locked_thread = await ConversationDocument.find_one(
+            {
+                "type": "thread",
+                "parent_conversation_id": str(conversation_id),
+                "root_message_id": str(thread_root_id),
+                "settings.locked_at": {"$exists": True},
+            }
+        )
+        if locked_thread is not None:
+            from app.core.errors import AppError
+
+            raise AppError(
+                code="THREAD_LOCKED",
+                message="This thread was converted to a group and is locked",
+                status_code=409,
+            )
         now = datetime.now(UTC)
         created = MessageDocument(
             conversation_id=conversation_id,

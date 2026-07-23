@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from app.core.pagination.cursor import decode_cursor, encode_cursor
@@ -17,6 +18,7 @@ class ConversationsReadMixin:
         cursor: str | None = None,
         archived: bool = False,
         folder: str | None = None,
+        conversation_types: Sequence[str] | None = None,
     ) -> tuple[list[ConversationDocument], str | None]:
         """List a user's conversations, pinned first then most-recent activity.
 
@@ -68,6 +70,12 @@ class ConversationsReadMixin:
             },
             {"$match": {"_archived": bool(archived)}},
         ]
+
+        if conversation_types is not None:
+            pipeline.insert(
+                1,
+                {"$match": {"type": {"$in": [str(kind) for kind in conversation_types]}}},
+            )
 
         if folder is not None:
             pipeline.append({"$match": {"_folder": folder}})

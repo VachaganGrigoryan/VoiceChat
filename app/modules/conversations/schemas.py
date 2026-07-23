@@ -6,6 +6,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 from app.db.object_id import StrId
+from app.modules.messages.schemas import MessageDoc
 from app.modules.pings.schemas import PingStatusView
 from app.modules.realtime.presence.base import PresenceState
 
@@ -76,6 +77,14 @@ class ConversationView(BaseModel):
     updated_at: datetime
 
 
+class ThreadConversationView(BaseModel):
+    thread: ConversationView
+    parent: ConversationView | None = None
+    root_message: MessageDoc | None = None
+    locked: bool = False
+    converted_to_conversation_id: str | None = None
+
+
 class ParticipantView(BaseModel):
     conversation_id: StrId
     user_id: StrId
@@ -103,6 +112,18 @@ class CreateDmRequest(BaseModel):
 class CreateGroupRequest(BaseModel):
     title: str = Field(min_length=1, max_length=80)
     participant_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class ConvertThreadToGroupRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
+    participant_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class ConvertThreadToGroupResponse(BaseModel):
+    group: ConversationView
+    thread: ConversationView
+    imported_count: int = Field(ge=0)
+    truncated: bool = False
 
 
 SLUG_PATTERN = r"^[a-z0-9](?:[a-z0-9-]{1,78}[a-z0-9])$"
@@ -150,6 +171,44 @@ class UpdateInboxStateRequest(BaseModel):
         if not self.model_fields_set:
             raise ValueError("At least one of pinned, archived, folder is required")
         return self
+
+
+class BulkInboxStateRequest(BaseModel):
+    """Apply the same inbox flags to several conversations for the caller.
+
+    Only provided flags are applied; passing ``folder: null`` explicitly clears
+    the folder assignment on every listed conversation."""
+
+    conversation_ids: list[str] = Field(min_length=1, max_length=100)
+    pinned: bool | None = None
+    archived: bool | None = None
+    folder: str | None = Field(default=None, max_length=80)
+
+    @model_validator(mode="after")
+    def require_some_flag(self) -> "BulkInboxStateRequest":
+        if not ({"pinned", "archived", "folder"} & self.model_fields_set):
+            raise ValueError("At least one of pinned, archived, folder is required")
+        return self
+
+
+class BulkInboxStateResult(BaseModel):
+    updated: int
+
+
+class FolderView(BaseModel):
+    """A user's folder, discovered from per-participant ``folder`` labels."""
+
+    name: str
+    count: int
+    archived_count: int
+
+
+class RenameFolderRequest(BaseModel):
+    new_name: str = Field(min_length=1, max_length=80)
+
+
+class RenameFolderResult(BaseModel):
+    updated: int
 
 
 class TransferOwnershipRequest(BaseModel):

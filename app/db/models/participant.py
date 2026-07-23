@@ -52,4 +52,12 @@ class ParticipantDocument(TimestampedDocument):
                 [("user_id", ASCENDING), ("updated_at", DESCENDING)],
                 name="ix_participants_user_updatedAt_desc",
             ),
+            IndexModel(
+                [
+                    ("user_id", ASCENDING),
+                    ("archived", ASCENDING),
+                    ("folder", ASCENDING),
+                ],
+                name="ix_participants_user_archived_folder",
+            ),
         ]

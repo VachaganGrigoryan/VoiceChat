@@ -273,6 +273,43 @@ class ParticipantsServiceMixin(BaseConversationsService):
             )
         return updated
 
+    async def set_inbox_state_bulk(
+        self, *, user_id: str, conversation_ids: list[str], updates: dict
+    ) -> int:
+        """Apply the caller's inbox flags to several conversations at once.
+
+        Membership is enforced implicitly: only the caller's own participant rows
+        are matched, so ids the caller isn't part of are silently skipped.
+        Returns the number of conversations updated.
+        """
+        return await self.repo.update_many_inbox_state(
+            conversation_ids=conversation_ids, user_id=user_id, updates=updates
+        )
+
+    async def resurface_on_send(
+        self, *, user_id: str, conversation_id: str
+    ) -> None:
+        """Auto-unarchive the sender's view when they reply to an archived chat."""
+        await self.repo.clear_archived_if_set(
+            conversation_id=conversation_id, user_id=user_id
+        )
+
+    async def list_folders(self, *, user_id: str) -> list[dict]:
+        """List the caller's folders with total and archived conversation counts."""
+        return await self.repo.aggregate_folders(user_id=user_id)
+
+    async def rename_folder(
+        self, *, user_id: str, old_name: str, new_name: str
+    ) -> int:
+        """Rename a folder across all the caller's conversations."""
+        return await self.repo.rename_folder(
+            user_id=user_id, old_name=old_name, new_name=new_name
+        )
+
+    async def delete_folder(self, *, user_id: str, name: str) -> int:
+        """Clear a folder label from all the caller's conversations."""
+        return await self.repo.clear_folder(user_id=user_id, name=name)
+
     async def list_group_participants(
         self, *, user_id: str, conversation_id: str
     ) -> list[ParticipantDocument]:

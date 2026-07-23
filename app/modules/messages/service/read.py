@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from app.core.errors import AppError
+from app.db.models import MessageDocument
 from app.modules.messages.repository.mappers import (
     to_message_doc,
     to_thread_summary,
@@ -81,6 +82,23 @@ class ReadMessagesMixin:
             conversation_id=conversation_id, docs=docs
         )
 
+    async def get_message_for_conversation(
+        self, *, conversation_id: str, message_id: str, user_id: str
+    ) -> MessageDoc:
+        doc = await self.repo.get_by_id_for_conversation(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            user_id=user_id,
+        )
+        if doc is None:
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
+        docs = await self._to_message_docs_with_receipts(
+            conversation_id=conversation_id, docs=[doc]
+        )
+        return docs[0]
+
     async def get_conversation_history(
         self,
         *,
@@ -118,6 +136,45 @@ class ReadMessagesMixin:
         return await self._to_message_docs_with_receipts(
             conversation_id=conversation_id,
             docs=docs,
+        )
+
+    async def get_thread_bridge_for_conversation(
+        self,
+        *,
+        parent_conversation_id: str,
+        thread_conversation_id: str,
+        root_message_id: str,
+        user_id: str,
+        include_root: bool = False,
+    ) -> tuple[list[MessageDoc], bool]:
+        docs, truncated = await self.repo.load_thread_bridge_messages(
+            parent_conversation_id=parent_conversation_id,
+            thread_conversation_id=thread_conversation_id,
+            root_message_id=root_message_id,
+            user_id=user_id,
+            include_root=include_root,
+        )
+        return (
+            await self._to_message_docs_with_receipts(
+                conversation_id=thread_conversation_id, docs=docs
+            ),
+            truncated,
+        )
+
+    async def get_thread_transcript_documents_for_conversion(
+        self,
+        *,
+        parent_conversation_id: str,
+        thread_conversation_id: str,
+        root_message_id: str,
+        user_id: str,
+    ) -> tuple[list[MessageDocument], bool]:
+        return await self.repo.load_thread_bridge_messages(
+            parent_conversation_id=parent_conversation_id,
+            thread_conversation_id=thread_conversation_id,
+            root_message_id=root_message_id,
+            user_id=user_id,
+            include_root=True,
         )
 
     async def get_thread_summary_for_conversation(

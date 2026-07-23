@@ -137,6 +137,28 @@ class ConversationsWriteMixin:
         await conversation.insert()
         return conversation
 
+    async def lock_thread_after_conversion(
+        self, *, thread_id: str, user_id: str, group_id: str
+    ) -> ConversationDocument | None:
+        now = datetime.now(UTC)
+        raw = await self.raw.find_one_and_update(
+            {
+                "_id": parse_object_id(thread_id),
+                "type": "thread",
+                "created_by": str(user_id),
+            },
+            {
+                "$set": {
+                    "settings.locked_at": now,
+                    "settings.locked_by": str(user_id),
+                    "settings.converted_to_conversation_id": str(group_id),
+                    "updated_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return ConversationDocument.model_validate(raw) if raw is not None else None
+
     async def update_group_title(
         self, *, conversation_id: str, title: str
     ) -> ConversationDocument:

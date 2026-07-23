@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from app.core.errors import AppError
-from app.db.models import MediaDocument
+from app.db.models import MediaDocument, MessageDocument
 from app.infra.storage import get_storage
 from app.modules.messages.media_policy import resolve_media_policy
 from app.modules.messages.repository.mappers import (
@@ -11,7 +12,7 @@ from app.modules.messages.repository.mappers import (
     to_message_doc,
     to_thread_summary,
 )
-from app.modules.messages.schemas import MessageDoc, ReplyMode
+from app.modules.messages.schemas import MessageDoc, ReplyMode, ThreadSummary
 from app.modules.messages.service.base import (
     ReleasedScheduledMessage,
     SendMessageResult,
@@ -122,6 +123,52 @@ class CreateMessagesMixin:
         return SendMessageResult(
             message=to_message_doc(doc, receipt_summary=summaries.get(doc.str_id))
         )
+
+    async def import_thread_transcript_to_conversation(
+        self,
+        *,
+        source_messages: Sequence[MessageDocument],
+        target_conversation_id: str,
+        actor_user_id: str,
+        parent_conversation_id: str,
+        root_message_id: str,
+    ) -> tuple[int, MessageDoc]:
+        imported_count = await self.repo.import_thread_transcript_messages(
+            messages=list(source_messages),
+            target_conversation_id=target_conversation_id,
+        )
+        notice = await self.repo.create_conversation_message(
+            conversation_id=target_conversation_id,
+            sender_id=actor_user_id,
+            message_type="text",
+            text=(
+                "Thread converted to group. "
+                f"Source: {parent_conversation_id} / {root_message_id}"
+            ),
+        )
+        await self._materialize_conversation_message(notice)
+        summaries = await self.repo.receipt_summaries_for_messages(
+            conversation_id=target_conversation_id,
+            messages=[notice],
+        )
+        return (
+            imported_count,
+            to_message_doc(notice, receipt_summary=summaries.get(notice.str_id)),
+        )
+
+    async def record_thread_conversation_reply(
+        self,
+        *,
+        parent_conversation_id: str,
+        root_message_id: str,
+        reply_created_at: datetime,
+    ) -> ThreadSummary:
+        root = await self.repo.bump_thread_root_summary_for_conversation(
+            parent_conversation_id=parent_conversation_id,
+            root_message_id=root_message_id,
+            reply_created_at=reply_created_at,
+        )
+        return to_thread_summary(root)
 
     async def schedule_conversation_message(
         self,

@@ -39,7 +39,12 @@ class CreateConversationsMixin(BaseConversationsService):
         return conversation
 
     async def create_group_conversation(
-        self, *, user_id: str, title: str, participant_ids: list[str]
+        self,
+        *,
+        user_id: str,
+        title: str,
+        participant_ids: list[str],
+        enforce_chat_permission: bool = True,
     ) -> ConversationDocument:
         member_ids = sorted({str(pid) for pid in participant_ids if str(pid) != user_id})
         if not member_ids:
@@ -49,10 +54,11 @@ class CreateConversationsMixin(BaseConversationsService):
                 status_code=400,
             )
 
-        for participant_id in member_ids:
-            await self._ensure_can_message(
-                sender_id=user_id, receiver_id=participant_id
-            )
+        if enforce_chat_permission:
+            for participant_id in member_ids:
+                await self._ensure_can_message(
+                    sender_id=user_id, receiver_id=participant_id
+                )
 
         all_participants = sorted({str(user_id), *member_ids})
         conversation = await self.repo.create_group(
@@ -174,6 +180,46 @@ class CreateConversationsMixin(BaseConversationsService):
         refreshed = await self.repo.get_by_id(thread.str_id)
         assert refreshed is not None
         return refreshed
+
+    async def require_thread_owner(
+        self, *, user_id: str, thread_id: str
+    ) -> ConversationDocument:
+        thread = await self.require_participant(
+            user_id=user_id, conversation_id=thread_id
+        )
+        if thread.type != "thread":
+            raise AppError(
+                code="INVALID_CONVERSATION",
+                message="Conversation is not a thread",
+                status_code=400,
+            )
+        if str(thread.created_by) != str(user_id):
+            raise AppError(
+                code="THREAD_CONVERSION_FORBIDDEN",
+                message="Only the thread owner can convert this thread",
+                status_code=403,
+            )
+        if thread.settings.get("locked_at"):
+            raise AppError(
+                code="THREAD_LOCKED",
+                message="This thread was already converted",
+                status_code=409,
+            )
+        return thread
+
+    async def lock_thread_after_conversion(
+        self, *, user_id: str, thread_id: str, group_id: str
+    ) -> ConversationDocument:
+        thread = await self.repo.lock_thread_after_conversion(
+            thread_id=thread_id, user_id=user_id, group_id=group_id
+        )
+        if thread is None:
+            raise AppError(
+                code="CONVERSATION_NOT_FOUND",
+                message="Thread not found",
+                status_code=404,
+            )
+        return thread
 
     async def get_public_conversation_by_slug(
         self, *, slug: str

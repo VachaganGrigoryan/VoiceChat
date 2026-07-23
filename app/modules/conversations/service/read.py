@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from typing import Any
 
 from app.core.errors import AppError
@@ -21,6 +22,7 @@ class ReadConversationsMixin(BaseConversationsService):
         cursor: str | None,
         archived: bool = False,
         folder: str | None = None,
+        conversation_types: Sequence[str] | None = ("dm", "group", "channel"),
     ) -> tuple[list[ConversationDocument], str | None]:
         return await self.repo.list_for_user(
             user_id=user_id,
@@ -28,7 +30,40 @@ class ReadConversationsMixin(BaseConversationsService):
             cursor=cursor,
             archived=archived,
             folder=folder,
+            conversation_types=conversation_types,
         )
+
+    async def list_threads_for_user(
+        self,
+        *,
+        user_id: str,
+        limit: int,
+        cursor: str | None,
+        archived: bool = False,
+    ) -> tuple[list[ConversationDocument], str | None]:
+        return await self.repo.list_for_user(
+            user_id=user_id,
+            limit=limit,
+            cursor=cursor,
+            archived=archived,
+            conversation_types=("thread",),
+        )
+
+    async def get_conversation_view(
+        self, *, user_id: str, conversation_id: str
+    ) -> ConversationView:
+        """Return one conversation as the caller's view, with their inbox flags.
+
+        Enforces membership. Lets clients resolve a conversation that isn't on the
+        active inbox page (e.g. an archived chat) so its history stays reachable.
+        """
+        conversation = await self.require_participant(
+            user_id=user_id, conversation_id=conversation_id
+        )
+        views = await self.views_for_user(
+            user_id=user_id, conversations=[conversation]
+        )
+        return views[0]
 
     async def require_participant(
         self, *, user_id: str, conversation_id: str
@@ -57,6 +92,12 @@ class ReadConversationsMixin(BaseConversationsService):
         conversation = await self.require_participant(
             user_id=user_id, conversation_id=conversation_id
         )
+        if conversation.type == "thread" and conversation.settings.get("locked_at"):
+            raise AppError(
+                code="THREAD_LOCKED",
+                message="This thread was converted to a group and is locked",
+                status_code=409,
+            )
         if conversation.type == "dm":
             peer_id = self._peer_id(conversation, user_id=user_id)
             if peer_id is not None:
