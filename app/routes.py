@@ -17,6 +17,8 @@ from app.modules.notifications.router import router as notifications_router
 from app.modules.saved.router import router as saved_router
 from app.modules.search.router import router as search_router
 from app.bots.poll.router import router as polls_router
+from app.modules.spaces import spaces_router
+from app.modules.extensibility.router import extensibility_router
 
 
 def register_routers(app: FastAPI) -> None:
@@ -36,4 +38,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(saved_router)
     app.include_router(search_router)
     app.include_router(polls_router)
+    app.include_router(spaces_router)
+    app.include_router(extensibility_router)
     app.include_router(realtime_router)
+

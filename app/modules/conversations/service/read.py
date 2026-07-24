@@ -23,7 +23,18 @@ class ReadConversationsMixin(BaseConversationsService):
         archived: bool = False,
         folder: str | None = None,
         conversation_types: Sequence[str] | None = ("dm", "group", "channel"),
+        space_id: str | None = None,
     ) -> tuple[list[ConversationDocument], str | None]:
+        if space_id is not None:
+            from app.db.models.space_member import SpaceMemberDocument
+            member = await SpaceMemberDocument.find_one({"space_id": str(space_id), "user_id": str(user_id)})
+            if member is None:
+                raise AppError(
+                    code="SPACE_FORBIDDEN",
+                    message="Not a member of this space",
+                    status_code=403,
+                )
+
         return await self.repo.list_for_user(
             user_id=user_id,
             limit=limit,
@@ -31,6 +42,7 @@ class ReadConversationsMixin(BaseConversationsService):
             archived=archived,
             folder=folder,
             conversation_types=conversation_types,
+            space_id=space_id,
         )
 
     async def list_threads_for_user(

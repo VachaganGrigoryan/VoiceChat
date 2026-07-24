@@ -109,6 +109,26 @@ class NotificationsService:
 
         return generated
 
+    async def create_notification(
+        self,
+        *,
+        user_id: str,
+        kind: str,
+        source_type: str | None = None,
+        source_id: str | None = None,
+        conversation_id: str | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> NotificationView:
+        notification = await self.repo.create_notification(
+            user_id=user_id,
+            kind=kind,
+            source_type=source_type,
+            source_id=source_id,
+            conversation_id=conversation_id,
+            data=data or {},
+        )
+        return self._to_notification_view(notification)
+
     async def list_for_user(self, *, user_id: str, limit: int) -> list[NotificationView]:
         if limit < 1 or limit > 100:
             raise AppError(

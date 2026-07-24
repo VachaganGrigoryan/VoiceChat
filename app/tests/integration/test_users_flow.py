@@ -219,6 +219,7 @@ async def test_get_selected_user_profile_allows_accepted_ping(inprocess_client):
         "display_name": "Target User",
         "bio": "Visible through accepted ping",
         "avatar": None,
+        "is_bot": False,
         "status_emoji": None,
         "status_text": None,
         "status_expires_at": None,
@@ -226,6 +227,8 @@ async def test_get_selected_user_profile_allows_accepted_ping(inprocess_client):
         "timezone": None,
         "is_online": False,
         "profile_visibility": "full",
+        "last_seen_at": None,
+        "presence_state": "offline",
         "relationship": {
             "can_ping": False,
             "chat_allowed": True,

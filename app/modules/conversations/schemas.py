@@ -124,6 +124,7 @@ class CreateDmRequest(BaseModel):
 class CreateGroupRequest(BaseModel):
     title: str = Field(min_length=1, max_length=80)
     participant_ids: list[str] = Field(min_length=1, max_length=100)
+    space_id: str | None = None
 
 
 class ConvertThreadToGroupRequest(BaseModel):
@@ -150,6 +151,7 @@ class CreateChannelRequest(BaseModel):
     visibility: ConversationVisibility = "private"
     posting_policy: PostingPolicy = "admins"
     slug: str | None = Field(default=None, pattern=SLUG_PATTERN)
+    space_id: str | None = None
 
     @model_validator(mode="after")
     def validate_public_slug(self) -> "CreateChannelRequest":

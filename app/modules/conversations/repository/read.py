@@ -19,6 +19,7 @@ class ConversationsReadMixin:
         archived: bool = False,
         folder: str | None = None,
         conversation_types: Sequence[str] | None = None,
+        space_id: str | None = None,
     ) -> tuple[list[ConversationDocument], str | None]:
         """List a user's conversations, pinned first then most-recent activity.
 
@@ -31,6 +32,11 @@ class ConversationsReadMixin:
         """
         pipeline: list[dict[str, Any]] = [
             {"$match": {"participant_ids": str(user_id)}},
+            {
+                "$match": {
+                    "space_id": str(space_id) if space_id is not None else None
+                }
+            },
             {
                 "$addFields": {
                     "_activity_at": {"$ifNull": ["$last_message_at", "$updated_at"]},

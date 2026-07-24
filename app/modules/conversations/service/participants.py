@@ -381,6 +381,19 @@ class ParticipantsServiceMixin(BaseConversationsService):
                 user_id=participant_id,
             )
             added.append(participant)
+        
+        if added:
+            from app.db.models import AuditLogDocument
+            log = AuditLogDocument(
+                actor_id=actor_user_id,
+                action="add_members",
+                target_type="conversation",
+                target_id=conversation.str_id,
+                space_id=getattr(conversation, "space_id", None),
+                data={"added_user_ids": [p.str_id for p in added]},
+            )
+            await log.insert()
+
         return added
 
     async def remove_group_member(
@@ -411,6 +424,17 @@ class ParticipantsServiceMixin(BaseConversationsService):
         await self.repo.remove_participant_id(
             conversation_id=conversation.str_id, user_id=target_user_id
         )
+
+        from app.db.models import AuditLogDocument
+        log = AuditLogDocument(
+            actor_id=actor_user_id,
+            action="remove_member",
+            target_type="conversation",
+            target_id=conversation.str_id,
+            space_id=getattr(conversation, "space_id", None),
+            data={"removed_user_id": target_user_id},
+        )
+        await log.insert()
 
     async def update_group_member_role(
         self,
@@ -443,6 +467,18 @@ class ParticipantsServiceMixin(BaseConversationsService):
             role=role,
         )
         assert updated is not None
+
+        from app.db.models import AuditLogDocument
+        log = AuditLogDocument(
+            actor_id=actor_user_id,
+            action="update_member_role",
+            target_type="conversation",
+            target_id=conversation.str_id,
+            space_id=getattr(conversation, "space_id", None),
+            data={"target_user_id": target_user_id, "role": role},
+        )
+        await log.insert()
+
         return updated
 
     async def transfer_group_ownership(
@@ -477,6 +513,18 @@ class ParticipantsServiceMixin(BaseConversationsService):
             role="admin",
         )
         assert new_owner is not None and previous_owner is not None
+
+        from app.db.models import AuditLogDocument
+        log = AuditLogDocument(
+            actor_id=actor_user_id,
+            action="transfer_ownership",
+            target_type="conversation",
+            target_id=conversation.str_id,
+            space_id=getattr(conversation, "space_id", None),
+            data={"new_owner_id": target_user_id, "previous_owner_id": actor_user_id},
+        )
+        await log.insert()
+
         return [new_owner, previous_owner]
 
     async def leave_group(self, *, user_id: str, conversation_id: str) -> None:
@@ -499,6 +547,17 @@ class ParticipantsServiceMixin(BaseConversationsService):
             conversation_id=conversation.str_id, user_id=user_id
         )
 
+        from app.db.models import AuditLogDocument
+        log = AuditLogDocument(
+            actor_id=user_id,
+            action="leave_group",
+            target_type="conversation",
+            target_id=conversation.str_id,
+            space_id=getattr(conversation, "space_id", None),
+            data={},
+        )
+        await log.insert()
+
     async def delete_group(self, *, user_id: str, conversation_id: str) -> None:
         conversation = await self._get_group_for_participant(
             conversation_id=conversation_id, user_id=user_id
@@ -517,3 +576,14 @@ class ParticipantsServiceMixin(BaseConversationsService):
                 user_id=str(participant.user_id),
             )
         await self.repo.delete_conversation(conversation_id=conversation.str_id)
+
+        from app.db.models import AuditLogDocument
+        log = AuditLogDocument(
+            actor_id=user_id,
+            action="delete_group",
+            target_type="conversation",
+            target_id=conversation.str_id,
+            space_id=getattr(conversation, "space_id", None),
+            data={},
+        )
+        await log.insert()

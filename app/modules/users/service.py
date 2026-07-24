@@ -17,7 +17,7 @@ from app.modules.users.schemas import (
     UpdateStatusRequest,
     UserProfileResponse,
 )
-from app.modules.pings.schemas import ContactState
+from app.modules.pings.schemas import ContactExtras, ContactState
 from app.modules.realtime.presence import PresenceState
 from app.infra.storage import get_storage, storage_key_builder
 
@@ -40,6 +40,10 @@ class PingsServiceProto(Protocol):
     async def get_contact_state(
         self, *, viewer_user_id: str, peer_user_id: str
     ) -> ContactState: ...
+
+    async def get_contact_extras(
+        self, *, viewer_user_id: str, peer_user_id: str
+    ) -> ContactExtras: ...
 
 
 def _strip_or_none(value: str | None) -> str | None:
@@ -83,6 +87,7 @@ class UsersService:
         *,
         current_user_id: str,
         selected_user_id: str,
+        include: set[str] | None = None,
     ) -> SelectedUserProfileResponse:
         user = await self.users.find_by_id(selected_user_id)
         if not user:
@@ -102,6 +107,13 @@ class UsersService:
                 ping_status="none",
             )
 
+        extras: ContactExtras | None = None
+        if include and "contact_details" in include and relationship.ping_status == "accepted":
+            extras = await self.pings.get_contact_extras(
+                viewer_user_id=current_user_id,
+                peer_user_id=selected_user_id,
+            )
+
         user = await self._clear_expired_status_if_needed(user)
         has_private_access = current_user_id == selected_user_id or (
             relationship.chat_allowed and not relationship.blocks_me
@@ -110,6 +122,7 @@ class UsersService:
             user,
             relationship=relationship,
             include_private_profile=has_private_access or not _doc_value(user, "is_private"),
+            extras=extras,
         )
 
     async def update_me(
@@ -253,6 +266,7 @@ class UsersService:
             bio=_doc_value(user, "bio"),
             avatar=build_user_avatar_payload(_doc_value(user, "avatar")),
             is_private=_doc_value(user, "is_private"),
+            is_bot=_doc_value(user, "is_bot", False),
             default_discovery_enabled=_doc_value(user, "default_discovery_enabled"),
             last_seen_at=_doc_value(user, "last_seen_at"),
             username_updated_at=_doc_value(user, "username_updated_at"),
@@ -274,6 +288,7 @@ class UsersService:
         *,
         relationship: ContactState,
         include_private_profile: bool,
+        extras: ContactExtras | None = None,
     ) -> SelectedUserProfileResponse:
         user = self._without_expired_status(user)
         user_id = _doc_value(user, "id", "")
@@ -287,6 +302,7 @@ class UsersService:
             display_name=_doc_value(user, "display_name"),
             bio=_doc_value(user, "bio") if include_private_profile else None,
             avatar=build_user_avatar_payload(_doc_value(user, "avatar")),
+            is_bot=_doc_value(user, "is_bot", False),
             status_emoji=(
                 _doc_value(user, "status_emoji") if include_private_profile else None
             ),
@@ -309,6 +325,10 @@ class UsersService:
             ),
             profile_visibility="full" if include_private_profile else "limited",
             relationship=relationship,
+            connection_timestamp=extras.connection_timestamp if extras else None,
+            conversation_id=extras.conversation_id if extras else None,
+            shared_conversations=extras.shared_conversations if extras else [],
+            shared_spaces=extras.shared_spaces if extras else [],
         )
 
     def _normalize_status_expiry(self, value: datetime | None) -> datetime | None:

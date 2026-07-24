@@ -52,6 +52,7 @@ from app.db.models.space_member import SpaceMemberDocument
 from app.db.models.user import UserDocument
 from app.db.models.verification import VerificationCodeDocument
 from app.db.models.webhook import WebhookDocument
+from app.db.models.slash_command import SlashCommandDocument
 
 # Single source of truth for Beanie registration (see app/db/init.py). Order is
 # stable but not significant; keep this list in sync when adding a Document.
@@ -83,6 +84,7 @@ DOCUMENT_MODELS: list[type[Document]] = [
     WebhookDocument,
     ReportDocument,
     AuditLogDocument,
+    SlashCommandDocument,
 ]
 
 __all__ = [
@@ -128,4 +130,5 @@ __all__ = [
     "UserDocument",
     "VerificationCodeDocument",
     "WebhookDocument",
+    "SlashCommandDocument",
 ]

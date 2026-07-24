@@ -236,3 +236,23 @@ async def list_contacts(
             limit=limit,
         ),
     )
+
+
+@router.delete(
+    "/contacts/{peer_user_id}",
+    response_model=SuccessResponse[dict],
+)
+async def remove_contact(
+    request: Request,
+    peer_user_id: str,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    user_id=Depends(get_current_user_id),
+    service=Depends(get_pings_service),
+):
+    removed = await service.delete_ping_for_pair(
+        user_id=user_id, peer_user_id=peer_user_id
+    )
+    await emit_chat_permission_updated(
+        sio, user_a=user_id, user_b=peer_user_id, allowed=False
+    )
+    return ok(request, data={"removed": removed})

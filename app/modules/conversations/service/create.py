@@ -45,6 +45,7 @@ class CreateConversationsMixin(BaseConversationsService):
         title: str,
         participant_ids: list[str],
         enforce_chat_permission: bool = True,
+        space_id: str | None = None,
     ) -> ConversationDocument:
         member_ids = sorted({str(pid) for pid in participant_ids if str(pid) != user_id})
         if not member_ids:
@@ -53,6 +54,26 @@ class CreateConversationsMixin(BaseConversationsService):
                 message="Group conversation requires at least one other participant",
                 status_code=400,
             )
+
+        if space_id is not None:
+            from app.db.models.space_member import SpaceMemberDocument
+            # Verify creator is a member
+            creator_member = await SpaceMemberDocument.find_one({"space_id": str(space_id), "user_id": str(user_id)})
+            if creator_member is None:
+                raise AppError(
+                    code="SPACE_FORBIDDEN",
+                    message="Not a member of this space",
+                    status_code=403,
+                )
+            # Verify all other participants are members
+            for participant_id in member_ids:
+                p_member = await SpaceMemberDocument.find_one({"space_id": str(space_id), "user_id": str(participant_id)})
+                if p_member is None:
+                    raise AppError(
+                        code="SPACE_MEMBER_ELIGIBILITY",
+                        message=f"User {participant_id} is not a member of the space",
+                        status_code=400,
+                    )
 
         if enforce_chat_permission:
             for participant_id in member_ids:
@@ -65,6 +86,7 @@ class CreateConversationsMixin(BaseConversationsService):
             created_by=user_id,
             participant_ids=all_participants,
             title=title.strip(),
+            space_id=space_id,
         )
         await self.repo.ensure_participant(
             conversation_id=conversation.str_id, user_id=user_id, role="owner"
@@ -87,6 +109,7 @@ class CreateConversationsMixin(BaseConversationsService):
         visibility: str = "private",
         posting_policy: str = "admins",
         slug: str | None = None,
+        space_id: str | None = None,
     ) -> ConversationDocument:
         """Create a broadcast ``channel``.
 
@@ -95,6 +118,27 @@ class CreateConversationsMixin(BaseConversationsService):
         index; a collision surfaces as a conflict error).
         """
         member_ids = sorted({str(pid) for pid in participant_ids if str(pid) != user_id})
+
+        if space_id is not None:
+            from app.db.models.space_member import SpaceMemberDocument
+            # Verify creator is a member
+            creator_member = await SpaceMemberDocument.find_one({"space_id": str(space_id), "user_id": str(user_id)})
+            if creator_member is None:
+                raise AppError(
+                    code="SPACE_FORBIDDEN",
+                    message="Not a member of this space",
+                    status_code=403,
+                )
+            # Verify all other participants are members
+            for participant_id in member_ids:
+                p_member = await SpaceMemberDocument.find_one({"space_id": str(space_id), "user_id": str(participant_id)})
+                if p_member is None:
+                    raise AppError(
+                        code="SPACE_MEMBER_ELIGIBILITY",
+                        message=f"User {participant_id} is not a member of the space",
+                        status_code=400,
+                    )
+
         for participant_id in member_ids:
             await self._ensure_can_message(
                 sender_id=user_id, receiver_id=participant_id
@@ -110,6 +154,7 @@ class CreateConversationsMixin(BaseConversationsService):
                 visibility=visibility,
                 posting_policy=posting_policy,
                 slug=slug,
+                space_id=space_id,
             )
         except DuplicateKeyError as exc:
             raise AppError(

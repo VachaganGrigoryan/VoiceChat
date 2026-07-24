@@ -9,11 +9,14 @@ from app.core.errors import AppError
 from app.db.models import PingDocument, UserDocument
 from app.modules.pings.repository import PingsRepository, pair_id_for
 from app.modules.pings.schemas import (
+    ContactExtras,
     ContactListItem,
     PingListItem,
     PingResponse,
     PeerUserSummary,
     ContactState,
+    SharedConversationSummary,
+    SharedSpaceSummary,
 )
 from app.modules.users.avatar import build_user_avatar_payload
 
@@ -30,6 +33,19 @@ class ConversationsRepositoryProto(Protocol):
     async def get_by_dm_key(self, dm_key: str): ...
 
 
+class NotificationsServiceProto(Protocol):
+    async def create_notification(
+        self,
+        *,
+        user_id: str,
+        kind: str,
+        source_type: str | None = None,
+        source_id: str | None = None,
+        conversation_id: str | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> Any: ...
+
+
 class PingsService:
     def __init__(
         self,
@@ -38,11 +54,29 @@ class PingsService:
         users_repo: UsersRepositoryProto,
         presence_service: PresenceServiceProto | None = None,
         conversations_repo: ConversationsRepositoryProto | None = None,
+        notifications_service: NotificationsServiceProto | None = None,
     ) -> None:
         self.pings_repo = pings_repo
         self.users_repo = users_repo
         self.presence_service = presence_service
         self.conversations_repo = conversations_repo
+        self.notifications_service = notifications_service
+
+    async def _emit_ping_notification(
+        self, *, user_id: str, kind: str, peer_user_id: str
+    ) -> None:
+        """Record a connection event as a generic notification for ``user_id``.
+
+        Blocked users are never notified; callers pass the recipient explicitly.
+        """
+        if self.notifications_service is None:
+            return
+        await self.notifications_service.create_notification(
+            user_id=str(user_id),
+            kind=kind,
+            source_type="ping",
+            data={"peer_user_id": str(peer_user_id)},
+        )
 
     def _doc_value(self, doc: object, key: str, default: Any = None) -> Any:
         if isinstance(doc, dict):
@@ -83,10 +117,20 @@ class PingsService:
                     to_user_id=to_user_id,
                 )
                 assert reopened is not None
+                await self._emit_ping_notification(
+                    user_id=to_user_id,
+                    kind="ping_received",
+                    peer_user_id=from_user_id,
+                )
                 return self._to_ping_response(reopened)
 
         doc = await self.pings_repo.create_ping(
             from_user_id=from_user_id, to_user_id=to_user_id
+        )
+        await self._emit_ping_notification(
+            user_id=to_user_id,
+            kind="ping_received",
+            peer_user_id=from_user_id,
         )
         return self._to_ping_response(doc)
 
@@ -105,6 +149,11 @@ class PingsService:
             ping_id=ping_id, status="accepted"
         )
         assert updated is not None
+        await self._emit_ping_notification(
+            user_id=self._doc_value(ping, "from_user_id"),
+            kind="ping_accepted",
+            peer_user_id=user_id,
+        )
         return self._to_ping_response(updated)
 
     async def decline_ping(self, *, user_id: str, ping_id: str) -> PingResponse:
@@ -122,6 +171,11 @@ class PingsService:
             ping_id=ping_id, status="declined"
         )
         assert updated is not None
+        await self._emit_ping_notification(
+            user_id=self._doc_value(ping, "from_user_id"),
+            kind="ping_declined",
+            peer_user_id=user_id,
+        )
         return self._to_ping_response(updated)
 
     async def list_incoming(
@@ -197,6 +251,11 @@ class PingsService:
             ping_id=ping_id, status="cancelled"
         )
         assert updated is not None
+        await self._emit_ping_notification(
+            user_id=self._doc_value(ping, "to_user_id"),
+            kind="ping_cancelled",
+            peer_user_id=user_id,
+        )
         return self._to_ping_response(updated)
 
     async def block_user(self, *, user_id: str, peer_user_id: str):
@@ -210,6 +269,12 @@ class PingsService:
             user_a=user_id,
             user_b=peer_user_id,
             by_user_id=user_id,
+        )
+        # Only the blocker is notified; the blocked user receives nothing.
+        await self._emit_ping_notification(
+            user_id=user_id,
+            kind="user_blocked",
+            peer_user_id=peer_user_id,
         )
         return self._to_ping_response(doc)
 
@@ -248,6 +313,116 @@ class PingsService:
         )
         items = [await self._to_contact_item(doc, user_id=user_id) for doc in docs]
         return items, next_cursor
+
+    async def get_contact_extras(
+        self, *, viewer_user_id: str, peer_user_id: str
+    ) -> ContactExtras:
+        """Aggregate extra data for an accepted contact.
+
+        Returns empty extras (never raises) when the pair is not an accepted
+        contact, so callers like the users endpoint can request it opportunistically.
+        """
+        if viewer_user_id == peer_user_id:
+            return ContactExtras()
+
+        ping = await self.pings_repo.get_pair_state(
+            user_a=viewer_user_id, user_b=peer_user_id
+        )
+        if ping is None or self._doc_value(ping, "status") != "accepted":
+            return ContactExtras()
+
+        conversation_id = None
+        if self.conversations_repo is not None:
+            from app.modules.conversations.repository.helpers import dm_key_for
+
+            conversation = await self.conversations_repo.get_by_dm_key(
+                dm_key_for(viewer_user_id, peer_user_id)
+            )
+            conversation_id = conversation.str_id if conversation is not None else None
+
+        return ContactExtras(
+            connection_timestamp=(
+                self._doc_value(ping, "responded_at")
+                or self._doc_value(ping, "updated_at")
+            ),
+            conversation_id=conversation_id,
+            shared_conversations=await self._shared_conversations(
+                user_id=viewer_user_id, peer_user_id=peer_user_id
+            ),
+            shared_spaces=await self._shared_spaces(
+                user_id=viewer_user_id, peer_user_id=peer_user_id
+            ),
+        )
+
+    async def _shared_conversations(
+        self, *, user_id: str, peer_user_id: str
+    ) -> list[SharedConversationSummary]:
+        from app.db.models import ConversationDocument, ParticipantDocument
+        from app.db.object_id import parse_object_id
+
+        my_parts = await ParticipantDocument.find(
+            {"user_id": str(user_id), "hidden": {"$ne": True}}
+        ).to_list()
+        my_conv_ids = {str(part.conversation_id) for part in my_parts}
+        if not my_conv_ids:
+            return []
+
+        peer_parts = await ParticipantDocument.find(
+            {
+                "user_id": str(peer_user_id),
+                "conversation_id": {"$in": list(my_conv_ids)},
+                "hidden": {"$ne": True},
+            }
+        ).to_list()
+        shared_ids = [str(part.conversation_id) for part in peer_parts]
+        if not shared_ids:
+            return []
+
+        conversations = await ConversationDocument.find(
+            {
+                "_id": {"$in": [parse_object_id(cid) for cid in shared_ids]},
+                "type": {"$ne": "dm"},
+            }
+        ).to_list()
+        return [
+            SharedConversationSummary(
+                id=conversation.str_id,
+                type=conversation.type,
+                title=conversation.title,
+            )
+            for conversation in conversations
+        ]
+
+    async def _shared_spaces(
+        self, *, user_id: str, peer_user_id: str
+    ) -> list[SharedSpaceSummary]:
+        from app.db.models import SpaceDocument, SpaceMemberDocument
+        from app.db.object_id import parse_object_id
+
+        my_members = await SpaceMemberDocument.find(
+            {"user_id": str(user_id)}
+        ).to_list()
+        my_space_ids = {str(member.space_id) for member in my_members}
+        if not my_space_ids:
+            return []
+
+        peer_members = await SpaceMemberDocument.find(
+            {
+                "user_id": str(peer_user_id),
+                "space_id": {"$in": list(my_space_ids)},
+            }
+        ).to_list()
+        shared_ids = [str(member.space_id) for member in peer_members]
+        if not shared_ids:
+            return []
+
+        spaces = await SpaceDocument.find(
+            {"_id": {"$in": [parse_object_id(sid) for sid in shared_ids]}}
+        ).to_list()
+        return [
+            SharedSpaceSummary(id=space.str_id, name=space.name, slug=space.slug)
+            for space in spaces
+        ]
 
     def _to_ping_response(self, doc: PingDocument) -> PingResponse:
         return PingResponse(

@@ -60,6 +60,7 @@ async def test_get_user_profile_returns_minimal_payload_for_self(service, user_d
         "display_name": "Target User",
         "bio": "Visible profile",
         "avatar": None,
+        "is_bot": False,
         "status_emoji": None,
         "status_text": None,
         "status_expires_at": None,
@@ -76,6 +77,10 @@ async def test_get_user_profile_returns_minimal_payload_for_self(service, user_d
             "blocked_by_me": False,
             "blocks_me": False,
         },
+        "connection_timestamp": None,
+        "conversation_id": None,
+        "shared_conversations": [],
+        "shared_spaces": [],
     }
     pings_repo.get_contact_state.assert_not_awaited()
     presence_service.get_state.assert_awaited_once_with(str(user_doc["_id"]))
@@ -110,6 +115,70 @@ async def test_get_user_profile_returns_minimal_payload_for_accepted_ping(servic
         peer_user_id=str(user_doc["_id"]),
     )
     presence_service.get_state.assert_awaited_once_with(str(user_doc["_id"]))
+
+
+@pytest.mark.asyncio
+async def test_get_user_profile_includes_contact_details_when_accepted(service, user_doc):
+    from app.modules.pings.schemas import (
+        ContactExtras,
+        SharedConversationSummary,
+        SharedSpaceSummary,
+    )
+
+    svc, users_repo, pings_repo, presence_service = service
+    users_repo.find_by_id.return_value = user_doc
+    pings_repo.get_contact_state.return_value = ContactState(
+        can_ping=False,
+        chat_allowed=True,
+        ping_status="accepted",
+    )
+    pings_repo.get_contact_extras.return_value = ContactExtras(
+        connection_timestamp=datetime(2026, 3, 20, 10, 0, 0, tzinfo=UTC),
+        conversation_id="conv1",
+        shared_conversations=[
+            SharedConversationSummary(id="c1", type="group", title="Team")
+        ],
+        shared_spaces=[SharedSpaceSummary(id="s1", name="Acme", slug="acme")],
+    )
+    presence_service.get_state.return_value = "online"
+
+    result = await svc.get_user_profile(
+        current_user_id="viewer-id",
+        selected_user_id=str(user_doc["_id"]),
+        include={"contact_details"},
+    )
+
+    assert result.conversation_id == "conv1"
+    assert result.connection_timestamp is not None
+    assert [c.id for c in result.shared_conversations] == ["c1"]
+    assert [s.id for s in result.shared_spaces] == ["s1"]
+    pings_repo.get_contact_extras.assert_awaited_once_with(
+        viewer_user_id="viewer-id",
+        peer_user_id=str(user_doc["_id"]),
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_user_profile_skips_extras_when_not_accepted(service, user_doc):
+    svc, users_repo, pings_repo, presence_service = service
+    users_repo.find_by_id.return_value = user_doc
+    pings_repo.get_contact_state.return_value = ContactState(
+        can_ping=True,
+        chat_allowed=False,
+        ping_status="none",
+    )
+    presence_service.get_state.return_value = "offline"
+
+    result = await svc.get_user_profile(
+        current_user_id="viewer-id",
+        selected_user_id=str(user_doc["_id"]),
+        include={"contact_details"},
+    )
+
+    assert result.shared_conversations == []
+    assert result.shared_spaces == []
+    assert result.conversation_id is None
+    pings_repo.get_contact_extras.assert_not_awaited()
 
 
 @pytest.mark.asyncio

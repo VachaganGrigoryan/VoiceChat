@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi import APIRouter, Depends, Query, UploadFile, File
 from starlette.requests import Request
 
 from app.core.errors.openapi import build_error_responses
@@ -115,11 +115,21 @@ async def delete_my_avatar(
 async def get_user_profile(
     request: Request,
     id: str,
+    include: str | None = Query(
+        default=None,
+        description="Comma-separated extra sections to embed (e.g. 'contact_details').",
+    ),
     current_user_id: str = Depends(get_current_user_id),
     service: UsersService = Depends(get_users_service),
 ):
+    include_tokens = (
+        {token.strip() for token in include.split(",") if token.strip()}
+        if include
+        else None
+    )
     result = await service.get_user_profile(
         current_user_id=current_user_id,
         selected_user_id=id,
+        include=include_tokens,
     )
     return ok(request, data=result)

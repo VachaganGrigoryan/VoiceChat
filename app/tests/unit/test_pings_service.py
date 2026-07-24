@@ -505,3 +505,166 @@ def test_to_ping_response(service, pending_ping_doc):
     assert result.from_user_id == "u1"
     assert result.to_user_id == "u2"
     assert result.status == "pending"
+
+
+@pytest.fixture
+def notifying_service():
+    pings_repo = AsyncMock()
+    users_repo = AsyncMock()
+    notifications_service = AsyncMock()
+    pings_repo.is_blocked.return_value = False
+
+    svc = PingsService(
+        pings_repo=pings_repo,
+        users_repo=users_repo,
+        notifications_service=notifications_service,
+    )
+    return svc, pings_repo, users_repo, notifications_service
+
+
+@pytest.mark.asyncio
+async def test_send_ping_emits_ping_received_notification(
+    notifying_service, pending_ping_doc
+):
+    svc, pings_repo, users_repo, notifications = notifying_service
+    users_repo.find_by_id.return_value = {"_id": "u2", "username": "target"}
+    pings_repo.find_by_pair_id.return_value = None
+    pings_repo.create_ping.return_value = pending_ping_doc
+
+    await svc.send_ping(from_user_id="u1", to_user_id="u2")
+
+    notifications.create_notification.assert_awaited_once_with(
+        user_id="u2",
+        kind="ping_received",
+        source_type="ping",
+        data={"peer_user_id": "u1"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_accept_ping_emits_notification_to_sender(
+    notifying_service, pending_ping_doc, accepted_ping_doc
+):
+    svc, pings_repo, _, notifications = notifying_service
+    pings_repo.find_by_id.return_value = pending_ping_doc
+    pings_repo.update_status.return_value = accepted_ping_doc
+
+    await svc.accept_ping(user_id="u2", ping_id="ping1")
+
+    notifications.create_notification.assert_awaited_once_with(
+        user_id="u1",
+        kind="ping_accepted",
+        source_type="ping",
+        data={"peer_user_id": "u2"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_decline_ping_emits_notification_to_sender(
+    notifying_service, pending_ping_doc
+):
+    svc, pings_repo, _, notifications = notifying_service
+    pings_repo.find_by_id.return_value = pending_ping_doc
+    pings_repo.update_status.return_value = {
+        **pending_ping_doc,
+        "status": "declined",
+    }
+
+    await svc.decline_ping(user_id="u2", ping_id="ping1")
+
+    notifications.create_notification.assert_awaited_once_with(
+        user_id="u1",
+        kind="ping_declined",
+        source_type="ping",
+        data={"peer_user_id": "u2"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_ping_emits_notification_to_receiver(
+    notifying_service, pending_ping_doc
+):
+    svc, pings_repo, _, notifications = notifying_service
+    pings_repo.find_by_id.return_value = pending_ping_doc
+    pings_repo.update_status.return_value = {
+        **pending_ping_doc,
+        "status": "cancelled",
+    }
+
+    await svc.cancel_ping(user_id="u1", ping_id="ping1")
+
+    notifications.create_notification.assert_awaited_once_with(
+        user_id="u2",
+        kind="ping_cancelled",
+        source_type="ping",
+        data={"peer_user_id": "u1"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_block_user_notifies_only_blocker(notifying_service, accepted_ping_doc):
+    svc, pings_repo, _, notifications = notifying_service
+    pings_repo.block_pair.return_value = {
+        **accepted_ping_doc,
+        "status": "blocked",
+    }
+
+    await svc.block_user(user_id="u1", peer_user_id="u2")
+
+    notifications.create_notification.assert_awaited_once_with(
+        user_id="u1",
+        kind="user_blocked",
+        source_type="ping",
+        data={"peer_user_id": "u2"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_contact_extras_self_returns_empty(service):
+    svc, pings_repo, _, _ = service
+
+    extras = await svc.get_contact_extras(viewer_user_id="u1", peer_user_id="u1")
+
+    assert extras.connection_timestamp is None
+    assert extras.conversation_id is None
+    assert extras.shared_conversations == []
+    assert extras.shared_spaces == []
+    pings_repo.get_pair_state.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_contact_extras_non_accepted_returns_empty(service, pending_ping_doc):
+    svc, pings_repo, _, _ = service
+    pings_repo.get_pair_state.return_value = pending_ping_doc
+
+    extras = await svc.get_contact_extras(viewer_user_id="u2", peer_user_id="u1")
+
+    assert extras.connection_timestamp is None
+    assert extras.shared_conversations == []
+    assert extras.shared_spaces == []
+
+
+@pytest.mark.asyncio
+async def test_get_contact_extras_aggregates(service, accepted_ping_doc, monkeypatch):
+    svc, pings_repo, _, _ = service
+    pings_repo.get_pair_state.return_value = accepted_ping_doc
+
+    from app.modules.pings.schemas import (
+        SharedConversationSummary,
+        SharedSpaceSummary,
+    )
+
+    async def fake_conversations(**_kwargs):
+        return [SharedConversationSummary(id="c1", type="group", title="Team")]
+
+    async def fake_spaces(**_kwargs):
+        return [SharedSpaceSummary(id="s1", name="Acme", slug="acme")]
+
+    monkeypatch.setattr(svc, "_shared_conversations", fake_conversations)
+    monkeypatch.setattr(svc, "_shared_spaces", fake_spaces)
+
+    extras = await svc.get_contact_extras(viewer_user_id="u2", peer_user_id="u1")
+
+    assert extras.connection_timestamp is not None
+    assert [c.id for c in extras.shared_conversations] == ["c1"]
+    assert [s.id for s in extras.shared_spaces] == ["s1"]

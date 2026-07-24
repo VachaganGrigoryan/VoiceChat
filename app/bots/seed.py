@@ -28,6 +28,7 @@ async def _ensure_bot_user(bot: BuiltInBot) -> UserDocument:
         display_name=bot.name,
         is_verified=True,
         is_private=True,
+        is_bot=True,
         default_discovery_enabled=False,
         created_at=now,
         updated_at=now,

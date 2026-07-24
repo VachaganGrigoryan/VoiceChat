@@ -23,6 +23,8 @@ class UserDocument(BaseDocument):
     username_updated_at: datetime | None = None
     has_passkey: bool = False
     passkey_login_enabled: bool = True
+    is_bot: bool = False
+
     # Rich profile + notification preferences (finalize-messenger-conversation-model).
     status_emoji: str | None = None
     status_text: str | None = None

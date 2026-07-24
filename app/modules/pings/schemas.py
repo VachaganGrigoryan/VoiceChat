@@ -56,3 +56,24 @@ class ContactListItem(BaseModel):
     ping: PingResponse
     peer: PeerUserSummary
     conversation_id: StrId | None = None
+
+
+class SharedConversationSummary(BaseModel):
+    id: StrId
+    type: str
+    title: str | None = None
+
+
+class SharedSpaceSummary(BaseModel):
+    id: StrId
+    name: str
+    slug: str
+
+
+class ContactExtras(BaseModel):
+    """Extra contact data folded into the `/users/{id}` response on demand."""
+
+    connection_timestamp: datetime | None = None
+    conversation_id: StrId | None = None
+    shared_conversations: list[SharedConversationSummary] = Field(default_factory=list)
+    shared_spaces: list[SharedSpaceSummary] = Field(default_factory=list)

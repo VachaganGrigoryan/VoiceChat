@@ -6,7 +6,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.db.object_id import StrId
-from app.modules.pings.schemas import ContactState
+from app.modules.pings.schemas import (
+    ContactState,
+    SharedConversationSummary,
+    SharedSpaceSummary,
+)
 from app.modules.realtime.presence.base import PresenceState
 
 
@@ -21,6 +25,7 @@ class UserProfileResponse(BaseModel):
     bio: str | None = None
     avatar: dict | None = None
     is_private: bool
+    is_bot: bool = False
     default_discovery_enabled: bool
     last_seen_at: datetime | None = None
     username_updated_at: datetime | None = None
@@ -44,6 +49,7 @@ class SelectedUserProfileResponse(BaseModel):
     display_name: str | None = None
     bio: str | None = None
     avatar: dict | None = None
+    is_bot: bool = False
     status_emoji: str | None = None
     status_text: str | None = None
     status_expires_at: datetime | None = None
@@ -54,6 +60,12 @@ class SelectedUserProfileResponse(BaseModel):
     last_seen_at: datetime | None = None
     profile_visibility: Literal["full", "limited"] = "full"
     relationship: ContactState
+    # Contact extras, populated only when requested via `include=contact_details`
+    # and the viewer has an accepted contact relationship with this user.
+    connection_timestamp: datetime | None = None
+    conversation_id: StrId | None = None
+    shared_conversations: list[SharedConversationSummary] = Field(default_factory=list)
+    shared_spaces: list[SharedSpaceSummary] = Field(default_factory=list)
 
 
 class UpdateProfileRequest(BaseModel):

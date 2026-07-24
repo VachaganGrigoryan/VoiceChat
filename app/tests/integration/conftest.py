@@ -90,6 +90,7 @@ TEST_COLLECTIONS = [
     "webhooks",
     "reports",
     "audit_logs",
+    "slash_commands",
 ]
 
 

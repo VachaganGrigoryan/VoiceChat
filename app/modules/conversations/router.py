@@ -203,6 +203,7 @@ async def create_group(
         user_id=user.str_id,
         title=body.title,
         participant_ids=body.participant_ids,
+        space_id=body.space_id,
     )
     data = (
         await service.views_for_user(user_id=user.str_id, conversations=[conversation])
@@ -233,6 +234,7 @@ async def create_channel(
         visibility=body.visibility,
         posting_policy=body.posting_policy,
         slug=body.slug,
+        space_id=body.space_id,
     )
     data = (
         await service.views_for_user(user_id=user.str_id, conversations=[conversation])
@@ -423,6 +425,7 @@ async def list_conversations(
     cursor: Optional[str] = Query(None),
     archived: bool = Query(False),
     folder: Optional[str] = Query(None),
+    space_id: Optional[str] = Query(None),
     user=Depends(require_verified_user),
     service: ConversationsService = Depends(get_conversations_service),
 ):
@@ -432,6 +435,7 @@ async def list_conversations(
         cursor=cursor,
         archived=archived,
         folder=folder,
+        space_id=space_id,
     )
     data = await service.views_for_user(user_id=user.str_id, conversations=items)
     return ok_paginated(
