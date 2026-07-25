@@ -72,6 +72,7 @@ class SpacesRepository(BaseRepository[SpaceDocument]):
         expires_at: datetime | None,
         max_uses: int | None,
         requires_approval: bool,
+        invitee_id: str | None = None,
     ) -> InviteLinkDocument:
         now = datetime.now(UTC)
         invite = InviteLinkDocument(
@@ -82,6 +83,7 @@ class SpacesRepository(BaseRepository[SpaceDocument]):
             expires_at=expires_at,
             max_uses=max_uses,
             requires_approval=requires_approval,
+            invitee_id=invitee_id,
             created_at=now,
             updated_at=now,
         )
@@ -182,3 +184,27 @@ class SpacesRepository(BaseRepository[SpaceDocument]):
             return_document=ReturnDocument.AFTER,
         )
         return JoinRequestDocument.model_validate(raw) if raw is not None else None
+
+    async def update_space(
+        self,
+        *,
+        space_id: str,
+        name: str | None = None,
+        visibility: str | None = None,
+        settings: dict[str, Any] | None = None,
+    ) -> SpaceDocument | None:
+        now = datetime.now(UTC)
+        updates: dict[str, Any] = {"updated_at": now}
+        if name is not None:
+            updates["name"] = name.strip()
+        if visibility is not None:
+            updates["visibility"] = visibility
+        if settings is not None:
+            updates["settings"] = settings
+
+        raw = await SpaceDocument.get_pymongo_collection().find_one_and_update(
+            {"_id": parse_object_id(space_id)},
+            {"$set": updates},
+            return_document=ReturnDocument.AFTER,
+        )
+        return SpaceDocument.model_validate(raw) if raw is not None else None

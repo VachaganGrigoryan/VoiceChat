@@ -14,6 +14,7 @@ from app.modules.realtime.emits import (
     emit_ping_declined,
     emit_presence_update,
     emit_chat_permission_updated,
+    emit_space_invite,
 )
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "emit_ping_declined",
     "emit_presence_update",
     "emit_chat_permission_updated",
+    "emit_space_invite",
 ]

@@ -9,11 +9,14 @@ from app.core.security import get_current_user_id
 from app.modules.auth.repository import UsersRepository
 from app.modules.pings.dependencies import get_pings_service
 from app.modules.realtime.presence.factory import get_presence_backend
+from app.modules.conversations.repository import ConversationsRepository
 from app.modules.users.schemas import (
     SelectedUserProfileResponse,
+    SetMainChannelRequest,
     UpdateProfileRequest,
     UpdateStatusRequest,
     UpdateUsernameRequest,
+    UserChannelView,
     UserProfileResponse,
 )
 from app.modules.users.service import UsersService
@@ -31,6 +34,7 @@ def get_users_service() -> UsersService:
         UsersRepository(),
         get_pings_service(),
         get_presence_backend(),
+        ConversationsRepository(),
     )
 
 
@@ -90,6 +94,19 @@ async def update_my_username(
     return ok(request, data=result)
 
 
+@router.patch("/me/main-channel", response_model=SuccessResponse[UserProfileResponse])
+async def set_my_main_channel(
+    request: Request,
+    body: SetMainChannelRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    service: UsersService = Depends(get_users_service),
+):
+    result = await service.set_main_channel(
+        user_id=current_user_id, channel_id=body.channel_id
+    )
+    return ok(request, data=result)
+
+
 @router.patch("/me/avatar", response_model=SuccessResponse[UserProfileResponse])
 async def upload_my_avatar(
     request: Request,
@@ -108,6 +125,24 @@ async def delete_my_avatar(
     service: UsersService = Depends(get_users_service),
 ):
     result = await service.delete_avatar(user_id=current_user_id)
+    return ok(request, data=result)
+
+
+@router.get(
+    "/{user_id}/channels",
+    response_model=SuccessResponse[list[UserChannelView]],
+)
+async def list_user_channels(
+    request: Request,
+    user_id: str,
+    limit: int = Query(default=50, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    current_user_id: str = Depends(get_current_user_id),
+    service: UsersService = Depends(get_users_service),
+):
+    result = await service.list_user_channels(
+        user_id=user_id, limit=limit, offset=offset
+    )
     return ok(request, data=result)
 
 

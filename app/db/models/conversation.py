@@ -32,7 +32,13 @@ class ConversationDocument(TimestampedDocument):
     # All default so existing dm/group docs remain valid without a rewrite.
     visibility: Literal["private", "public"] = "private"
     posting_policy: Literal["everyone", "admins"] = "everyone"
+    # Who may read this channel's feed of posts. Independent of ``visibility``
+    # (which governs slug-based discoverability): ``members`` keeps today's
+    # membership-gated behavior; ``contacts`` opens reads to the owner's accepted
+    # contacts; ``public`` to any authenticated user. Only meaningful for channels.
+    read_policy: Literal["members", "contacts", "public"] = "members"
     space_id: StrId | None = None
+    space_visibility: Literal["space_public", "invite_only"] | None = None
     # Thread-as-sub-conversation linkage (type == "thread").
     parent_conversation_id: StrId | None = None
     root_message_id: str | None = None

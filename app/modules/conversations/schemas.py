@@ -30,6 +30,7 @@ PreviewType = Literal[
 ]
 ConversationVisibility = Literal["private", "public"]
 PostingPolicy = Literal["everyone", "admins"]
+ChannelReadPolicy = Literal["members", "contacts", "public"]
 NotificationLevel = Literal["all", "mentions", "none"]
 
 
@@ -65,7 +66,9 @@ class ConversationView(BaseModel):
     image: dict | None = None
     visibility: ConversationVisibility = "private"
     posting_policy: PostingPolicy = "everyone"
+    read_policy: ChannelReadPolicy = "members"
     space_id: StrId | None = None
+    space_visibility: Literal["space_public", "invite_only"] | None = None
     parent_conversation_id: StrId | None = None
     root_message_id: str | None = None
     slug: str | None = None
@@ -125,6 +128,7 @@ class CreateGroupRequest(BaseModel):
     title: str = Field(min_length=1, max_length=80)
     participant_ids: list[str] = Field(min_length=1, max_length=100)
     space_id: str | None = None
+    space_visibility: Literal["space_public", "invite_only"] | None = None
 
 
 class ConvertThreadToGroupRequest(BaseModel):
@@ -150,8 +154,10 @@ class CreateChannelRequest(BaseModel):
     description: str | None = Field(default=None, max_length=500)
     visibility: ConversationVisibility = "private"
     posting_policy: PostingPolicy = "admins"
+    read_policy: ChannelReadPolicy = "members"
     slug: str | None = Field(default=None, pattern=SLUG_PATTERN)
     space_id: str | None = None
+    space_visibility: Literal["space_public", "invite_only"] | None = None
 
     @model_validator(mode="after")
     def validate_public_slug(self) -> "CreateChannelRequest":

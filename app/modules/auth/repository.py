@@ -191,6 +191,20 @@ class UsersRepository(BaseRepository[UserDocument]):
                 status_code=409,
             ) from exc
 
+    async def update_main_channel(
+        self,
+        *,
+        user_id: str,
+        channel_id: str | None,
+    ) -> UserDocument:
+        user = await self._get_or_404(user_id)
+        return await user.set(
+            {
+                UserDocument.main_channel_id: channel_id,
+                UserDocument.updated_at: datetime.now(UTC),
+            }
+        )
+
     async def update_avatar(
         self,
         *,

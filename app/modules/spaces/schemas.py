@@ -23,6 +23,13 @@ class SpaceView(BaseModel):
     settings: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+    viewer_role: Literal["owner", "admin", "member"] | None = None
+
+class SpaceMemberUserSummary(BaseModel):
+    id: str
+    username: str | None = None
+    display_name: str | None = None
+    avatar: dict | None = None
 
 class SpaceMemberView(BaseModel):
     id: str
@@ -30,6 +37,7 @@ class SpaceMemberView(BaseModel):
     user_id: str
     role: Literal["owner", "admin", "member"]
     joined_at: datetime
+    user: SpaceMemberUserSummary | None = None
 
 class CreateSpaceInviteRequest(BaseModel):
     expires_at: datetime | None = None
@@ -47,6 +55,10 @@ class SpaceInviteLinkView(BaseModel):
     use_count: int
     requires_approval: bool
     revoked: bool
+    invitee_id: str | None = None
+
+class SpaceUserInviteRequest(BaseModel):
+    user_id: str
 
 class SpaceJoinRequestView(BaseModel):
     id: str
@@ -62,3 +74,15 @@ class RedeemSpaceInviteResponse(BaseModel):
     status: Literal["joined", "pending"]
     space: SpaceView | None = None
     join_request: SpaceJoinRequestView | None = None
+
+class SpaceUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    visibility: Literal["private", "public"] | None = None
+    settings: dict[str, Any] | None = None
+
+class SpaceChannelView(BaseModel):
+    id: str
+    title: str | None = None
+    description: str | None = None
+    space_visibility: Literal["space_public", "invite_only"] | None = None
+    joined: bool = False

@@ -15,13 +15,21 @@ from app.modules.spaces.schemas import (
     SpaceView,
     SpaceInviteLinkView,
     SpaceJoinRequestView,
+    SpaceMemberUserSummary,
+    SpaceMemberView,
+    SpaceChannelView,
 )
 
 _MANAGER_ROLES = {"owner", "admin"}
 
 class SpacesService:
-    def __init__(self, repo: SpacesRepository) -> None:
+    def __init__(
+        self,
+        repo: SpacesRepository,
+        notifications_service: Any | None = None,
+    ) -> None:
         self.repo = repo
+        self.notifications_service = notifications_service
 
     async def create_space(
         self,
@@ -75,7 +83,7 @@ class SpacesService:
         )
         await log.insert()
 
-        return self._to_view(space)
+        return self._to_view(space, viewer_role="owner")
 
     async def get_space(self, *, space_id: str, user_id: str) -> SpaceView:
         space = await self.repo.get_by_id(space_id)
@@ -87,8 +95,8 @@ class SpacesService:
             )
 
         # Enforce membership for private spaces
+        membership = await self.repo.get_membership(space_id=space_id, user_id=user_id)
         if space.visibility == "private":
-            membership = await self.repo.get_membership(space_id=space_id, user_id=user_id)
             if membership is None:
                 raise AppError(
                     code="SPACE_FORBIDDEN",
@@ -96,7 +104,8 @@ class SpacesService:
                     status_code=403,
                 )
 
-        return self._to_view(space)
+        viewer_role = membership.role if membership is not None else None
+        return self._to_view(space, viewer_role=viewer_role)
 
     async def list_for_user(self, *, user_id: str) -> list[SpaceView]:
         memberships = await self.repo.list_memberships_for_user(user_id=user_id)
@@ -104,7 +113,7 @@ class SpacesService:
         for member in memberships:
             space = await self.repo.get_by_id(str(member.space_id))
             if space is not None:
-                spaces.append(self._to_view(space))
+                spaces.append(self._to_view(space, viewer_role=member.role))
         return spaces
 
     async def check_membership(self, *, space_id: str, user_id: str) -> bool:
@@ -148,6 +157,58 @@ class SpacesService:
         )
         return self._to_invite_view(invite)
 
+    async def invite_user(
+        self,
+        *,
+        actor_user_id: str,
+        space_id: str,
+        user_id: str,
+    ) -> SpaceInviteLinkView:
+        await self.require_manager(space_id=space_id, user_id=actor_user_id)
+
+        space = await self.repo.get_by_id(space_id)
+        if space is None:
+            raise AppError(
+                code="SPACE_NOT_FOUND",
+                message="Space not found",
+                status_code=404,
+            )
+
+        # Check if user is already a member
+        existing = await self.repo.get_membership(space_id=space_id, user_id=user_id)
+        if existing is not None:
+            raise AppError(
+                code="ALREADY_MEMBER",
+                message="User is already a member of this space",
+                status_code=409,
+            )
+
+        invite = await self.repo.create_invite_link(
+            target_id=space_id,
+            created_by=actor_user_id,
+            code=secrets.token_urlsafe(12),
+            expires_at=None,
+            max_uses=1,
+            requires_approval=False,
+            invitee_id=user_id,
+        )
+
+        if self.notifications_service is not None:
+            await self.notifications_service.create_notification(
+                user_id=user_id,
+                kind="space_invite",
+                source_type="space",
+                source_id=space_id,
+                data={
+                    "space_id": space_id,
+                    "space_name": space.name,
+                    "invited_by": actor_user_id,
+                    "code": invite.code,
+                },
+            )
+
+        return self._to_invite_view(invite)
+
     async def list_invites(
         self, *, actor_user_id: str, space_id: str
     ) -> list[SpaceInviteLinkView]:
@@ -177,6 +238,13 @@ class SpacesService:
                 code="INVITE_NOT_FOUND",
                 message="Invite link not found",
                 status_code=404,
+            )
+
+        if getattr(invite, "invitee_id", None) is not None and str(invite.invitee_id) != str(user_id):
+            raise AppError(
+                code="INVITE_FORBIDDEN",
+                message="This invite is not intended for you",
+                status_code=403,
             )
 
         space = await self.repo.get_by_id(str(invite.target_id))
@@ -328,7 +396,7 @@ class SpacesService:
             pending = await self.repo.create_join_request(space_id=space_id, user_id=user_id)
         return self._to_join_request_view(pending)
 
-    def _to_view(self, space: SpaceDocument) -> SpaceView:
+    def _to_view(self, space: SpaceDocument, viewer_role: Literal["owner", "admin", "member"] | None = None) -> SpaceView:
         return SpaceView(
             id=space.str_id,
             name=space.name,
@@ -340,7 +408,158 @@ class SpacesService:
             settings=space.settings,
             created_at=space.created_at,
             updated_at=space.updated_at,
+            viewer_role=viewer_role,
         )
+
+    async def list_channels(self, *, space_id: str, user_id: str) -> list[SpaceChannelView]:
+        is_member = await self.check_membership(space_id=space_id, user_id=user_id)
+        if not is_member:
+            raise AppError(
+                code="SPACE_FORBIDDEN",
+                message="Not a member of this space",
+                status_code=403,
+            )
+
+        from app.db.models import ConversationDocument
+        from app.db.object_id import parse_object_id
+
+        sp_id = parse_object_id(space_id)
+        channels = await ConversationDocument.find({
+            "space_id": sp_id,
+            "type": "channel",
+            "$or": [
+                {"space_visibility": "space_public"},
+                {"participant_ids": str(user_id)}
+            ]
+        }).to_list()
+
+        return [
+            SpaceChannelView(
+                id=c.str_id,
+                title=c.title,
+                description=c.description,
+                space_visibility=c.space_visibility,
+                joined=str(user_id) in c.participant_ids,
+            )
+            for c in channels
+        ]
+
+    async def join_channel(self, *, space_id: str, conversation_id: str, user_id: str) -> None:
+        is_member = await self.check_membership(space_id=space_id, user_id=user_id)
+        if not is_member:
+            raise AppError(
+                code="SPACE_FORBIDDEN",
+                message="Not a member of this space",
+                status_code=403,
+            )
+
+        from app.db.models import ConversationDocument
+        from app.db.object_id import parse_object_id
+
+        conv = await ConversationDocument.get(parse_object_id(conversation_id))
+        if conv is None or conv.type != "channel" or getattr(conv, "space_id", None) != parse_object_id(space_id):
+            raise AppError(
+                code="CONVERSATION_NOT_FOUND",
+                message="Channel not found in this space",
+                status_code=404,
+            )
+
+        if conv.space_visibility != "space_public":
+            raise AppError(
+                code="CHANNEL_JOIN_FORBIDDEN",
+                message="Cannot join an invite-only channel",
+                status_code=403,
+            )
+
+        from app.modules.conversations.repository import ConversationsRepository
+        conv_repo = ConversationsRepository()
+
+        await conv_repo.ensure_participant(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            role="member",
+        )
+        await conv_repo.add_participant_id(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+
+    async def list_members(self, *, space_id: str, user_id: str) -> list[SpaceMemberView]:
+        is_member = await self.check_membership(space_id=space_id, user_id=user_id)
+        if not is_member:
+            raise AppError(
+                code="SPACE_FORBIDDEN",
+                message="Not a member of this space",
+                status_code=403,
+            )
+
+        memberships = await self.repo.list_members_for_space(space_id=space_id)
+        if not memberships:
+            return []
+
+        user_ids = [str(m.user_id) for m in memberships]
+        from app.modules.auth.repository import UsersRepository
+        users_map = await UsersRepository().find_by_ids(user_ids)
+
+        return [
+            SpaceMemberView(
+                id=m.str_id,
+                space_id=str(m.space_id),
+                user_id=str(m.user_id),
+                role=m.role,
+                joined_at=m.joined_at,
+                user=SpaceMemberUserSummary(
+                    id=str(m.user_id),
+                    username=users_map[str(m.user_id)].username if str(m.user_id) in users_map else None,
+                    display_name=users_map[str(m.user_id)].display_name if str(m.user_id) in users_map else None,
+                    avatar=users_map[str(m.user_id)].avatar if str(m.user_id) in users_map else None,
+                )
+            )
+            for m in memberships
+        ]
+
+    async def update_space(
+        self,
+        *,
+        actor_user_id: str,
+        space_id: str,
+        name: str | None = None,
+        visibility: Literal["private", "public"] | None = None,
+        settings: dict[str, Any] | None = None,
+    ) -> SpaceView:
+        await self.require_manager(space_id=space_id, user_id=actor_user_id)
+
+        updated = await self.repo.update_space(
+            space_id=space_id,
+            name=name,
+            visibility=visibility,
+            settings=settings,
+        )
+        if updated is None:
+            raise AppError(
+                code="SPACE_NOT_FOUND",
+                message="Space not found",
+                status_code=404,
+            )
+
+        from app.db.models import AuditLogDocument
+        log = AuditLogDocument(
+            actor_id=actor_user_id,
+            action="update_space",
+            target_type="space",
+            target_id=space_id,
+            space_id=space_id,
+            data={
+                "name": name,
+                "visibility": visibility,
+                "settings": settings,
+            },
+        )
+        await log.insert()
+
+        membership = await self.repo.get_membership(space_id=space_id, user_id=actor_user_id)
+        viewer_role = membership.role if membership is not None else None
+        return self._to_view(updated, viewer_role=viewer_role)
 
     def _to_invite_view(self, invite: InviteLinkDocument) -> SpaceInviteLinkView:
         return SpaceInviteLinkView(
@@ -354,6 +573,7 @@ class SpacesService:
             use_count=invite.use_count,
             requires_approval=invite.requires_approval,
             revoked=invite.revoked,
+            invitee_id=getattr(invite, "invitee_id", None),
         )
 
     def _to_join_request_view(self, request: JoinRequestDocument) -> SpaceJoinRequestView:

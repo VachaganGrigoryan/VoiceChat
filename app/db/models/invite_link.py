@@ -23,6 +23,7 @@ class InviteLinkDocument(TimestampedDocument):
     code: str
     created_by: StrId
     expires_at: datetime | None = None
+    invitee_id: StrId | None = None
     max_uses: int | None = Field(default=None, ge=1)
     use_count: int = Field(default=0, ge=0)
     requires_approval: bool = False

@@ -48,6 +48,7 @@ def to_conversation_view(
         image=build_group_avatar_payload(conversation.image),
         visibility=conversation.visibility,
         posting_policy=conversation.posting_policy,
+        read_policy=getattr(conversation, "read_policy", "members"),
         space_id=(
             str(conversation.space_id) if conversation.space_id is not None else None
         ),

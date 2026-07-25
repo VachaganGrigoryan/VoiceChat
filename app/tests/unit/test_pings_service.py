@@ -668,3 +668,54 @@ async def test_get_contact_extras_aggregates(service, accepted_ping_doc, monkeyp
     assert extras.connection_timestamp is not None
     assert [c.id for c in extras.shared_conversations] == ["c1"]
     assert [s.id for s in extras.shared_spaces] == ["s1"]
+
+
+@pytest.mark.asyncio
+async def test_shares_context_true_due_to_shared_conversations(service, monkeypatch):
+    svc, pings_repo, _, _ = service
+
+    async def fake_conversations(**_kwargs):
+        return [1]  # non-empty
+
+    async def fake_spaces(**_kwargs):
+        return []
+
+    monkeypatch.setattr(svc, "_shared_conversations", fake_conversations)
+    monkeypatch.setattr(svc, "_shared_spaces", fake_spaces)
+
+    res = await svc.shares_context(viewer_user_id="u2", peer_user_id="u1")
+    assert res is True
+
+
+@pytest.mark.asyncio
+async def test_shares_context_true_due_to_shared_spaces(service, monkeypatch):
+    svc, pings_repo, _, _ = service
+
+    async def fake_conversations(**_kwargs):
+        return []
+
+    async def fake_spaces(**_kwargs):
+        return [1]  # non-empty
+
+    monkeypatch.setattr(svc, "_shared_conversations", fake_conversations)
+    monkeypatch.setattr(svc, "_shared_spaces", fake_spaces)
+
+    res = await svc.shares_context(viewer_user_id="u2", peer_user_id="u1")
+    assert res is True
+
+
+@pytest.mark.asyncio
+async def test_shares_context_false_when_none_shared(service, monkeypatch):
+    svc, pings_repo, _, _ = service
+
+    async def fake_conversations(**_kwargs):
+        return []
+
+    async def fake_spaces(**_kwargs):
+        return []
+
+    monkeypatch.setattr(svc, "_shared_conversations", fake_conversations)
+    monkeypatch.setattr(svc, "_shared_spaces", fake_spaces)
+
+    res = await svc.shares_context(viewer_user_id="u2", peer_user_id="u1")
+    assert res is False

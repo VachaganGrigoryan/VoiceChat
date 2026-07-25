@@ -46,6 +46,7 @@ class CreateConversationsMixin(BaseConversationsService):
         participant_ids: list[str],
         enforce_chat_permission: bool = True,
         space_id: str | None = None,
+        space_visibility: str | None = None,
     ) -> ConversationDocument:
         member_ids = sorted({str(pid) for pid in participant_ids if str(pid) != user_id})
         if not member_ids:
@@ -75,7 +76,7 @@ class CreateConversationsMixin(BaseConversationsService):
                         status_code=400,
                     )
 
-        if enforce_chat_permission:
+        if enforce_chat_permission and space_id is None:
             for participant_id in member_ids:
                 await self._ensure_can_message(
                     sender_id=user_id, receiver_id=participant_id
@@ -87,6 +88,7 @@ class CreateConversationsMixin(BaseConversationsService):
             participant_ids=all_participants,
             title=title.strip(),
             space_id=space_id,
+            space_visibility=space_visibility,
         )
         await self.repo.ensure_participant(
             conversation_id=conversation.str_id, user_id=user_id, role="owner"
@@ -108,8 +110,10 @@ class CreateConversationsMixin(BaseConversationsService):
         description: str | None = None,
         visibility: str = "private",
         posting_policy: str = "admins",
+        read_policy: str = "members",
         slug: str | None = None,
         space_id: str | None = None,
+        space_visibility: str | None = None,
     ) -> ConversationDocument:
         """Create a broadcast ``channel``.
 
@@ -139,10 +143,11 @@ class CreateConversationsMixin(BaseConversationsService):
                         status_code=400,
                     )
 
-        for participant_id in member_ids:
-            await self._ensure_can_message(
-                sender_id=user_id, receiver_id=participant_id
-            )
+        if space_id is None:
+            for participant_id in member_ids:
+                await self._ensure_can_message(
+                    sender_id=user_id, receiver_id=participant_id
+                )
 
         all_participants = sorted({str(user_id), *member_ids})
         try:
@@ -153,8 +158,10 @@ class CreateConversationsMixin(BaseConversationsService):
                 description=description.strip() if description else None,
                 visibility=visibility,
                 posting_policy=posting_policy,
+                read_policy=read_policy,
                 slug=slug,
                 space_id=space_id,
+                space_visibility=space_visibility,
             )
         except DuplicateKeyError as exc:
             raise AppError(

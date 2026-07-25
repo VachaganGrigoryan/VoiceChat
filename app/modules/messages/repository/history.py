@@ -63,6 +63,67 @@ class HistoryRepositoryMixin:
 
         return [MessageDocument.model_validate(item) for item in items], next_cursor
 
+    async def list_feed_for_conversations(
+        self,
+        *,
+        conversation_ids: list[str],
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> tuple[list[MessageDocument], str | None]:
+        """Newest-first top-level posts across several channels (feed aggregate).
+
+        Unlike ``list_history_for_conversation`` this spans multiple conversations
+        and applies no per-user ``hidden_for`` filter — feed viewers are not
+        members, so they have no hidden entries. Excludes thread replies and
+        scheduled messages. Cursor is ``(created_at, message_id)``, same shape as
+        the single-conversation history cursor.
+        """
+        if limit < 1 or limit > 100:
+            raise AppError(
+                code="INVALID_LIMIT",
+                message="limit must be between 1 and 100",
+                status_code=400,
+            )
+        if not conversation_ids:
+            return [], None
+
+        q: dict[str, Any] = {
+            "conversation_id": {"$in": conversation_ids},
+            "thread_root_id": None,
+            "state": {"$ne": "scheduled"},
+        }
+
+        if cursor:
+            cursor_data = decode_cursor(
+                cursor,
+                required_fields={"created_at", "message_id"},
+            )
+            cursor_created_at = cursor_data["created_at"]
+            cursor_message_id = str(cursor_data["message_id"])
+            q["$or"] = [
+                {"created_at": {"$lt": cursor_created_at}},
+                {
+                    "$and": [
+                        {"created_at": cursor_created_at},
+                        {"_id": {"$lt": _oid(cursor_message_id)}},
+                    ]
+                },
+            ]
+
+        cur = self.col.find(q).sort([("created_at", -1), ("_id", -1)]).limit(limit + 1)
+        items = await cur.to_list(length=limit + 1)
+
+        next_cursor: str | None = None
+        if len(items) > limit:
+            last_visible = items[limit - 1]
+            next_cursor = encode_cursor(
+                created_at=last_visible["created_at"],
+                message_id=str(last_visible["_id"]),
+            )
+            items = items[:limit]
+
+        return [MessageDocument.model_validate(item) for item in items], next_cursor
+
     async def search_messages(
         self,
         *,

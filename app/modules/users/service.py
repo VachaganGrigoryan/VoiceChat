@@ -7,14 +7,16 @@ from bson import ObjectId
 from fastapi import UploadFile
 
 from app.core.errors import AppError
-from app.db.models import UserDocument
+from app.db.models import ConversationDocument, UserDocument
 from app.modules.auth.repository import UsersRepository
 from app.modules.auth.username import is_valid_username, normalize_username
+from app.modules.conversations.repository import ConversationsRepository
 from app.modules.users.avatar import build_user_avatar_payload
 from app.modules.users.schemas import (
     SelectedUserProfileResponse,
     UpdateProfileRequest,
     UpdateStatusRequest,
+    UserChannelView,
     UserProfileResponse,
 )
 from app.modules.pings.schemas import ContactExtras, ContactState
@@ -28,6 +30,9 @@ ALLOWED_AVATAR_CONTENT_TYPES: dict[str, str] = {
 }
 
 MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024
+
+# Bound the profile channel list; a user is unlikely to own more than a handful.
+MAX_PROFILE_CHANNELS = 50
 
 
 class PresenceServiceProto(Protocol):
@@ -44,6 +49,10 @@ class PingsServiceProto(Protocol):
     async def get_contact_extras(
         self, *, viewer_user_id: str, peer_user_id: str
     ) -> ContactExtras: ...
+
+    async def shares_context(
+        self, viewer_user_id: str, peer_user_id: str
+    ) -> bool: ...
 
 
 def _strip_or_none(value: str | None) -> str | None:
@@ -67,10 +76,12 @@ class UsersService:
         users: UsersRepository,
         pings: PingsServiceProto,
         presence_service: "PresenceServiceProto | None" = None,
+        conversations: "ConversationsRepository | None" = None,
     ):
         self.users = users
         self.pings = pings
         self.presence_service = presence_service
+        self.conversations = conversations
 
     async def get_me(self, *, user_id: str) -> UserProfileResponse:
         user = await self.users.find_by_id(user_id)
@@ -100,12 +111,19 @@ class UsersService:
                 viewer_user_id=current_user_id,
                 peer_user_id=selected_user_id,
             )
+            shares_ctx = await self.pings.shares_context(
+                viewer_user_id=current_user_id,
+                peer_user_id=selected_user_id,
+            )
+            if not isinstance(shares_ctx, bool):
+                shares_ctx = False
         else:
             relationship = ContactState(
                 can_ping=False,
                 chat_allowed=False,
                 ping_status="none",
             )
+            shares_ctx = True
 
         extras: ContactExtras | None = None
         if include and "contact_details" in include and relationship.ping_status == "accepted":
@@ -123,6 +141,7 @@ class UsersService:
             relationship=relationship,
             include_private_profile=has_private_access or not _doc_value(user, "is_private"),
             extras=extras,
+            shares_context=shares_ctx,
         )
 
     async def update_me(
@@ -255,6 +274,106 @@ class UsersService:
         updated = await self.users.update_avatar(user_id=user_id, avatar=None)
         return self._to_profile_response(updated)
 
+    def _require_conversations(self) -> ConversationsRepository:
+        if self.conversations is None:
+            raise AppError(
+                code="CHANNELS_UNAVAILABLE",
+                message="Channel access is not configured",
+                status_code=500,
+            )
+        return self.conversations
+
+    async def set_main_channel(
+        self,
+        *,
+        user_id: str,
+        channel_id: str | None,
+    ) -> UserProfileResponse:
+        """Pin (or clear) the public channel shown as the profile's main timeline.
+
+        Only the channel's owner (its creator) may pin it, and only public
+        channels are eligible so visitors can always view the pinned timeline.
+        """
+        if channel_id is not None:
+            conversations = self._require_conversations()
+            channel = await conversations.get_by_id(
+                channel_id, invalid_message="Invalid channel id"
+            )
+            if channel is None or channel.type != "channel":
+                raise AppError(
+                    code="CHANNEL_NOT_FOUND",
+                    message="Channel not found",
+                    status_code=404,
+                )
+            if str(channel.created_by) != str(user_id):
+                raise AppError(
+                    code="CHANNEL_NOT_OWNED",
+                    message="Only the channel owner can pin it as main",
+                    status_code=403,
+                )
+            if channel.visibility != "public":
+                raise AppError(
+                    code="CHANNEL_NOT_PUBLIC",
+                    message="Only a public channel can be pinned as main",
+                    status_code=400,
+                )
+
+        user = await self.users.update_main_channel(
+            user_id=user_id, channel_id=channel_id
+        )
+        return self._to_profile_response(user)
+
+    async def list_user_channels(
+        self,
+        *,
+        user_id: str,
+        limit: int = MAX_PROFILE_CHANNELS,
+        offset: int = 0,
+    ) -> list[UserChannelView]:
+        """Public channels owned by ``user_id``, main channel first.
+
+        Shared by the owner's ``/me`` page and visitors on ``/profile/:id``.
+        """
+        user = await self.users.find_by_id(user_id)
+        if not user:
+            raise AppError(
+                code="USER_NOT_FOUND", message="User not found", status_code=404
+            )
+
+        conversations = self._require_conversations()
+        capped = max(1, min(limit, MAX_PROFILE_CHANNELS))
+        channels = await conversations.list_public_channels_by_creator(
+            creator_id=user_id, limit=capped, skip=max(0, offset)
+        )
+
+        main_channel_id = _doc_value(user, "main_channel_id")
+        views = [
+            self._to_channel_view(channel, main_channel_id=main_channel_id)
+            for channel in channels
+        ]
+        # Surface the pinned main channel first; the rest keep newest-first order.
+        views.sort(key=lambda view: not view.is_main)
+        return views
+
+    def _to_channel_view(
+        self, channel: ConversationDocument, *, main_channel_id: str | None
+    ) -> UserChannelView:
+        channel_id = _doc_value(channel, "id", "")
+        return UserChannelView(
+            id=channel_id,
+            title=_doc_value(channel, "title"),
+            slug=_doc_value(channel, "slug"),
+            description=_doc_value(channel, "description"),
+            visibility=_doc_value(channel, "visibility"),
+            posting_policy=_doc_value(channel, "posting_policy"),
+            read_policy=_doc_value(channel, "read_policy", "members"),
+            member_count=_doc_value(channel, "member_count", 0),
+            last_message_at=_doc_value(channel, "last_message_at"),
+            created_at=_doc_value(channel, "created_at"),
+            is_main=main_channel_id is not None
+            and str(channel_id) == str(main_channel_id),
+        )
+
     def _to_profile_response(self, user: UserDocument) -> UserProfileResponse:
         user = self._without_expired_status(user)
         return UserProfileResponse(
@@ -267,6 +386,7 @@ class UsersService:
             avatar=build_user_avatar_payload(_doc_value(user, "avatar")),
             is_private=_doc_value(user, "is_private"),
             is_bot=_doc_value(user, "is_bot", False),
+            main_channel_id=_doc_value(user, "main_channel_id"),
             default_discovery_enabled=_doc_value(user, "default_discovery_enabled"),
             last_seen_at=_doc_value(user, "last_seen_at"),
             username_updated_at=_doc_value(user, "username_updated_at"),
@@ -289,11 +409,12 @@ class UsersService:
         relationship: ContactState,
         include_private_profile: bool,
         extras: ContactExtras | None = None,
+        shares_context: bool = False,
     ) -> SelectedUserProfileResponse:
         user = self._without_expired_status(user)
         user_id = _doc_value(user, "id", "")
         presence_state: PresenceState = "offline"
-        if include_private_profile and self.presence_service:
+        if (include_private_profile or shares_context) and self.presence_service:
             presence_state = await self.presence_service.get_state(user_id)
         is_online = presence_state != "offline"
         return SelectedUserProfileResponse(
@@ -303,6 +424,7 @@ class UsersService:
             bio=_doc_value(user, "bio") if include_private_profile else None,
             avatar=build_user_avatar_payload(_doc_value(user, "avatar")),
             is_bot=_doc_value(user, "is_bot", False),
+            main_channel_id=_doc_value(user, "main_channel_id"),
             status_emoji=(
                 _doc_value(user, "status_emoji") if include_private_profile else None
             ),

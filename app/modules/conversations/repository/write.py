@@ -53,6 +53,7 @@ class ConversationsWriteMixin:
         participant_ids: list[str],
         title: str,
         space_id: str | None = None,
+        space_visibility: str | None = None,
     ) -> ConversationDocument:
         now = datetime.now(UTC)
         conversation = ConversationDocument(
@@ -63,6 +64,7 @@ class ConversationsWriteMixin:
             encryption="none",
             dm_key=None,
             space_id=parse_object_id(space_id) if space_id is not None else None,
+            space_visibility=space_visibility,  # type: ignore[arg-type]
             created_at=now,
             updated_at=now,
         )
@@ -79,7 +81,9 @@ class ConversationsWriteMixin:
         visibility: str,
         posting_policy: str,
         slug: str | None,
+        read_policy: str = "members",
         space_id: str | None = None,
+        space_visibility: str | None = None,
     ) -> ConversationDocument:
         """Create a ``channel`` conversation.
 
@@ -96,8 +100,10 @@ class ConversationsWriteMixin:
             description=description,
             visibility=visibility,  # type: ignore[arg-type]
             posting_policy=posting_policy,  # type: ignore[arg-type]
+            read_policy=read_policy,  # type: ignore[arg-type]
             slug=slug,
             space_id=parse_object_id(space_id) if space_id is not None else None,
+            space_visibility=space_visibility,  # type: ignore[arg-type]
             member_count=len(participant_ids),
             encryption="none",
             dm_key=None,

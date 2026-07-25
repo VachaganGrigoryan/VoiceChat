@@ -204,6 +204,7 @@ async def create_group(
         title=body.title,
         participant_ids=body.participant_ids,
         space_id=body.space_id,
+        space_visibility=body.space_visibility,
     )
     data = (
         await service.views_for_user(user_id=user.str_id, conversations=[conversation])
@@ -233,8 +234,10 @@ async def create_channel(
         description=body.description,
         visibility=body.visibility,
         posting_policy=body.posting_policy,
+        read_policy=body.read_policy,
         slug=body.slug,
         space_id=body.space_id,
+        space_visibility=body.space_visibility,
     )
     data = (
         await service.views_for_user(user_id=user.str_id, conversations=[conversation])

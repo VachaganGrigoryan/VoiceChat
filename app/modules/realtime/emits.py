@@ -164,3 +164,7 @@ async def emit_chat_permission_updated(
         "allowed": allowed,
     }
     await sio.emit("chat_permission_updated", payload_reverse, room=user_room(user_b))
+
+
+async def emit_space_invite(sio: socketio.AsyncServer, *, to_user_id: str, payload: dict) -> None:
+    await sio.emit("space:invite", payload, room=user_room(to_user_id))

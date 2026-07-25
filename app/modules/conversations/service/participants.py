@@ -368,9 +368,21 @@ class ParticipantsServiceMixin(BaseConversationsService):
         for participant_id in sorted(
             {str(pid) for pid in participant_ids if str(pid) != actor_user_id}
         ):
-            await self._ensure_can_message(
-                sender_id=actor_user_id, receiver_id=participant_id
-            )
+            space_id = conversation.space_id
+            skip_ping_check = False
+            if space_id is not None:
+                from app.db.models.space_member import SpaceMemberDocument
+                p_member = await SpaceMemberDocument.find_one({
+                    "space_id": str(space_id),
+                    "user_id": str(participant_id)
+                })
+                if p_member is not None:
+                    skip_ping_check = True
+
+            if not skip_ping_check:
+                await self._ensure_can_message(
+                    sender_id=actor_user_id, receiver_id=participant_id
+                )
             participant = await self.repo.ensure_participant(
                 conversation_id=conversation.str_id,
                 user_id=participant_id,

@@ -253,3 +253,56 @@ async def test_space_scoped_conversations_and_global_scope(inprocess_client):
     # Should only return conversations where space_id is null (our global channel)
     assert any(c["id"] == resp_global.json()["data"]["id"] for c in global_convs)
     assert all(c["space_id"] is None for c in global_convs)
+
+
+@pytest.mark.asyncio
+async def test_direct_space_invite_and_redeem_flow(inprocess_client):
+    from unittest.mock import patch
+    owner, owner_tokens = await _create_verified_user_and_tokens("space-owner-direct@test.com")
+    user, user_tokens = await _create_verified_user_and_tokens("space-user-direct@test.com")
+    other_user, other_tokens = await _create_verified_user_and_tokens("space-other-direct@test.com")
+
+    # Create space
+    resp_space = await inprocess_client.post(
+        "/spaces",
+        json={"name": "Direct Invite Space", "slug": "direct-invite-space"},
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    space_id = resp_space.json()["data"]["id"]
+
+    # 1. Invite user directly
+    with patch("app.modules.spaces.router.emit_space_invite") as mock_emit:
+        resp_invite = await inprocess_client.post(
+            f"/spaces/{space_id}/invites/user",
+            json={"user_id": str(user["_id"])},
+            headers=_auth(owner_tokens["access_token"]),
+        )
+        assert resp_invite.status_code == 201
+        code = resp_invite.json()["data"]["code"]
+        assert resp_invite.json()["data"]["invitee_id"] == str(user["_id"])
+        mock_emit.assert_called_once()
+        _, kwargs = mock_emit.call_args
+        assert kwargs["to_user_id"] == str(user["_id"])
+
+    # Verify notification was created
+    from app.db.models import NotificationDocument
+    notification = await NotificationDocument.find_one({"user_id": str(user["_id"]), "kind": "space_invite"})
+    assert notification is not None
+    assert notification.data["space_id"] == space_id
+    assert notification.data["code"] == code
+
+    # 2. Other user tries to redeem direct invite -> Forbidden
+    resp_redeem_fail = await inprocess_client.post(
+        f"/spaces/invites/{code}/redeem",
+        headers=_auth(other_tokens["access_token"]),
+    )
+    assert resp_redeem_fail.status_code == 403
+    assert resp_redeem_fail.json()["error"]["code"] == "INVITE_FORBIDDEN"
+
+    # 3. Invitee redeems direct invite -> Success
+    resp_redeem_ok = await inprocess_client.post(
+        f"/spaces/invites/{code}/redeem",
+        headers=_auth(user_tokens["access_token"]),
+    )
+    assert resp_redeem_ok.status_code == 200
+    assert resp_redeem_ok.json()["data"]["status"] == "joined"

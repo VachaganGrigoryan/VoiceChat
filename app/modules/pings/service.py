@@ -354,6 +354,21 @@ class PingsService:
             ),
         )
 
+    async def shares_context(self, viewer_user_id: str, peer_user_id: str) -> bool:
+        if viewer_user_id == peer_user_id:
+            return True
+        shared_convs = await self._shared_conversations(
+            user_id=viewer_user_id, peer_user_id=peer_user_id
+        )
+        if shared_convs:
+            return True
+        shared_spaces = await self._shared_spaces(
+            user_id=viewer_user_id, peer_user_id=peer_user_id
+        )
+        if shared_spaces:
+            return True
+        return False
+
     async def _shared_conversations(
         self, *, user_id: str, peer_user_id: str
     ) -> list[SharedConversationSummary]:

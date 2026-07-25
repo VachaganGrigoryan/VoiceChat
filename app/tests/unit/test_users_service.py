@@ -61,6 +61,7 @@ async def test_get_user_profile_returns_minimal_payload_for_self(service, user_d
         "bio": "Visible profile",
         "avatar": None,
         "is_bot": False,
+        "main_channel_id": None,
         "status_emoji": None,
         "status_text": None,
         "status_expires_at": None,
@@ -221,3 +222,26 @@ async def test_get_user_profile_rejects_missing_user(service):
     assert exc.value.status_code == 404
     pings_repo.get_contact_state.assert_not_awaited()
     presence_service.get_state.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_user_profile_returns_presence_with_shares_context(service, user_doc):
+    svc, users_repo, pings_repo, presence_service = service
+    user_doc["is_private"] = True
+    users_repo.find_by_id.return_value = user_doc
+    pings_repo.get_contact_state.return_value = ContactState(
+        can_ping=True,
+        chat_allowed=False,
+        ping_status="none",
+    )
+    pings_repo.shares_context = AsyncMock(return_value=True)
+    presence_service.get_state.return_value = "online"
+
+    result = await svc.get_user_profile(
+        current_user_id="viewer-id",
+        selected_user_id=str(user_doc["_id"]),
+    )
+
+    assert result.profile_visibility == "limited"
+    assert result.bio is None
+    assert result.presence_state == "online"

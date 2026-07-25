@@ -26,6 +26,7 @@ class UserProfileResponse(BaseModel):
     avatar: dict | None = None
     is_private: bool
     is_bot: bool = False
+    main_channel_id: str | None = None
     default_discovery_enabled: bool
     last_seen_at: datetime | None = None
     username_updated_at: datetime | None = None
@@ -50,6 +51,7 @@ class SelectedUserProfileResponse(BaseModel):
     bio: str | None = None
     avatar: dict | None = None
     is_bot: bool = False
+    main_channel_id: str | None = None
     status_emoji: str | None = None
     status_text: str | None = None
     status_expires_at: datetime | None = None
@@ -85,3 +87,26 @@ class UpdateStatusRequest(BaseModel):
     status_emoji: str | None = Field(default=None, max_length=16)
     status_text: str | None = Field(default=None, max_length=80)
     status_expires_at: datetime | None = None
+
+
+class SetMainChannelRequest(BaseModel):
+    # Public channel to pin as the profile's main timeline, or null to clear it.
+    channel_id: str | None = None
+
+
+class UserChannelView(BaseModel):
+    """Slim projection of a user's public channel for profile tabs."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: StrId
+    title: str | None = None
+    slug: str | None = None
+    description: str | None = None
+    visibility: Literal["private", "public"]
+    posting_policy: Literal["everyone", "admins"]
+    read_policy: Literal["members", "contacts", "public"] = "members"
+    member_count: int = 0
+    last_message_at: datetime | None = None
+    created_at: datetime
+    is_main: bool = False
