@@ -57,6 +57,7 @@ from app.db.models.relationship import (
     RelationshipTargetType,
 )
 from app.db.models.report import ReportDocument
+from app.db.models.role import RoleDocument, RoleScopeType
 from app.db.models.saved_message import SavedMessageDocument
 from app.db.models.space import SpaceDocument
 from app.db.models.space_member import SpaceMemberDocument
@@ -76,6 +77,7 @@ DOCUMENT_MODELS: list[type[Document]] = [
     PasskeyChallengeDocument,
     PingDocument,
     RelationshipDocument,
+    RoleDocument,
     CallDocument,
     ChannelDocument,
     MessageDocument,
@@ -146,6 +148,8 @@ __all__ = [
     "RelationshipTargetType",
     "ReplyPreviewDocument",
     "ReportDocument",
+    "RoleDocument",
+    "RoleScopeType",
     "SavedMessageDocument",
     "SpaceDocument",
     "SpaceMemberDocument",

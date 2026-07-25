@@ -24,6 +24,7 @@ from app.modules.relationships import (
     follows_router,
     memberships_router,
 )
+from app.modules.authorization import roles_router
 from app.modules.extensibility.router import extensibility_router
 
 
@@ -46,6 +47,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(search_router)
     app.include_router(polls_router)
     app.include_router(spaces_router)
+    app.include_router(roles_router)
     app.include_router(connections_router)
     app.include_router(follows_router)
     app.include_router(memberships_router)
