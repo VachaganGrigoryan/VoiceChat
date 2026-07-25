@@ -12,10 +12,19 @@ def _auth(access_token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {access_token}"}
 
 
-async def _channel(client, owner_tokens: dict, title: str) -> str:
+async def _group(client, owner: dict, owner_tokens: dict, title: str) -> str:
+    """Create a group the owner belongs to, as an inbox row to organize.
+
+    These scenarios only need *a* conversation; they used to use channels, which are no
+    longer a conversation type. A group needs a second participant, so each call mints a
+    throwaway peer (titles are unique per test) and grants the chat permission the ping
+    gate requires.
+    """
+    peer, _ = await _create_verified_user_and_tokens(f"peer-{title.lower()}@test.com")
+    await _grant_chat_permission(str(owner["_id"]), str(peer["_id"]))
     created = await client.post(
-        "/conversations/channels",
-        json={"title": title, "posting_policy": "everyone"},
+        "/conversations/groups",
+        json={"title": title, "participant_ids": [str(peer["_id"])]},
         headers=_auth(owner_tokens["access_token"]),
     )
     assert created.status_code == 201, created.text
@@ -29,8 +38,8 @@ def _ids(resp) -> list[str]:
 @pytest.mark.asyncio
 async def test_pin_moves_conversation_to_top_for_caller_only(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("inbox-o1@test.com")
-    older = await _channel(inprocess_client, owner_tokens, "Older")
-    newer = await _channel(inprocess_client, owner_tokens, "Newer")
+    older = await _group(inprocess_client, owner, owner_tokens, "Older")
+    newer = await _group(inprocess_client, owner, owner_tokens, "Newer")
 
     # Default order: most-recently created/active first (newer before older).
     default = await inprocess_client.get(
@@ -60,8 +69,8 @@ async def test_pin_moves_conversation_to_top_for_caller_only(inprocess_client):
 @pytest.mark.asyncio
 async def test_archive_separates_conversation(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("inbox-o2@test.com")
-    keep = await _channel(inprocess_client, owner_tokens, "Keep")
-    stash = await _channel(inprocess_client, owner_tokens, "Stash")
+    keep = await _group(inprocess_client, owner, owner_tokens, "Keep")
+    stash = await _group(inprocess_client, owner, owner_tokens, "Stash")
 
     archive = await inprocess_client.patch(
         f"/conversations/{stash}/inbox",
@@ -84,8 +93,8 @@ async def test_archive_separates_conversation(inprocess_client):
 @pytest.mark.asyncio
 async def test_folder_filters_listing(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("inbox-o3@test.com")
-    work = await _channel(inprocess_client, owner_tokens, "Work")
-    personal = await _channel(inprocess_client, owner_tokens, "Personal")
+    work = await _group(inprocess_client, owner, owner_tokens, "Work")
+    personal = await _group(inprocess_client, owner, owner_tokens, "Personal")
 
     await inprocess_client.patch(
         f"/conversations/{work}/inbox",
@@ -114,7 +123,7 @@ async def test_folder_filters_listing(inprocess_client):
 @pytest.mark.asyncio
 async def test_get_single_conversation_returns_archived_view(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("inbox-g1@test.com")
-    stash = await _channel(inprocess_client, owner_tokens, "Stash")
+    stash = await _group(inprocess_client, owner, owner_tokens, "Stash")
 
     await inprocess_client.patch(
         f"/conversations/{stash}/inbox",
@@ -140,10 +149,10 @@ async def test_get_single_conversation_requires_membership(inprocess_client):
     _outsider, outsider_tokens = await _create_verified_user_and_tokens(
         "inbox-gx2@test.com"
     )
-    channel_id = await _channel(inprocess_client, owner_tokens, "Private")
+    conversation_id = await _group(inprocess_client, owner, owner_tokens, "Private")
 
     resp = await inprocess_client.get(
-        f"/conversations/{channel_id}",
+        f"/conversations/{conversation_id}",
         headers=_auth(outsider_tokens["access_token"]),
     )
     assert resp.status_code == 404, resp.text
@@ -152,8 +161,8 @@ async def test_get_single_conversation_requires_membership(inprocess_client):
 @pytest.mark.asyncio
 async def test_folder_crud(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("inbox-f1@test.com")
-    work_a = await _channel(inprocess_client, owner_tokens, "WorkA")
-    work_b = await _channel(inprocess_client, owner_tokens, "WorkB")
+    work_a = await _group(inprocess_client, owner, owner_tokens, "WorkA")
+    work_b = await _group(inprocess_client, owner, owner_tokens, "WorkB")
 
     for cid in (work_a, work_b):
         await inprocess_client.patch(
@@ -204,8 +213,8 @@ async def test_folder_crud(inprocess_client):
 @pytest.mark.asyncio
 async def test_bulk_inbox_state(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("inbox-b1@test.com")
-    one = await _channel(inprocess_client, owner_tokens, "One")
-    two = await _channel(inprocess_client, owner_tokens, "Two")
+    one = await _group(inprocess_client, owner, owner_tokens, "One")
+    two = await _group(inprocess_client, owner, owner_tokens, "Two")
 
     resp = await inprocess_client.patch(
         "/conversations/inbox",
@@ -277,10 +286,10 @@ async def test_reply_resurfaces_archived_but_incoming_does_not(inprocess_client)
 async def test_inbox_state_requires_membership(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("inbox-o4@test.com")
     outsider, outsider_tokens = await _create_verified_user_and_tokens("inbox-x4@test.com")
-    channel_id = await _channel(inprocess_client, owner_tokens, "Private")
+    conversation_id = await _group(inprocess_client, owner, owner_tokens, "Private")
 
     resp = await inprocess_client.patch(
-        f"/conversations/{channel_id}/inbox",
+        f"/conversations/{conversation_id}/inbox",
         json={"pinned": True},
         headers=_auth(outsider_tokens["access_token"]),
     )

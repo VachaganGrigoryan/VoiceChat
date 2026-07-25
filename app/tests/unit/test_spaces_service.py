@@ -220,9 +220,11 @@ async def test_update_space_success(service):
     updated_space.name = "New Name"
     updated_space.slug = "new-slug"
     updated_space.kind = "workspace"
+    updated_space.owner_user_id = "owner123"
     updated_space.created_by = "owner123"
     updated_space.avatar = None
     updated_space.visibility = "public"
+    updated_space.join_policy = "open"
     updated_space.settings = {}
     updated_space.created_at = datetime.now(UTC)
     updated_space.updated_at = datetime.now(UTC)
@@ -264,9 +266,11 @@ async def test_redeem_invite_success_joined(service):
     space.name = "Test Space"
     space.slug = "test-space"
     space.kind = "workspace"
+    space.owner_user_id = "owner123"
     space.created_by = "owner123"
     space.avatar = None
     space.visibility = "public"
+    space.join_policy = "open"
     space.settings = {}
     space.created_at = datetime.now(UTC)
     space.updated_at = datetime.now(UTC)
@@ -372,9 +376,11 @@ async def test_get_space_success(service):
     space.name = "My Test Space"
     space.slug = "my-test-space"
     space.kind = "workspace"
+    space.owner_user_id = "owner123"
     space.created_by = "owner123"
     space.avatar = None
     space.visibility = "public"
+    space.join_policy = "open"
     space.settings = {}
     space.created_at = datetime.now(UTC)
     space.updated_at = datetime.now(UTC)
@@ -399,9 +405,11 @@ async def test_list_spaces_success(service):
     space.name = "My Test Space"
     space.slug = "my-test-space"
     space.kind = "workspace"
+    space.owner_user_id = "owner123"
     space.created_by = "owner123"
     space.avatar = None
     space.visibility = "public"
+    space.join_policy = "open"
     space.settings = {}
     space.created_at = datetime.now(UTC)
     space.updated_at = datetime.now(UTC)

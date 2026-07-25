@@ -76,6 +76,7 @@ TEST_COLLECTIONS = [
     "discovery_tokens",
     "conversations",
     "conversation_participants",
+    "channels",
     "devices",
     "device_prekeys",
     "spaces",

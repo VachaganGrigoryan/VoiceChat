@@ -173,9 +173,9 @@ async def test_space_scoped_conversations_and_global_scope(inprocess_client):
 
     # 1. Cannot create space-scoped conversation if participants are not space members
     resp_conv_fail = await inprocess_client.post(
-        "/conversations/channels",
+        "/conversations/groups",
         json={
-            "title": "Scoped channel",
+            "title": "Scoped group",
             "participant_ids": [str(user["_id"])],
             "space_id": space_id,
         },
@@ -200,9 +200,9 @@ async def test_space_scoped_conversations_and_global_scope(inprocess_client):
 
     # 2. Now conversation creation succeeds
     resp_conv = await inprocess_client.post(
-        "/conversations/channels",
+        "/conversations/groups",
         json={
-            "title": "Scoped channel",
+            "title": "Scoped group",
             "participant_ids": [str(user["_id"])],
             "space_id": space_id,
         },
@@ -233,9 +233,9 @@ async def test_space_scoped_conversations_and_global_scope(inprocess_client):
     # 5. Spaceless global scope conversations are unaffected and default
     # Create global (spaceless) conversation
     resp_global = await inprocess_client.post(
-        "/conversations/channels",
+        "/conversations/groups",
         json={
-            "title": "Global channel",
+            "title": "Global group",
             "participant_ids": [str(user["_id"])],
         },
         headers=_auth(owner_tokens["access_token"]),
@@ -250,7 +250,7 @@ async def test_space_scoped_conversations_and_global_scope(inprocess_client):
     )
     assert resp_global_list.status_code == 200
     global_convs = resp_global_list.json()["data"]
-    # Should only return conversations where space_id is null (our global channel)
+    # Should only return conversations where space_id is null (our global group)
     assert any(c["id"] == resp_global.json()["data"]["id"] for c in global_convs)
     assert all(c["space_id"] is None for c in global_convs)
 

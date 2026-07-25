@@ -6,6 +6,7 @@ import pytest
 
 from app.tests.integration.test_realtime_socket import (
     _create_verified_user_and_tokens,
+    _grant_chat_permission,
 )
 
 
@@ -13,10 +14,18 @@ def _auth(access_token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {access_token}"}
 
 
-async def _make_channel(client, owner_tokens: dict, title: str = "Room") -> str:
+async def _make_group(client, owner: dict, owner_tokens: dict, title: str = "Room") -> str:
+    """Create a group to invite into.
+
+    These scenarios exercise invites/join-requests, not channel behavior; channels are no
+    longer a conversation type. The seed peer keeps the group valid and is distinct from
+    every joiner/outsider the tests redeem with.
+    """
+    peer, _ = await _create_verified_user_and_tokens(f"peer-{title.lower()}@test.com")
+    await _grant_chat_permission(str(owner["_id"]), str(peer["_id"]))
     created = await client.post(
-        "/conversations/channels",
-        json={"title": title, "posting_policy": "everyone"},
+        "/conversations/groups",
+        json={"title": title, "participant_ids": [str(peer["_id"])]},
         headers=_auth(owner_tokens["access_token"]),
     )
     assert created.status_code == 201, created.text
@@ -27,10 +36,10 @@ async def _make_channel(client, owner_tokens: dict, title: str = "Room") -> str:
 async def test_create_and_redeem_invite_joins_directly(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("inv-o1@test.com")
     joiner, joiner_tokens = await _create_verified_user_and_tokens("inv-j1@test.com")
-    channel_id = await _make_channel(inprocess_client, owner_tokens)
+    conversation_id = await _make_group(inprocess_client, owner, owner_tokens)
 
     invite = await inprocess_client.post(
-        f"/conversations/{channel_id}/invites",
+        f"/conversations/{conversation_id}/invites",
         json={},
         headers=_auth(owner_tokens["access_token"]),
     )
@@ -45,25 +54,26 @@ async def test_create_and_redeem_invite_joins_directly(inprocess_client):
     assert redeem.status_code == 200, redeem.text
     data = redeem.json()["data"]
     assert data["status"] == "joined"
-    assert data["conversation"]["id"] == channel_id
+    assert data["conversation"]["id"] == conversation_id
     assert str(joiner["_id"]) in data["conversation"]["participant_ids"]
-    assert data["conversation"]["member_count"] == 2
+    # owner + seed peer + joiner
+    assert data["conversation"]["member_count"] == 3
 
     # Joiner now sees the conversation in their inbox.
     inbox = await inprocess_client.get(
         "/conversations", headers=_auth(joiner_tokens["access_token"])
     )
-    assert any(row["id"] == channel_id for row in inbox.json()["data"])
+    assert any(row["id"] == conversation_id for row in inbox.json()["data"])
 
 
 @pytest.mark.asyncio
 async def test_invite_requires_approval_creates_join_request(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("inv-o2@test.com")
     joiner, joiner_tokens = await _create_verified_user_and_tokens("inv-j2@test.com")
-    channel_id = await _make_channel(inprocess_client, owner_tokens)
+    conversation_id = await _make_group(inprocess_client, owner, owner_tokens)
 
     invite = await inprocess_client.post(
-        f"/conversations/{channel_id}/invites",
+        f"/conversations/{conversation_id}/invites",
         json={"requires_approval": True},
         headers=_auth(owner_tokens["access_token"]),
     )
@@ -80,7 +90,7 @@ async def test_invite_requires_approval_creates_join_request(inprocess_client):
 
     # Owner sees the pending request.
     listing = await inprocess_client.get(
-        f"/conversations/{channel_id}/join-requests",
+        f"/conversations/{conversation_id}/join-requests",
         headers=_auth(owner_tokens["access_token"]),
     )
     assert listing.status_code == 200, listing.text
@@ -88,7 +98,7 @@ async def test_invite_requires_approval_creates_join_request(inprocess_client):
 
     # Approve adds the participant.
     approve = await inprocess_client.post(
-        f"/conversations/{channel_id}/join-requests/{request_id}/approve",
+        f"/conversations/{conversation_id}/join-requests/{request_id}/approve",
         headers=_auth(owner_tokens["access_token"]),
     )
     assert approve.status_code == 200, approve.text
@@ -97,17 +107,17 @@ async def test_invite_requires_approval_creates_join_request(inprocess_client):
     members = await inprocess_client.get(
         "/conversations", headers=_auth(joiner_tokens["access_token"])
     )
-    assert any(row["id"] == channel_id for row in members.json()["data"])
+    assert any(row["id"] == conversation_id for row in members.json()["data"])
 
 
 @pytest.mark.asyncio
 async def test_reject_join_request(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("inv-o3@test.com")
     joiner, joiner_tokens = await _create_verified_user_and_tokens("inv-j3@test.com")
-    channel_id = await _make_channel(inprocess_client, owner_tokens)
+    conversation_id = await _make_group(inprocess_client, owner, owner_tokens)
 
     invite = await inprocess_client.post(
-        f"/conversations/{channel_id}/invites",
+        f"/conversations/{conversation_id}/invites",
         json={"requires_approval": True},
         headers=_auth(owner_tokens["access_token"]),
     )
@@ -119,7 +129,7 @@ async def test_reject_join_request(inprocess_client):
     request_id = redeem.json()["data"]["join_request"]["id"]
 
     reject = await inprocess_client.post(
-        f"/conversations/{channel_id}/join-requests/{request_id}/reject",
+        f"/conversations/{conversation_id}/join-requests/{request_id}/reject",
         headers=_auth(owner_tokens["access_token"]),
     )
     assert reject.status_code == 200, reject.text
@@ -128,17 +138,17 @@ async def test_reject_join_request(inprocess_client):
     inbox = await inprocess_client.get(
         "/conversations", headers=_auth(joiner_tokens["access_token"])
     )
-    assert not any(row["id"] == channel_id for row in inbox.json()["data"])
+    assert not any(row["id"] == conversation_id for row in inbox.json()["data"])
 
 
 @pytest.mark.asyncio
 async def test_revoked_invite_is_rejected(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("inv-o4@test.com")
     joiner, joiner_tokens = await _create_verified_user_and_tokens("inv-j4@test.com")
-    channel_id = await _make_channel(inprocess_client, owner_tokens)
+    conversation_id = await _make_group(inprocess_client, owner, owner_tokens)
 
     invite = await inprocess_client.post(
-        f"/conversations/{channel_id}/invites",
+        f"/conversations/{conversation_id}/invites",
         json={},
         headers=_auth(owner_tokens["access_token"]),
     )
@@ -146,7 +156,7 @@ async def test_revoked_invite_is_rejected(inprocess_client):
     invite_id = invite.json()["data"]["id"]
 
     revoke = await inprocess_client.delete(
-        f"/conversations/{channel_id}/invites/{invite_id}",
+        f"/conversations/{conversation_id}/invites/{invite_id}",
         headers=_auth(owner_tokens["access_token"]),
     )
     assert revoke.status_code == 204, revoke.text
@@ -163,11 +173,11 @@ async def test_revoked_invite_is_rejected(inprocess_client):
 async def test_expired_invite_is_rejected(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("inv-o5@test.com")
     joiner, joiner_tokens = await _create_verified_user_and_tokens("inv-j5@test.com")
-    channel_id = await _make_channel(inprocess_client, owner_tokens)
+    conversation_id = await _make_group(inprocess_client, owner, owner_tokens)
 
     past = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
     invite = await inprocess_client.post(
-        f"/conversations/{channel_id}/invites",
+        f"/conversations/{conversation_id}/invites",
         json={"expires_at": past},
         headers=_auth(owner_tokens["access_token"]),
     )
@@ -185,10 +195,10 @@ async def test_max_uses_exhausted(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("inv-o6@test.com")
     j1, j1_tokens = await _create_verified_user_and_tokens("inv-j6a@test.com")
     j2, j2_tokens = await _create_verified_user_and_tokens("inv-j6b@test.com")
-    channel_id = await _make_channel(inprocess_client, owner_tokens)
+    conversation_id = await _make_group(inprocess_client, owner, owner_tokens)
 
     invite = await inprocess_client.post(
-        f"/conversations/{channel_id}/invites",
+        f"/conversations/{conversation_id}/invites",
         json={"max_uses": 1},
         headers=_auth(owner_tokens["access_token"]),
     )
@@ -211,10 +221,10 @@ async def test_max_uses_exhausted(inprocess_client):
 async def test_non_manager_cannot_create_invite(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("inv-o7@test.com")
     outsider, outsider_tokens = await _create_verified_user_and_tokens("inv-x7@test.com")
-    channel_id = await _make_channel(inprocess_client, owner_tokens)
+    conversation_id = await _make_group(inprocess_client, owner, owner_tokens)
 
     resp = await inprocess_client.post(
-        f"/conversations/{channel_id}/invites",
+        f"/conversations/{conversation_id}/invites",
         json={},
         headers=_auth(outsider_tokens["access_token"]),
     )
