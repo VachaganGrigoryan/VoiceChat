@@ -83,6 +83,7 @@ TEST_COLLECTIONS = [
     "space_members",
     "invite_links",
     "join_requests",
+    "relationships",
     "blocks",
     "push_tokens",
     "saved_messages",
