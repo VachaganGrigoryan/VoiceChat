@@ -6,13 +6,12 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 from app.db.object_id import StrId
-from app.modules.messages.schemas import MessageDoc
 from app.modules.pings.schemas import PingStatusView
 from app.modules.realtime.presence.base import PresenceState
 
 ReplyMode = Literal["quote", "thread"]
 
-ConversationType = Literal["dm", "group", "channel", "thread"]
+ConversationType = Literal["dm", "group", "channel"]
 EncryptionMode = Literal["none", "e2ee"]
 # The name of the RoleDocument a participant holds (resource-authorization).
 # Free-form because roles are data: seeded system roles are "Admin",
@@ -76,8 +75,6 @@ class ConversationView(BaseModel):
     read_policy: ChannelReadPolicy = "members"
     space_id: StrId | None = None
     space_visibility: Literal["space_public", "invite_only"] | None = None
-    parent_conversation_id: StrId | None = None
-    root_message_id: str | None = None
     slug: str | None = None
     description: str | None = None
     member_count: int = Field(default=0, ge=0)
@@ -97,14 +94,6 @@ class ConversationView(BaseModel):
     folder: str | None = None
     created_at: datetime
     updated_at: datetime
-
-
-class ThreadConversationView(BaseModel):
-    thread: ConversationView
-    parent: ConversationView | None = None
-    root_message: MessageDoc | None = None
-    locked: bool = False
-    converted_to_conversation_id: str | None = None
 
 
 class ParticipantView(BaseModel):
@@ -136,18 +125,6 @@ class CreateGroupRequest(BaseModel):
     participant_ids: list[str] = Field(min_length=1, max_length=100)
     space_id: str | None = None
     space_visibility: Literal["space_public", "invite_only"] | None = None
-
-
-class ConvertThreadToGroupRequest(BaseModel):
-    title: str = Field(min_length=1, max_length=80)
-    participant_ids: list[str] = Field(min_length=1, max_length=100)
-
-
-class ConvertThreadToGroupResponse(BaseModel):
-    group: ConversationView
-    thread: ConversationView
-    imported_count: int = Field(ge=0)
-    truncated: bool = False
 
 
 SLUG_PATTERN = r"^[a-z0-9](?:[a-z0-9-]{1,78}[a-z0-9])$"

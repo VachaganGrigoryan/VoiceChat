@@ -13,26 +13,25 @@ from app.db.document import TimestampedDocument
 from app.db.models.embedded import ConversationPreviewDocument, OwnerRef
 from app.db.object_id import StrId
 
-# The write contract: only these types may be created. ``channel`` and ``thread``
-# re-home to the ``channels`` collection and to message topology respectively.
+# The write contract: only these types may be created. ``channel`` re-homes to the
+# ``channels`` collection; threads are message topology and no longer exist here.
 ConversationType = Literal["dm", "group"]
 
 # Legacy discriminator values that still exist on disk. Kept in the field's Literal so
 # reads of un-migrated rows validate; rejected on insert by ``_reject_legacy_types``.
-LEGACY_CONVERSATION_TYPES: frozenset[str] = frozenset({"channel", "thread"})
+LEGACY_CONVERSATION_TYPES: frozenset[str] = frozenset({"channel"})
 
 
 class ConversationDocument(TimestampedDocument):
     """First-class conversation entity.
 
     The write contract is ``ConversationType`` (``dm`` or ``group``). The persisted field
-    still accepts the legacy ``channel``/``thread`` values so un-migrated rows remain
-    readable until ``unified-messages`` and ``channels-and-profile-feed`` re-home them;
-    creating one is rejected. DMs have no owner; Groups carry an owner (User or Space
-    via OwnerRef).
+    still accepts the legacy ``channel`` value so un-migrated rows remain readable until
+    ``channels-and-profile-feed`` re-homes them; creating one is rejected. DMs have no
+    owner; Groups carry an owner (User or Space via OwnerRef).
     """
 
-    type: Literal["dm", "group", "channel", "thread"] = "dm"
+    type: Literal["dm", "group", "channel"] = "dm"
     owner: OwnerRef | None = None
     participant_ids: list[StrId] = Field(default_factory=list)
     created_by: StrId
@@ -51,9 +50,6 @@ class ConversationDocument(TimestampedDocument):
     read_policy: Literal["members", "contacts", "public"] = "members"
     space_id: StrId | None = None
     space_visibility: Literal["space_public", "invite_only"] | None = None
-    # Thread-as-sub-conversation linkage (type == "thread").
-    parent_conversation_id: StrId | None = None
-    root_message_id: str | None = None
     # Public/discoverable + broadcast metadata.
     slug: str | None = None
     description: str | None = None
@@ -93,7 +89,7 @@ class ConversationDocument(TimestampedDocument):
         if self.type in LEGACY_CONVERSATION_TYPES:
             raise ValueError(
                 f"Cannot create a conversation of type {self.type!r}: "
-                "channels live in the channels collection and threads are message topology"
+                "channels live in the channels collection"
             )
         if self.type == "dm" and len(set(map(str, self.participant_ids))) != 2:
             raise ValueError("DM conversation must have exactly two distinct participants")
@@ -126,9 +122,5 @@ class ConversationDocument(TimestampedDocument):
             IndexModel(
                 [("space_id", ASCENDING)],
                 name="ix_conversations_space_id",
-            ),
-            IndexModel(
-                [("parent_conversation_id", ASCENDING)],
-                name="ix_conversations_parent_conversation_id",
             ),
         ]

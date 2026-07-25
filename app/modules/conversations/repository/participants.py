@@ -326,7 +326,8 @@ class ParticipantsRepositoryMixin:
     ) -> int:
         """Count messages from other senders newer than the user's read cursor."""
         query: dict = {
-            "conversation_id": str(message_conversation_id),
+            "container_type": "conversation",
+            "container_id": str(message_conversation_id),
             "sender_id": {"$ne": str(user_id)},
             "thread_root_id": None,
             "state": {"$ne": "scheduled"},

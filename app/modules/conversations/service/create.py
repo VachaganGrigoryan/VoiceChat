@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pymongo.errors import DuplicateKeyError
 
 from app.core.errors import AppError
 from app.db.models import ConversationDocument, ConversationPreviewDocument
@@ -128,55 +127,6 @@ class CreateConversationsMixin(BaseConversationsService):
             message="Channel creation as a conversation type is disallowed; use the channels collection",
             status_code=400,
         )
-
-    async def ensure_thread_conversation(
-        self, *, user_id: str, parent_conversation_id: str, root_message_id: str
-    ) -> ConversationDocument:
-        raise AppError(
-            code="INVALID_CONVERSATION_TYPE",
-            message="Thread creation as a conversation type is disallowed",
-            status_code=400,
-        )
-
-    async def require_thread_owner(
-        self, *, user_id: str, thread_id: str
-    ) -> ConversationDocument:
-        thread = await self.require_participant(
-            user_id=user_id, conversation_id=thread_id
-        )
-        if thread.type != "thread":
-            raise AppError(
-                code="INVALID_CONVERSATION",
-                message="Conversation is not a thread",
-                status_code=400,
-            )
-        if str(thread.created_by) != str(user_id):
-            raise AppError(
-                code="THREAD_CONVERSION_FORBIDDEN",
-                message="Only the thread owner can convert this thread",
-                status_code=403,
-            )
-        if thread.settings.get("locked_at"):
-            raise AppError(
-                code="THREAD_LOCKED",
-                message="This thread was already converted",
-                status_code=409,
-            )
-        return thread
-
-    async def lock_thread_after_conversion(
-        self, *, user_id: str, thread_id: str, group_id: str
-    ) -> ConversationDocument:
-        thread = await self.repo.lock_thread_after_conversion(
-            thread_id=thread_id, user_id=user_id, group_id=group_id
-        )
-        if thread is None:
-            raise AppError(
-                code="CONVERSATION_NOT_FOUND",
-                message="Thread not found",
-                status_code=404,
-            )
-        return thread
 
     async def get_public_conversation_by_slug(
         self, *, slug: str

@@ -131,7 +131,9 @@ def test_group_conversation_owner_derivation():
     assert group_space.owner.id == "sp_100"
 
 
-@pytest.mark.parametrize("legacy_type", ["channel", "thread"])
+# `thread` is gone entirely (unified-messages): threads are message topology, so
+# the type is no longer even readable. `channel` stays until channels re-home.
+@pytest.mark.parametrize("legacy_type", ["channel"])
 def test_legacy_conversation_types_rejected_on_insert(legacy_type):
     """Blocked below the service layer, so repository writes cannot bypass the contract."""
     conversation = ConversationDocument(

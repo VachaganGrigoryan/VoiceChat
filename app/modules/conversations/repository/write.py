@@ -125,63 +125,6 @@ class ConversationsWriteMixin:
             {"slug": slug, "visibility": "public"}
         )
 
-    async def ensure_thread(
-        self, *, parent_conversation_id: str, root_message_id: str, created_by: str
-    ) -> ConversationDocument:
-        """Create-or-get the ``thread`` sub-conversation. **Unreachable: rejected on insert.**
-
-        The lookup still works for un-migrated rows, but the insert below raises via
-        ``ConversationDocument._reject_legacy_types``. Threads become message topology in
-        ``unified-messages``, which removes this method.
-        """
-        existing = await ConversationDocument.find_one(
-            {
-                "type": "thread",
-                "parent_conversation_id": str(parent_conversation_id),
-                "root_message_id": str(root_message_id),
-            }
-        )
-        if existing is not None:
-            return existing
-
-        now = datetime.now(UTC)
-        conversation = ConversationDocument(
-            type="thread",
-            participant_ids=[str(created_by)],
-            created_by=str(created_by),
-            parent_conversation_id=str(parent_conversation_id),
-            root_message_id=str(root_message_id),
-            member_count=1,
-            encryption="none",
-            dm_key=None,
-            created_at=now,
-            updated_at=now,
-        )
-        await conversation.insert()
-        return conversation
-
-    async def lock_thread_after_conversion(
-        self, *, thread_id: str, user_id: str, group_id: str
-    ) -> ConversationDocument | None:
-        now = datetime.now(UTC)
-        raw = await self.raw.find_one_and_update(
-            {
-                "_id": parse_object_id(thread_id),
-                "type": "thread",
-                "created_by": str(user_id),
-            },
-            {
-                "$set": {
-                    "settings.locked_at": now,
-                    "settings.locked_by": str(user_id),
-                    "settings.converted_to_conversation_id": str(group_id),
-                    "updated_at": now,
-                }
-            },
-            return_document=ReturnDocument.AFTER,
-        )
-        return ConversationDocument.model_validate(raw) if raw is not None else None
-
     async def update_group_title(
         self, *, conversation_id: str, title: str
     ) -> ConversationDocument:

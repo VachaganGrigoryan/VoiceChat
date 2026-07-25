@@ -48,22 +48,6 @@ class ReadConversationsMixin(BaseConversationsService):
             space_id=space_id,
         )
 
-    async def list_threads_for_user(
-        self,
-        *,
-        user_id: str,
-        limit: int,
-        cursor: str | None,
-        archived: bool = False,
-    ) -> tuple[list[ConversationDocument], str | None]:
-        return await self.repo.list_for_user(
-            user_id=user_id,
-            limit=limit,
-            cursor=cursor,
-            archived=archived,
-            conversation_types=("thread",),
-        )
-
     async def get_conversation_view(
         self, *, user_id: str, conversation_id: str
     ) -> ConversationView:
@@ -106,12 +90,6 @@ class ReadConversationsMixin(BaseConversationsService):
         conversation = await self.require_participant(
             user_id=user_id, conversation_id=conversation_id
         )
-        if conversation.type == "thread" and conversation.settings.get("locked_at"):
-            raise AppError(
-                code="THREAD_LOCKED",
-                message="This thread was converted to a group and is locked",
-                status_code=409,
-            )
         if conversation.type == "dm":
             peer_id = self._peer_id(conversation, user_id=user_id)
             if peer_id is not None:
@@ -136,8 +114,8 @@ class ReadConversationsMixin(BaseConversationsService):
 
         Builds on ``require_can_post`` (membership + posting policy), then adds
         the poll-specific rule: in ``group``/``channel`` conversations the caller
-        needs `poll.create`, unless ``settings.allow_member_polls`` is set.
-        ``dm``/``thread`` conversations allow any participant.
+        needs `poll.create`, unless ``settings.allow_member_polls`` is set. A
+        ``dm`` allows any participant.
         """
         conversation = await self.require_can_post(
             user_id=user_id, conversation_id=conversation_id

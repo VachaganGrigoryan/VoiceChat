@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from starlette.requests import Request
 
 from app.core.deps import get_sio
-from app.core.errors import AppError
 from app.core.errors.openapi import build_error_responses
 from app.core.http import (
     PaginatedResponse,
@@ -18,7 +17,6 @@ from app.core.http import (
 )
 from app.core.rate_limit import rate_limit
 from app.core.security import require_verified_user
-from app.db.models import ConversationDocument
 from app.modules.conversations.dependencies import get_conversations_service
 from app.modules.conversations.repository.mappers import (
     to_invite_link_view,
@@ -29,8 +27,6 @@ from app.modules.conversations.schemas import (
     AddGroupMembersRequest,
     BulkInboxStateRequest,
     BulkInboxStateResult,
-    ConvertThreadToGroupRequest,
-    ConvertThreadToGroupResponse,
     ConversationSendTextRequest,
     ConversationView,
     CreateChannelRequest,
@@ -44,7 +40,6 @@ from app.modules.conversations.schemas import (
     RedeemInviteResponse,
     RenameFolderRequest,
     RenameFolderResult,
-    ThreadConversationView,
     TransferOwnershipRequest,
     UpdateConversationSettingsRequest,
     UpdateGroupRequest,
@@ -94,76 +89,6 @@ async def emit_message_notifications(
             "notification_created",
             item.notification.model_dump(mode="json"),
         )
-
-
-async def build_thread_conversation_view(
-    *,
-    user_id: str,
-    thread: ConversationDocument,
-    service: ConversationsService,
-    messages: MessagesService,
-) -> ThreadConversationView:
-    thread_view = (
-        await service.views_for_user(user_id=user_id, conversations=[thread])
-    )[0]
-    parent_view: ConversationView | None = None
-    root_message: MessageDoc | None = None
-
-    if thread.parent_conversation_id is not None and thread.root_message_id:
-        parent = await service.require_participant(
-            user_id=user_id, conversation_id=str(thread.parent_conversation_id)
-        )
-        parent_view = (
-            await service.views_for_user(user_id=user_id, conversations=[parent])
-        )[0]
-        root_message = await messages.get_message_for_conversation(
-            conversation_id=parent.str_id,
-            message_id=str(thread.root_message_id),
-            user_id=user_id,
-        )
-
-    settings = thread.settings or {}
-    return ThreadConversationView(
-        thread=thread_view,
-        parent=parent_view,
-        root_message=root_message,
-        locked=bool(settings.get("locked_at")),
-        converted_to_conversation_id=settings.get("converted_to_conversation_id"),
-    )
-
-
-async def emit_thread_root_summary_if_needed(
-    *,
-    sio: socketio.AsyncServer,
-    conversation: ConversationDocument,
-    message: MessageDoc,
-    service: ConversationsService,
-    messages: MessagesService,
-) -> None:
-    if (
-        conversation.type != "thread"
-        or conversation.parent_conversation_id is None
-        or not conversation.root_message_id
-    ):
-        return
-
-    summary = await messages.record_thread_conversation_reply(
-        parent_conversation_id=str(conversation.parent_conversation_id),
-        root_message_id=str(conversation.root_message_id),
-        reply_created_at=message.created_at,
-    )
-    participant_ids = await service.conversation_participant_ids(
-        conversation_id=str(conversation.parent_conversation_id)
-    )
-    payload = {
-        "thread_root_id": summary.thread_root_id,
-        "conversation_id": summary.conversation_id,
-        "is_thread_root": summary.is_thread_root,
-        "thread_reply_count": summary.thread_reply_count,
-        "last_thread_reply_at": summary.last_thread_reply_at,
-    }
-    for participant_id in participant_ids:
-        await emit_to_user(sio, participant_id, "thread_summary_updated", payload)
 
 
 @router.post(
@@ -445,191 +370,6 @@ async def list_conversations(
         request,
         data=data,
         meta=PaginationMeta(cursor=cursor, next_cursor=next_cursor, limit=limit),
-    )
-
-
-@router.get(
-    "/threads",
-    response_model=PaginatedResponse[list[ThreadConversationView]],
-    dependencies=[Depends(rate_limit("30/minute", scope="conversation_threads"))],
-)
-async def list_threads(
-    request: Request,
-    limit: int = Query(50, ge=1, le=100),
-    cursor: Optional[str] = Query(None),
-    archived: bool = Query(False),
-    user=Depends(require_verified_user),
-    service: ConversationsService = Depends(get_conversations_service),
-    messages: MessagesService = Depends(get_messages_service),
-):
-    items, next_cursor = await service.list_threads_for_user(
-        user_id=user.str_id,
-        limit=limit,
-        cursor=cursor,
-        archived=archived,
-    )
-    data = [
-        await build_thread_conversation_view(
-            user_id=user.str_id,
-            thread=thread,
-            service=service,
-            messages=messages,
-        )
-        for thread in items
-    ]
-    return ok_paginated(
-        request,
-        data=data,
-        meta=PaginationMeta(cursor=cursor, next_cursor=next_cursor, limit=limit),
-    )
-
-
-@router.get(
-    "/threads/{thread_id}",
-    response_model=SuccessResponse[ThreadConversationView],
-    responses=build_error_responses(404),
-    dependencies=[Depends(rate_limit("60/minute", scope="conversation_thread_get"))],
-)
-async def get_thread_conversation(
-    request: Request,
-    thread_id: str,
-    user=Depends(require_verified_user),
-    service: ConversationsService = Depends(get_conversations_service),
-    messages: MessagesService = Depends(get_messages_service),
-):
-    thread = await service.require_participant(
-        user_id=user.str_id, conversation_id=thread_id
-    )
-    if thread.type != "thread":
-        raise AppError(
-            code="INVALID_CONVERSATION",
-            message="Conversation is not a thread",
-            status_code=400,
-        )
-    data = await build_thread_conversation_view(
-        user_id=user.str_id,
-        thread=thread,
-        service=service,
-        messages=messages,
-    )
-    return ok(request, data=data)
-
-
-@router.get(
-    "/threads/{thread_id}/messages",
-    response_model=SuccessResponse[list[MessageDoc]],
-    responses=build_error_responses(404),
-    dependencies=[
-        Depends(rate_limit("60/minute", scope="conversation_thread_messages"))
-    ],
-)
-async def get_thread_conversation_messages(
-    request: Request,
-    thread_id: str,
-    user=Depends(require_verified_user),
-    service: ConversationsService = Depends(get_conversations_service),
-    messages: MessagesService = Depends(get_messages_service),
-):
-    thread = await service.require_participant(
-        user_id=user.str_id, conversation_id=thread_id
-    )
-    if (
-        thread.type != "thread"
-        or thread.parent_conversation_id is None
-        or not thread.root_message_id
-    ):
-        raise AppError(
-            code="INVALID_CONVERSATION",
-            message="Conversation is not a valid thread",
-            status_code=400,
-        )
-    items, _ = await messages.get_thread_bridge_for_conversation(
-        parent_conversation_id=str(thread.parent_conversation_id),
-        thread_conversation_id=thread.str_id,
-        root_message_id=str(thread.root_message_id),
-        user_id=user.str_id,
-    )
-    return ok(request, data=items)
-
-
-@router.post(
-    "/threads/{thread_id}/convert-to-group",
-    status_code=201,
-    response_model=SuccessResponse[ConvertThreadToGroupResponse],
-    responses=build_error_responses(400, 403, 404, 409),
-    dependencies=[Depends(rate_limit("10/minute", scope="thread_group_convert"))],
-)
-async def convert_thread_to_group(
-    request: Request,
-    thread_id: str,
-    body: ConvertThreadToGroupRequest,
-    user=Depends(require_verified_user),
-    service: ConversationsService = Depends(get_conversations_service),
-    messages: MessagesService = Depends(get_messages_service),
-):
-    thread = await service.require_thread_owner(
-        user_id=user.str_id, thread_id=thread_id
-    )
-    if thread.parent_conversation_id is None or not thread.root_message_id:
-        raise AppError(
-            code="INVALID_CONVERSATION",
-            message="Thread is missing parent linkage",
-            status_code=400,
-        )
-
-    (
-        transcript,
-        truncated,
-    ) = await messages.get_thread_transcript_documents_for_conversion(
-        parent_conversation_id=str(thread.parent_conversation_id),
-        thread_conversation_id=thread.str_id,
-        root_message_id=str(thread.root_message_id),
-        user_id=user.str_id,
-    )
-    required_user_ids = {str(item.sender_id) for item in transcript}
-    requested_user_ids = {str(item) for item in body.participant_ids}
-    requested_user_ids.add(user.str_id)
-    missing_required = required_user_ids - requested_user_ids
-    if missing_required:
-        raise AppError(
-            code="THREAD_TRANSCRIPT_AUTHORS_REQUIRED",
-            message="Converted group must include every thread transcript author",
-            status_code=400,
-        )
-
-    group = await service.create_group_conversation(
-        user_id=user.str_id,
-        title=body.title,
-        participant_ids=sorted(requested_user_ids - {user.str_id}),
-        enforce_chat_permission=False,
-    )
-    imported_count, _ = await messages.import_thread_transcript_to_conversation(
-        source_messages=transcript,
-        target_conversation_id=group.str_id,
-        actor_user_id=user.str_id,
-        parent_conversation_id=str(thread.parent_conversation_id),
-        root_message_id=str(thread.root_message_id),
-    )
-    locked_thread = await service.lock_thread_after_conversion(
-        user_id=user.str_id,
-        thread_id=thread.str_id,
-        group_id=group.str_id,
-    )
-    group_view = (
-        await service.views_for_user(user_id=user.str_id, conversations=[group])
-    )[0]
-    thread_view = (
-        await service.views_for_user(user_id=user.str_id, conversations=[locked_thread])
-    )[0]
-    return ok(
-        request,
-        data=ConvertThreadToGroupResponse(
-            group=group_view,
-            thread=thread_view,
-            imported_count=imported_count,
-            truncated=truncated,
-        ),
-        status_code=201,
     )
 
 
@@ -1025,9 +765,10 @@ async def list_messages(
     await service.require_participant(
         user_id=user.str_id, conversation_id=conversation_id
     )
-    items, next_cursor = await messages.get_conversation_history(
+    items, next_cursor = await messages.get_history(
         user_id=user.str_id,
-        conversation_id=conversation_id,
+        container_type="conversation",
+        container_id=conversation_id,
         limit=limit,
         cursor=cursor,
     )
@@ -1057,9 +798,10 @@ async def send_text(
     conversation = await service.require_can_post(
         user_id=user.str_id, conversation_id=conversation_id
     )
-    result = await messages.send_text_to_conversation(
+    result = await messages.send_text(
         sender_id=user.str_id,
-        conversation_id=conversation_id,
+        container_type="conversation",
+        container_id=conversation_id,
         text=body.text,
         reply_mode=body.reply_mode,
         reply_to_message_id=body.reply_to_message_id,
@@ -1070,13 +812,6 @@ async def send_text(
         participant_ids=[
             str(participant_id) for participant_id in conversation.participant_ids
         ],
-    )
-    await emit_thread_root_summary_if_needed(
-        sio=sio,
-        conversation=conversation,
-        message=result.message,
-        service=service,
-        messages=messages,
     )
     await emit_message_notifications(
         sio,
@@ -1115,9 +850,10 @@ async def send_media(
     conversation = await service.require_can_post(
         user_id=user.str_id, conversation_id=conversation_id
     )
-    result = await messages.upload_media_to_conversation(
+    result = await messages.upload_media(
         sender_id=user.str_id,
-        conversation_id=conversation_id,
+        container_type="conversation",
+        container_id=conversation_id,
         message_type=type,
         media_kind=media_kind,
         file=file,
@@ -1132,13 +868,6 @@ async def send_media(
         participant_ids=[
             str(participant_id) for participant_id in conversation.participant_ids
         ],
-    )
-    await emit_thread_root_summary_if_needed(
-        sio=sio,
-        conversation=conversation,
-        message=result.message,
-        service=service,
-        messages=messages,
     )
     await emit_message_notifications(
         sio,
@@ -1170,9 +899,10 @@ async def send_rich_content(
     conversation = await service.require_can_post(
         user_id=user.str_id, conversation_id=conversation_id
     )
-    result = await messages.send_rich_content_to_conversation(
+    result = await messages.send_rich_content(
         sender_id=user.str_id,
-        conversation_id=conversation_id,
+        container_type="conversation",
+        container_id=conversation_id,
         body=body,
     )
     await emit_send_result(
@@ -1181,13 +911,6 @@ async def send_rich_content(
         participant_ids=[
             str(participant_id) for participant_id in conversation.participant_ids
         ],
-    )
-    await emit_thread_root_summary_if_needed(
-        sio=sio,
-        conversation=conversation,
-        message=result.message,
-        service=service,
-        messages=messages,
     )
     await emit_message_notifications(
         sio,
@@ -1199,31 +922,6 @@ async def send_rich_content(
         user_id=user.str_id, conversation_id=conversation_id
     )
     return ok(request, data=result.message, status_code=201)
-
-
-@router.post(
-    "/{conversation_id}/messages/{message_id}/thread-conversation",
-    status_code=200,
-    response_model=SuccessResponse[ConversationView],
-    responses=build_error_responses(404),
-    dependencies=[Depends(rate_limit("30/minute", scope="thread_conversation_open"))],
-)
-async def open_thread_conversation(
-    request: Request,
-    conversation_id: str,
-    message_id: str,
-    user=Depends(require_verified_user),
-    service: ConversationsService = Depends(get_conversations_service),
-):
-    thread = await service.ensure_thread_conversation(
-        user_id=user.str_id,
-        parent_conversation_id=conversation_id,
-        root_message_id=message_id,
-    )
-    data = (await service.views_for_user(user_id=user.str_id, conversations=[thread]))[
-        0
-    ]
-    return ok(request, data=data)
 
 
 @router.get(
@@ -1241,8 +939,9 @@ async def get_thread(
     await service.require_participant(
         user_id=user.str_id, conversation_id=conversation_id
     )
-    items = await messages.get_thread_for_conversation(
-        conversation_id=conversation_id,
+    items = await messages.get_thread(
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=message_id,
         user_id=user.str_id,
     )
@@ -1264,8 +963,9 @@ async def get_thread_summary(
     await service.require_participant(
         user_id=user.str_id, conversation_id=conversation_id
     )
-    summary = await messages.get_thread_summary_for_conversation(
-        conversation_id=conversation_id,
+    summary = await messages.get_thread_summary(
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=message_id,
         user_id=user.str_id,
     )
@@ -1288,13 +988,16 @@ async def mark_message_delivered(
     conversation = await service.require_participant(
         user_id=user.str_id, conversation_id=conversation_id
     )
-    message = await messages.mark_delivered_for_conversation(
-        conversation_id=conversation_id,
+    message = await messages.mark_delivered(
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=message_id,
         user_id=user.str_id,
     )
     payload = {
         "message_id": message.id,
+        "container_type": message.container_type,
+        "container_id": message.container_id,
         "conversation_id": conversation_id,
         "receipt_summary": message.receipt_summary.model_dump(mode="json"),
         "updated_at": message.updated_at,
@@ -1325,13 +1028,16 @@ async def mark_message_read(
         conversation_id=conversation_id,
         last_read_message_id=message_id,
     )
-    message = await messages.mark_read_for_conversation(
-        conversation_id=conversation_id,
+    message = await messages.mark_read(
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=message_id,
         user_id=user.str_id,
     )
     payload = {
         "message_id": message.id,
+        "container_type": message.container_type,
+        "container_id": message.container_id,
         "conversation_id": conversation_id,
         "receipt_summary": message.receipt_summary.model_dump(mode="json"),
         "updated_at": message.updated_at,
@@ -1358,14 +1064,17 @@ async def add_reaction(
     conversation = await service.require_participant(
         user_id=user.str_id, conversation_id=conversation_id
     )
-    message = await messages.add_reaction_for_conversation(
-        conversation_id=conversation_id,
+    message = await messages.add_reaction(
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=message_id,
         user_id=user.str_id,
         emoji=body.emoji,
     )
     payload = {
         "message_id": message.id,
+        "container_type": message.container_type,
+        "container_id": message.container_id,
         "conversation_id": conversation_id,
         "reactions": [
             reaction.model_dump(mode="json") for reaction in message.reactions
@@ -1394,14 +1103,17 @@ async def remove_reaction(
     conversation = await service.require_participant(
         user_id=user.str_id, conversation_id=conversation_id
     )
-    message = await messages.remove_reaction_for_conversation(
-        conversation_id=conversation_id,
+    message = await messages.remove_reaction(
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=message_id,
         user_id=user.str_id,
         emoji=emoji,
     )
     payload = {
         "message_id": message.id,
+        "container_type": message.container_type,
+        "container_id": message.container_id,
         "conversation_id": conversation_id,
         "reactions": [
             reaction.model_dump(mode="json") for reaction in message.reactions
@@ -1430,8 +1142,9 @@ async def edit_message(
     conversation = await service.require_participant(
         user_id=user.str_id, conversation_id=conversation_id
     )
-    message = await messages.edit_text_message_for_conversation(
-        conversation_id=conversation_id,
+    message = await messages.edit_text_message_in_container(
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=message_id,
         sender_id=user.str_id,
         text=body.text,
@@ -1519,8 +1232,9 @@ async def list_pinned_messages(
     pinned_ids = await service.list_pinned_message_ids(
         user_id=user.str_id, conversation_id=conversation_id
     )
-    items = await messages.get_messages_by_ids_for_conversation(
-        conversation_id=conversation_id,
+    items = await messages.get_messages_by_ids(
+        container_type="conversation",
+        container_id=conversation_id,
         message_ids=pinned_ids,
         user_id=user.str_id,
     )
@@ -1551,10 +1265,12 @@ async def forward_message(
     target = await service.require_can_post(
         user_id=user.str_id, conversation_id=body.target_conversation_id
     )
-    result = await messages.forward_message_to_conversation(
-        source_conversation_id=conversation_id,
+    result = await messages.forward_message(
+        source_container_type="conversation",
+        source_container_id=conversation_id,
         message_id=message_id,
-        target_conversation_id=body.target_conversation_id,
+        target_container_type="conversation",
+        target_container_id=body.target_conversation_id,
         sender_id=user.str_id,
     )
     await emit_send_result(
@@ -1584,8 +1300,9 @@ async def schedule_message(
     messages: MessagesService = Depends(get_messages_service),
 ):
     await service.require_can_post(user_id=user.str_id, conversation_id=conversation_id)
-    message = await messages.schedule_conversation_message(
-        conversation_id=conversation_id,
+    message = await messages.schedule_message(
+        container_type="conversation",
+        container_id=conversation_id,
         sender_id=user.str_id,
         text=body.text,
         scheduled_for=body.scheduled_for,
@@ -1609,7 +1326,9 @@ async def list_scheduled_messages(
         user_id=user.str_id, conversation_id=conversation_id
     )
     items = await messages.list_scheduled_messages(
-        conversation_id=conversation_id, sender_id=user.str_id
+        container_type="conversation",
+        container_id=conversation_id,
+        sender_id=user.str_id,
     )
     return ok(request, data=items)
 
@@ -1632,7 +1351,8 @@ async def cancel_scheduled_message(
         user_id=user.str_id, conversation_id=conversation_id
     )
     await messages.cancel_scheduled_message(
-        conversation_id=conversation_id,
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=message_id,
         sender_id=user.str_id,
     )
@@ -1656,8 +1376,9 @@ async def get_message(
     await service.require_participant(
         user_id=user.str_id, conversation_id=conversation_id
     )
-    message = await messages.get_message_for_conversation(
-        conversation_id=conversation_id,
+    message = await messages.get_message(
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=message_id,
         user_id=user.str_id,
     )
@@ -1731,7 +1452,8 @@ async def clear_messages_for_everyone(
         user_id=user.str_id, conversation_id=conversation_id
     )
     conv_id, count = await messages.clear_chat_history_for_everyone(
-        conversation_id=conversation_id
+        container_type="conversation",
+        container_id=conversation_id,
     )
     payload = {"conversation_id": conv_id, "cleared_count": count}
     for participant_id in conversation.participant_ids:
@@ -1760,8 +1482,9 @@ async def delete_message(
     conversation = await service.require_participant(
         user_id=user.str_id, conversation_id=conversation_id
     )
-    outcome = await messages.delete_message_for_conversation(
-        conversation_id=conversation_id,
+    outcome = await messages.delete_message(
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=message_id,
         actor_user_id=user.str_id,
     )
@@ -1787,7 +1510,8 @@ async def clear_messages(
     messages: MessagesService = Depends(get_messages_service),
 ):
     conv_id, count = await messages.clear_chat_history(
-        conversation_id=conversation_id, user_id=user.str_id
+        container_type="conversation",
+        container_id=conversation_id, user_id=user.str_id
     )
     return ok(
         request,
@@ -1811,7 +1535,8 @@ async def delete_conversation(
         user_id=user.str_id, conversation_id=conversation_id
     )
     conv_id, count, ping_deleted = await messages.delete_chat(
-        conversation_id=conversation_id, user_id=user.str_id, peer_user_id=peer_id
+        container_type="conversation",
+        container_id=conversation_id, user_id=user.str_id, peer_user_id=peer_id
     )
     return ok(
         request,

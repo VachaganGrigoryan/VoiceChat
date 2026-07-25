@@ -174,7 +174,10 @@ class ConversationsReadMixin:
     ) -> MessageDocument | None:
         """Fetch a message and confirm it belongs to the given conversation."""
         message = await MessageDocument.get(parse_object_id(message_id))
-        if message is None or str(message.conversation_id) != str(conversation_id):
+        if message is None or (
+            message.container_type != "conversation"
+            or str(message.container_id) != str(conversation_id)
+        ):
             return None
         return message
 

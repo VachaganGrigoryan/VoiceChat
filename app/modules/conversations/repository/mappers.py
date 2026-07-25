@@ -54,12 +54,6 @@ def to_conversation_view(
         space_id=(
             str(conversation.space_id) if conversation.space_id is not None else None
         ),
-        parent_conversation_id=(
-            str(conversation.parent_conversation_id)
-            if conversation.parent_conversation_id is not None
-            else None
-        ),
-        root_message_id=conversation.root_message_id,
         slug=conversation.slug,
         description=conversation.description,
         member_count=conversation.member_count,
