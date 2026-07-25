@@ -9,6 +9,13 @@ from app.db.document import EmbeddedBase
 from app.db.object_id import StrId
 
 
+class OwnerRef(EmbeddedBase):
+    """Reference to an owner entity (user or space)."""
+
+    type: Literal["user", "space"]
+    id: StrId
+
+
 class MediaDocument(EmbeddedBase):
     kind: Literal["voice", "audio", "image", "video", "file"]
     storage: Literal["local", "s3"]

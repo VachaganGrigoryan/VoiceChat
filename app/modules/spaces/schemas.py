@@ -9,6 +9,7 @@ class SpaceCreateRequest(BaseModel):
     slug: str = Field(..., min_length=1, max_length=80, pattern=r"^[a-z0-9](?:[a-z0-9-]{1,78}[a-z0-9])$")
     kind: Literal["workspace", "community"] = "workspace"
     visibility: Literal["private", "public"] = "private"
+    join_policy: Literal["open", "approval", "invite_only", "closed"] = "open"
     avatar: dict[str, Any] | None = None
     settings: dict[str, Any] = Field(default_factory=dict)
 
@@ -17,9 +18,11 @@ class SpaceView(BaseModel):
     name: str
     slug: str
     kind: Literal["workspace", "community"]
+    owner_user_id: str
     created_by: str
     avatar: dict[str, Any] | None
     visibility: Literal["private", "public"]
+    join_policy: Literal["open", "approval", "invite_only", "closed"]
     settings: dict[str, Any]
     created_at: datetime
     updated_at: datetime

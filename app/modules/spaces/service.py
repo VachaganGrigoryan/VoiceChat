@@ -39,6 +39,7 @@ class SpacesService:
         slug: str,
         kind: Literal["workspace", "community"] = "workspace",
         visibility: Literal["private", "public"] = "private",
+        join_policy: Literal["open", "approval", "invite_only", "closed"] = "open",
         avatar: dict[str, Any] | None = None,
         settings: dict[str, Any] | None = None,
     ) -> SpaceView:
@@ -52,14 +53,17 @@ class SpacesService:
             )
 
         now = datetime.now(UTC)
+        st_dict = dict(settings or {})
+        st_dict["kind"] = kind
         space = SpaceDocument(
             name=name.strip(),
             slug=slug.strip().lower(),
-            kind=kind,
+            owner_user_id=str(created_by),
             created_by=str(created_by),
             avatar=avatar,
             visibility=visibility,
-            settings=settings or {},
+            join_policy=join_policy,
+            settings=st_dict,
             created_at=now,
             updated_at=now,
         )
@@ -402,9 +406,11 @@ class SpacesService:
             name=space.name,
             slug=space.slug,
             kind=space.kind,
+            owner_user_id=str(space.owner_user_id),
             created_by=str(space.created_by),
             avatar=space.avatar,
             visibility=space.visibility,
+            join_policy=space.join_policy,
             settings=space.settings,
             created_at=space.created_at,
             updated_at=space.updated_at,

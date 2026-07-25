@@ -13,6 +13,7 @@ from app.db.models.auth import RefreshTokenDocument
 from app.db.models.block import BlockDocument
 from app.db.models.bot import BotDocument
 from app.db.models.call import CallDocument
+from app.db.models.channel import ChannelDocument
 from app.db.models.conversation import ConversationDocument
 from app.db.models.device import DeviceDocument
 from app.db.models.device_prekey import DevicePreKeyDocument
@@ -27,6 +28,7 @@ from app.db.models.embedded import (
     MessageContentDocument,
     MessageEditDocument,
     MessageReactionDocument,
+    OwnerRef,
     PlaintextContentDocument,
     PollRefDocument,
     ReplyPreviewDocument,
@@ -65,6 +67,7 @@ DOCUMENT_MODELS: list[type[Document]] = [
     PasskeyChallengeDocument,
     PingDocument,
     CallDocument,
+    ChannelDocument,
     MessageDocument,
     MessageReceiptDocument,
     ConversationDocument,
@@ -95,6 +98,7 @@ __all__ = [
     "CallDocument",
     "CallMessageDocument",
     "CallParticipantStateDocument",
+    "ChannelDocument",
     "ConversationDocument",
     "ConversationPreviewDocument",
     "DeviceDocument",
@@ -111,6 +115,7 @@ __all__ = [
     "MessageReceiptDocument",
     "MessageReactionDocument",
     "NotificationDocument",
+    "OwnerRef",
     "ParticipantDocument",
     "PasskeyChallengeDocument",
     "PasskeyDocument",

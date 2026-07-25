@@ -6,7 +6,7 @@ from typing import Any
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
-from app.db.models import ConversationDocument, ConversationPreviewDocument
+from app.db.models import ConversationDocument, ConversationPreviewDocument, OwnerRef
 from app.db.object_id import parse_object_id
 from app.modules.conversations.repository.helpers import dm_key_for
 
@@ -56,14 +56,21 @@ class ConversationsWriteMixin:
         space_visibility: str | None = None,
     ) -> ConversationDocument:
         now = datetime.now(UTC)
+        parsed_space_id = parse_object_id(space_id) if space_id is not None else None
+        owner = (
+            OwnerRef(type="space", id=str(space_id))
+            if space_id is not None
+            else OwnerRef(type="user", id=str(created_by))
+        )
         conversation = ConversationDocument(
             type="group",
+            owner=owner,
             participant_ids=participant_ids,
             created_by=str(created_by),
             title=title,
             encryption="none",
             dm_key=None,
-            space_id=parse_object_id(space_id) if space_id is not None else None,
+            space_id=parsed_space_id,
             space_visibility=space_visibility,  # type: ignore[arg-type]
             created_at=now,
             updated_at=now,
@@ -85,11 +92,11 @@ class ConversationsWriteMixin:
         space_id: str | None = None,
         space_visibility: str | None = None,
     ) -> ConversationDocument:
-        """Create a ``channel`` conversation.
+        """Create a ``channel`` conversation. **Unreachable: rejected on insert.**
 
-        Raises ``DuplicateKeyError`` when ``slug`` collides with an existing
-        public conversation (partial-unique ``slug`` index); the caller maps
-        that to a conflict error.
+        ``core-resource-model`` narrowed Conversation to ``dm|group``, so
+        ``ConversationDocument._reject_legacy_types`` raises on insert here. Kept until
+        ``channels-and-profile-feed`` (task 4.4) removes the channel branch outright.
         """
         now = datetime.now(UTC)
         conversation = ConversationDocument(
@@ -121,7 +128,12 @@ class ConversationsWriteMixin:
     async def ensure_thread(
         self, *, parent_conversation_id: str, root_message_id: str, created_by: str
     ) -> ConversationDocument:
-        """Create-or-get the ``thread`` sub-conversation for a root message."""
+        """Create-or-get the ``thread`` sub-conversation. **Unreachable: rejected on insert.**
+
+        The lookup still works for un-migrated rows, but the insert below raises via
+        ``ConversationDocument._reject_legacy_types``. Threads become message topology in
+        ``unified-messages``, which removes this method.
+        """
         existing = await ConversationDocument.find_one(
             {
                 "type": "thread",

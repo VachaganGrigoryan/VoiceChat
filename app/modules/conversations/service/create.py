@@ -115,123 +115,20 @@ class CreateConversationsMixin(BaseConversationsService):
         space_id: str | None = None,
         space_visibility: str | None = None,
     ) -> ConversationDocument:
-        """Create a broadcast ``channel``.
-
-        The creator becomes ``owner``; supplied participants join as ``member``.
-        Public channels require a unique ``slug`` (enforced by the partial-unique
-        index; a collision surfaces as a conflict error).
-        """
-        member_ids = sorted({str(pid) for pid in participant_ids if str(pid) != user_id})
-
-        if space_id is not None:
-            from app.db.models.space_member import SpaceMemberDocument
-            # Verify creator is a member
-            creator_member = await SpaceMemberDocument.find_one({"space_id": str(space_id), "user_id": str(user_id)})
-            if creator_member is None:
-                raise AppError(
-                    code="SPACE_FORBIDDEN",
-                    message="Not a member of this space",
-                    status_code=403,
-                )
-            # Verify all other participants are members
-            for participant_id in member_ids:
-                p_member = await SpaceMemberDocument.find_one({"space_id": str(space_id), "user_id": str(participant_id)})
-                if p_member is None:
-                    raise AppError(
-                        code="SPACE_MEMBER_ELIGIBILITY",
-                        message=f"User {participant_id} is not a member of the space",
-                        status_code=400,
-                    )
-
-        if space_id is None:
-            for participant_id in member_ids:
-                await self._ensure_can_message(
-                    sender_id=user_id, receiver_id=participant_id
-                )
-
-        all_participants = sorted({str(user_id), *member_ids})
-        try:
-            conversation = await self.repo.create_channel(
-                created_by=user_id,
-                participant_ids=all_participants,
-                title=title.strip(),
-                description=description.strip() if description else None,
-                visibility=visibility,
-                posting_policy=posting_policy,
-                read_policy=read_policy,
-                slug=slug,
-                space_id=space_id,
-                space_visibility=space_visibility,
-            )
-        except DuplicateKeyError as exc:
-            raise AppError(
-                code="CONVERSATION_SLUG_TAKEN",
-                message="A public conversation with this slug already exists",
-                status_code=409,
-            ) from exc
-
-        await self.repo.ensure_participant(
-            conversation_id=conversation.str_id, user_id=user_id, role="owner"
+        raise AppError(
+            code="INVALID_CONVERSATION_TYPE",
+            message="Channel creation as a conversation type is disallowed; use the channels collection",
+            status_code=400,
         )
-        for participant_id in member_ids:
-            await self.repo.ensure_participant(
-                conversation_id=conversation.str_id,
-                user_id=participant_id,
-                role="member",
-            )
-        return conversation
 
     async def ensure_thread_conversation(
         self, *, user_id: str, parent_conversation_id: str, root_message_id: str
     ) -> ConversationDocument:
-        """Create-or-get the addressable ``thread`` sub-conversation for a message.
-
-        The caller must be a participant of the parent conversation and the root
-        message must belong to it. The thread carries its own participant list and
-        per-participant read state, rooted in the parent + root message.
-        """
-        parent = await self.repo.get_for_participant(
-            conversation_id=parent_conversation_id, user_id=user_id
+        raise AppError(
+            code="INVALID_CONVERSATION_TYPE",
+            message="Thread creation as a conversation type is disallowed",
+            status_code=400,
         )
-        if parent is None:
-            raise AppError(
-                code="CONVERSATION_NOT_FOUND",
-                message="Conversation not found",
-                status_code=404,
-            )
-        message = await self.repo.get_conversation_message(
-            conversation_id=parent.str_id, message_id=root_message_id
-        )
-        if message is None:
-            raise AppError(
-                code="MESSAGE_NOT_FOUND",
-                message="Root message not found in this conversation",
-                status_code=404,
-            )
-
-        thread = await self.repo.ensure_thread(
-            parent_conversation_id=parent.str_id,
-            root_message_id=root_message_id,
-            created_by=user_id,
-        )
-        await self.repo.ensure_participant(
-            conversation_id=thread.str_id, user_id=user_id, role="owner"
-        )
-        await self.repo.add_participant_id(
-            conversation_id=thread.str_id, user_id=user_id
-        )
-        sender_id = str(message.sender_id)
-        if sender_id != str(user_id):
-            await self.repo.ensure_participant(
-                conversation_id=thread.str_id, user_id=sender_id, role="member"
-            )
-            await self.repo.add_participant_id(
-                conversation_id=thread.str_id, user_id=sender_id
-            )
-        await self.repo.sync_member_count(conversation_id=thread.str_id)
-        refreshed = await self.repo.get_by_id(thread.str_id)
-        assert refreshed is not None
-        return refreshed
 
     async def require_thread_owner(
         self, *, user_id: str, thread_id: str

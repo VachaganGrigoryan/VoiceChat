@@ -15,6 +15,7 @@ COL_CONVERSATION_PARTICIPANTS = "conversation_participants"
 COL_DEVICES = "devices"
 COL_DEVICE_PREKEYS = "device_prekeys"
 # finalize-messenger-conversation-model
+COL_CHANNELS = "channels"
 COL_SPACES = "spaces"
 COL_SPACE_MEMBERS = "space_members"
 COL_INVITE_LINKS = "invite_links"

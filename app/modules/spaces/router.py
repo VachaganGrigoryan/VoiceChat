@@ -51,6 +51,7 @@ async def create_space(
         slug=body.slug,
         kind=body.kind,
         visibility=body.visibility,
+        join_policy=body.join_policy,
         avatar=body.avatar,
         settings=body.settings,
     )
