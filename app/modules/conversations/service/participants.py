@@ -371,11 +371,10 @@ class ParticipantsServiceMixin(BaseConversationsService):
             space_id = conversation.space_id
             skip_ping_check = False
             if space_id is not None:
-                from app.db.models.space_member import SpaceMemberDocument
-                p_member = await SpaceMemberDocument.find_one({
-                    "space_id": str(space_id),
-                    "user_id": str(participant_id)
-                })
+                from app.modules.spaces.repository import find_active_space_membership
+                p_member = await find_active_space_membership(
+                    space_id=str(space_id), user_id=str(participant_id)
+                )
                 if p_member is not None:
                     skip_ping_check = True
 

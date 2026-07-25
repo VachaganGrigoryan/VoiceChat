@@ -27,11 +27,13 @@ def service():
 async def test_create_group_conversation_bypasses_ping_with_space_id(service):
     svc, repo, pings_service = service
     
-    # Mock space member query
-    with patch("app.db.models.space_member.SpaceMemberDocument.find_one", new_callable=AsyncMock) as mock_find_member:
-        # User is not necessarily checked for create_group_conversation,
-        # but let's check what create_group_conversation does when space_id is set.
-        # It queries SpaceMemberDocument for all participants.
+    # Mock space membership lookup (a relationship, kind=membership)
+    with patch(
+        "app.modules.spaces.repository.find_active_space_membership",
+        new_callable=AsyncMock,
+    ) as mock_find_member:
+        # create_group_conversation checks every participant's space membership
+        # when space_id is set.
         mock_find_member.return_value = MagicMock()
         
         # Mock repo calls
@@ -89,7 +91,10 @@ async def test_add_group_members_bypasses_ping_for_space_members(service):
     conversation.type = "group"
     repo.get_for_participant.return_value = conversation
     
-    with patch("app.db.models.space_member.SpaceMemberDocument.find_one", new_callable=AsyncMock) as mock_find_member:
+    with patch(
+        "app.modules.spaces.repository.find_active_space_membership",
+        new_callable=AsyncMock,
+    ) as mock_find_member:
         # User is in space
         mock_find_member.return_value = MagicMock()
         
@@ -124,7 +129,10 @@ async def test_add_group_members_enforces_ping_for_non_space_members(service):
         code="PING_REQUIRED", message="Ping required", status_code=403
     )
     
-    with patch("app.db.models.space_member.SpaceMemberDocument.find_one", new_callable=AsyncMock) as mock_find_member:
+    with patch(
+        "app.modules.spaces.repository.find_active_space_membership",
+        new_callable=AsyncMock,
+    ) as mock_find_member:
         # User is NOT in space
         mock_find_member.return_value = None
         

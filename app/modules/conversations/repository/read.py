@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from app.core.pagination.cursor import decode_cursor, encode_cursor
-from app.db.collections import COL_CONVERSATION_PARTICIPANTS
+from app.db.collections import COL_RELATIONSHIPS
 from app.db.models import ConversationDocument, MessageDocument
 from app.db.object_id import parse_object_id
 
@@ -24,7 +24,8 @@ class ConversationsReadMixin:
         """List a user's conversations, pinned first then most-recent activity.
 
         Ordering and grouping use the caller's own per-participant state
-        (``pinned``/``archived``/``folder``) joined from ``conversation_participants``,
+        (``pinned``/``archived``/``folder``) joined from the caller's conversation
+        membership in ``relationships``,
         so each user sees their own inbox organization. ``archived`` selects the
         archived partition; ``folder`` narrows to a single folder. The cursor
         encodes ``(pinned, activity_at, conversation_id)`` to keep the pinned-first
@@ -45,20 +46,28 @@ class ConversationsReadMixin:
             },
             {
                 "$lookup": {
-                    "from": COL_CONVERSATION_PARTICIPANTS,
+                    "from": COL_RELATIONSHIPS,
                     "let": {"conv_id": "$_conv_id_str"},
                     "pipeline": [
                         {
                             "$match": {
                                 "$expr": {
                                     "$and": [
-                                        {"$eq": ["$conversation_id", "$$conv_id"]},
+                                        {"$eq": ["$kind", "membership"]},
+                                        {"$eq": ["$target_type", "conversation"]},
+                                        {"$eq": ["$target_id", "$$conv_id"]},
                                         {"$eq": ["$user_id", str(user_id)]},
                                     ]
                                 }
                             }
                         },
-                        {"$project": {"pinned": 1, "archived": 1, "folder": 1}},
+                        {
+                            "$project": {
+                                "pinned": "$state.pinned",
+                                "archived": "$state.archived",
+                                "folder": "$state.folder",
+                            }
+                        },
                     ],
                     "as": "_me",
                 }

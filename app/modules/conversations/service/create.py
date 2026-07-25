@@ -57,9 +57,11 @@ class CreateConversationsMixin(BaseConversationsService):
             )
 
         if space_id is not None:
-            from app.db.models.space_member import SpaceMemberDocument
+            from app.modules.spaces.repository import find_active_space_membership
             # Verify creator is a member
-            creator_member = await SpaceMemberDocument.find_one({"space_id": str(space_id), "user_id": str(user_id)})
+            creator_member = await find_active_space_membership(
+                space_id=str(space_id), user_id=str(user_id)
+            )
             if creator_member is None:
                 raise AppError(
                     code="SPACE_FORBIDDEN",
@@ -68,7 +70,9 @@ class CreateConversationsMixin(BaseConversationsService):
                 )
             # Verify all other participants are members
             for participant_id in member_ids:
-                p_member = await SpaceMemberDocument.find_one({"space_id": str(space_id), "user_id": str(participant_id)})
+                p_member = await find_active_space_membership(
+                    space_id=str(space_id), user_id=str(participant_id)
+                )
                 if p_member is None:
                     raise AppError(
                         code="SPACE_MEMBER_ELIGIBILITY",

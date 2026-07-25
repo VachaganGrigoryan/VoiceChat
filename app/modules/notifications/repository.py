@@ -9,9 +9,11 @@ from app.db.models import (
     NotificationDocument,
     ParticipantDocument,
     PushTokenDocument,
+    RelationshipDocument,
     UserDocument,
 )
 from app.db.repository import BaseRepository
+from app.modules.relationships.compat import to_participant
 from app.modules.notifications.schemas import NotificationLevel, PushPlatform
 
 
@@ -21,9 +23,16 @@ class NotificationsRepository(BaseRepository[NotificationDocument]):
     async def list_conversation_participants(
         self, *, conversation_id: str
     ) -> list[ParticipantDocument]:
-        return await ParticipantDocument.find(
-            {"conversation_id": str(conversation_id), "hidden": {"$ne": True}}
+        docs = await RelationshipDocument.find(
+            {
+                "kind": "membership",
+                "target_type": "conversation",
+                "target_id": str(conversation_id),
+                "status": "active",
+                "state.hidden": {"$ne": True},
+            }
         ).to_list()
+        return [to_participant(doc) for doc in docs]
 
     async def users_by_ids(self, user_ids: list[str]) -> dict[str, UserDocument]:
         from app.modules.auth.repository import UsersRepository
@@ -75,17 +84,23 @@ class NotificationsRepository(BaseRepository[NotificationDocument]):
     ) -> ParticipantDocument | None:
         updates: dict[str, Any] = {"updated_at": datetime.now(UTC)}
         if notification_level is not None:
-            updates["notification_level"] = notification_level
-            updates["muted"] = notification_level == "none"
+            updates["state.notification_level"] = notification_level
         if set_muted_until:
-            updates["muted_until"] = muted_until
+            updates["state.muted_until"] = muted_until
 
-        raw = await ParticipantDocument.get_pymongo_collection().find_one_and_update(
-            {"conversation_id": str(conversation_id), "user_id": str(user_id)},
+        raw = await RelationshipDocument.get_pymongo_collection().find_one_and_update(
+            {
+                "kind": "membership",
+                "target_type": "conversation",
+                "target_id": str(conversation_id),
+                "user_id": str(user_id),
+            },
             {"$set": updates},
             return_document=ReturnDocument.AFTER,
         )
-        return ParticipantDocument.model_validate(raw) if raw is not None else None
+        if raw is None:
+            return None
+        return to_participant(RelationshipDocument.model_validate(raw))
 
     async def update_user_preferences(
         self,

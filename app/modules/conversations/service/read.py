@@ -26,8 +26,10 @@ class ReadConversationsMixin(BaseConversationsService):
         space_id: str | None = None,
     ) -> tuple[list[ConversationDocument], str | None]:
         if space_id is not None:
-            from app.db.models.space_member import SpaceMemberDocument
-            member = await SpaceMemberDocument.find_one({"space_id": str(space_id), "user_id": str(user_id)})
+            from app.modules.spaces.repository import find_active_space_membership
+            member = await find_active_space_membership(
+                space_id=str(space_id), user_id=str(user_id)
+            )
             if member is None:
                 raise AppError(
                     code="SPACE_FORBIDDEN",

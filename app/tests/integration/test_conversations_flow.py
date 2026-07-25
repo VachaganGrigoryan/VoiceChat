@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.db.models import ConversationDocument, ParticipantDocument
+from app.db.models import ConversationDocument, RelationshipDocument
 from app.modules.conversations.repository.helpers import dm_key_for
 from app.tests.integration.test_realtime_socket import (
     _create_verified_user_and_tokens,
@@ -262,8 +262,13 @@ async def test_call_materializes_conversation_entity(inprocess_client):
     dm_key = dm_key_for(str(caller["_id"]), str(callee["_id"]))
     conversation = await ConversationDocument.find_one({"type": "dm", "dm_key": dm_key})
     assert conversation is not None
-    participants = await ParticipantDocument.find(
-        {"conversation_id": conversation.str_id}
+    participants = await RelationshipDocument.find(
+        {
+            "kind": "membership",
+            "target_type": "conversation",
+            "target_id": conversation.str_id,
+            "status": "active",
+        }
     ).to_list()
     assert len(participants) == 2
 

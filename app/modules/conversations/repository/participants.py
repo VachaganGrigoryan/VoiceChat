@@ -3,82 +3,129 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from pymongo import ReturnDocument
-from pymongo.errors import DuplicateKeyError
 
-from app.db.models import MessageDocument, ParticipantDocument
+from app.db.models import MessageDocument, ParticipantDocument, RelationshipDocument
+from app.modules.relationships.compat import (
+    DEFAULT_ROLE as _DEFAULT_ROLE,
+    membership_filter,
+    to_participant,
+)
+
+
+def _membership_filter(conversation_id: str, user_id: str) -> dict:
+    return membership_filter(
+        target_type="conversation", target_id=conversation_id, user_id=user_id
+    )
+
+
+def _to_participant_or_none(raw: dict | None) -> ParticipantDocument | None:
+    if raw is None:
+        return None
+    return to_participant(RelationshipDocument.model_validate(raw))
+
+
+def _state_updates(updates: dict, allowed: tuple[str, ...]) -> dict:
+    """Map legacy flat participant keys onto dotted ``state.*`` paths."""
+    return {
+        f"state.{key}": updates[key] for key in allowed if key in updates
+    }
 
 
 class ParticipantsRepositoryMixin:
-    async def ensure_participant(
-        self, *, conversation_id: str, user_id: str, role: str = "member"
-    ) -> ParticipantDocument:
-        existing = await ParticipantDocument.find_one(
-            {"conversation_id": str(conversation_id), "user_id": str(user_id)}
-        )
-        if existing is not None:
-            return existing
+    """Conversation participation backed by `Relationship(kind=membership)`.
 
+    Only `status = active` memberships count as participation (§58); the
+    per-user inbox/read fields live on the membership `state` bag (§65).
+    """
+
+    @property
+    def _relationships(self):
+        return RelationshipDocument.get_pymongo_collection()
+
+    async def ensure_participant(
+        self, *, conversation_id: str, user_id: str, role: str = _DEFAULT_ROLE
+    ) -> ParticipantDocument:
         now = datetime.now(UTC)
-        participant = ParticipantDocument(
-            conversation_id=str(conversation_id),
-            user_id=str(user_id),
-            role=role,
-            joined_at=now,
-            created_at=now,
-            updated_at=now,
+        raw = await self._relationships.find_one_and_update(
+            _membership_filter(conversation_id, user_id),
+            {
+                "$set": {"status": "active", "activated_at": now, "updated_at": now},
+                "$setOnInsert": {
+                    "kind": "membership",
+                    "target_type": "conversation",
+                    "target_id": str(conversation_id),
+                    "user_id": str(user_id),
+                    "role_ids": [role],
+                    "initiation": "direct",
+                    "initiated_by": str(user_id),
+                    "requested_at": now,
+                    "ended_at": None,
+                    "state": {},
+                    "created_at": now,
+                },
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
         )
-        try:
-            await participant.insert()
-        except DuplicateKeyError:
-            existing = await ParticipantDocument.find_one(
-                {"conversation_id": str(conversation_id), "user_id": str(user_id)}
-            )
-            if existing is None:  # pragma: no cover - index guarantees a winner
-                raise
-            return existing
-        return participant
+        return to_participant(RelationshipDocument.model_validate(raw))
 
     async def get_participant(
         self, *, conversation_id: str, user_id: str
     ) -> ParticipantDocument | None:
-        return await ParticipantDocument.find_one(
-            {"conversation_id": str(conversation_id), "user_id": str(user_id)}
+        raw = await self._relationships.find_one(
+            {**_membership_filter(conversation_id, user_id), "status": "active"}
         )
+        return _to_participant_or_none(raw)
 
     async def list_participants(
         self, *, conversation_id: str
     ) -> list[ParticipantDocument]:
-        return await ParticipantDocument.find(
-            {"conversation_id": str(conversation_id)}
+        docs = await RelationshipDocument.find(
+            {
+                "kind": "membership",
+                "target_type": "conversation",
+                "target_id": str(conversation_id),
+                "status": "active",
+            }
         ).to_list()
+        return [to_participant(doc) for doc in docs]
 
     async def set_participant_role(
         self, *, conversation_id: str, user_id: str, role: str
     ) -> ParticipantDocument | None:
-        now = datetime.now(UTC)
-        raw = await ParticipantDocument.get_pymongo_collection().find_one_and_update(
-            {"conversation_id": str(conversation_id), "user_id": str(user_id)},
-            {"$set": {"role": role, "updated_at": now}},
+        raw = await self._relationships.find_one_and_update(
+            _membership_filter(conversation_id, user_id),
+            {"$set": {"role_ids": [role], "updated_at": datetime.now(UTC)}},
             return_document=ReturnDocument.AFTER,
         )
-        return ParticipantDocument.model_validate(raw) if raw is not None else None
+        return _to_participant_or_none(raw)
 
     async def set_participant_permissions(
         self, *, conversation_id: str, user_id: str, permissions: dict | None
     ) -> ParticipantDocument | None:
-        now = datetime.now(UTC)
-        raw = await ParticipantDocument.get_pymongo_collection().find_one_and_update(
-            {"conversation_id": str(conversation_id), "user_id": str(user_id)},
-            {"$set": {"permissions": permissions, "updated_at": now}},
+        overrides = (
+            None
+            if permissions is None
+            else {
+                "allow": [name for name, granted in permissions.items() if granted],
+                "deny": [name for name, granted in permissions.items() if not granted],
+            }
+        )
+        raw = await self._relationships.find_one_and_update(
+            _membership_filter(conversation_id, user_id),
+            {
+                "$set": {
+                    "permission_overrides": overrides,
+                    "updated_at": datetime.now(UTC),
+                }
+            },
             return_document=ReturnDocument.AFTER,
         )
-        return ParticipantDocument.model_validate(raw) if raw is not None else None
+        return _to_participant_or_none(raw)
 
-    async def delete_participant(
-        self, *, conversation_id: str, user_id: str
-    ) -> bool:
-        result = await ParticipantDocument.get_pymongo_collection().delete_one(
-            {"conversation_id": str(conversation_id), "user_id": str(user_id)}
+    async def delete_participant(self, *, conversation_id: str, user_id: str) -> bool:
+        result = await self._relationships.delete_one(
+            _membership_filter(conversation_id, user_id)
         )
         return result.deleted_count > 0
 
@@ -86,37 +133,31 @@ class ParticipantsRepositoryMixin:
         self, *, conversation_id: str, user_id: str, updates: dict
     ) -> ParticipantDocument | None:
         """Set the caller's ``pinned``/``archived``/``folder`` inbox flags."""
-        set_fields = {
-            key: updates[key]
-            for key in ("pinned", "archived", "folder")
-            if key in updates
-        }
+        set_fields = _state_updates(updates, ("pinned", "archived", "folder"))
         set_fields["updated_at"] = datetime.now(UTC)
-        raw = await ParticipantDocument.get_pymongo_collection().find_one_and_update(
-            {"conversation_id": str(conversation_id), "user_id": str(user_id)},
+        raw = await self._relationships.find_one_and_update(
+            _membership_filter(conversation_id, user_id),
             {"$set": set_fields},
             return_document=ReturnDocument.AFTER,
         )
-        return ParticipantDocument.model_validate(raw) if raw is not None else None
+        return _to_participant_or_none(raw)
 
     async def update_many_inbox_state(
         self, *, conversation_ids: list[str], user_id: str, updates: dict
     ) -> int:
         """Apply whitelisted inbox flags to several of the caller's rows at once.
 
-        Returns the number of participant rows modified.
+        Returns the number of membership rows modified.
         """
-        set_fields = {
-            key: updates[key]
-            for key in ("pinned", "archived", "folder")
-            if key in updates
-        }
+        set_fields = _state_updates(updates, ("pinned", "archived", "folder"))
         if not set_fields:
             return 0
         set_fields["updated_at"] = datetime.now(UTC)
-        result = await ParticipantDocument.get_pymongo_collection().update_many(
+        result = await self._relationships.update_many(
             {
-                "conversation_id": {"$in": [str(cid) for cid in conversation_ids]},
+                "kind": "membership",
+                "target_type": "conversation",
+                "target_id": {"$in": [str(cid) for cid in conversation_ids]},
                 "user_id": str(user_id),
             },
             {"$set": set_fields},
@@ -132,32 +173,40 @@ class ParticipantsRepositoryMixin:
         write and don't churn ``updated_at``. Returns the updated row, or ``None``
         when nothing was archived.
         """
-        raw = await ParticipantDocument.get_pymongo_collection().find_one_and_update(
+        raw = await self._relationships.find_one_and_update(
+            {**_membership_filter(conversation_id, user_id), "state.archived": True},
             {
-                "conversation_id": str(conversation_id),
-                "user_id": str(user_id),
-                "archived": True,
+                "$set": {
+                    "state.archived": False,
+                    "updated_at": datetime.now(UTC),
+                }
             },
-            {"$set": {"archived": False, "updated_at": datetime.now(UTC)}},
             return_document=ReturnDocument.AFTER,
         )
-        return ParticipantDocument.model_validate(raw) if raw is not None else None
+        return _to_participant_or_none(raw)
 
     async def aggregate_folders(self, *, user_id: str) -> list[dict]:
         """Return the caller's folders with total and archived conversation counts.
 
-        Discovered from the per-participant ``folder`` label, so folders survive
-        even when all their conversations are archived or past a listing page.
+        Discovered from the per-membership ``state.folder`` label, so folders
+        survive even when all their conversations are archived or past a page.
         """
-        cursor = await ParticipantDocument.get_pymongo_collection().aggregate(
+        cursor = await self._relationships.aggregate(
             [
-                {"$match": {"user_id": str(user_id), "folder": {"$ne": None}}},
+                {
+                    "$match": {
+                        "kind": "membership",
+                        "target_type": "conversation",
+                        "user_id": str(user_id),
+                        "state.folder": {"$ne": None},
+                    }
+                },
                 {
                     "$group": {
-                        "_id": "$folder",
+                        "_id": "$state.folder",
                         "count": {"$sum": 1},
                         "archived_count": {
-                            "$sum": {"$cond": ["$archived", 1, 0]},
+                            "$sum": {"$cond": ["$state.archived", 1, 0]},
                         },
                     }
                 },
@@ -173,21 +222,29 @@ class ParticipantsRepositoryMixin:
             async for row in cursor
         ]
 
-    async def rename_folder(
-        self, *, user_id: str, old_name: str, new_name: str
-    ) -> int:
+    async def rename_folder(self, *, user_id: str, old_name: str, new_name: str) -> int:
         """Rename a folder across all the caller's conversations."""
-        result = await ParticipantDocument.get_pymongo_collection().update_many(
-            {"user_id": str(user_id), "folder": old_name},
-            {"$set": {"folder": new_name, "updated_at": datetime.now(UTC)}},
+        result = await self._relationships.update_many(
+            {
+                "kind": "membership",
+                "target_type": "conversation",
+                "user_id": str(user_id),
+                "state.folder": old_name,
+            },
+            {"$set": {"state.folder": new_name, "updated_at": datetime.now(UTC)}},
         )
         return result.modified_count
 
     async def clear_folder(self, *, user_id: str, name: str) -> int:
         """Remove a folder label from all the caller's conversations."""
-        result = await ParticipantDocument.get_pymongo_collection().update_many(
-            {"user_id": str(user_id), "folder": name},
-            {"$set": {"folder": None, "updated_at": datetime.now(UTC)}},
+        result = await self._relationships.update_many(
+            {
+                "kind": "membership",
+                "target_type": "conversation",
+                "user_id": str(user_id),
+                "state.folder": name,
+            },
+            {"$set": {"state.folder": None, "updated_at": datetime.now(UTC)}},
         )
         return result.modified_count
 
@@ -200,18 +257,18 @@ class ParticipantsRepositoryMixin:
         draft_updated_at: datetime | None,
     ) -> ParticipantDocument | None:
         """Set or clear the caller's per-conversation draft."""
-        raw = await ParticipantDocument.get_pymongo_collection().find_one_and_update(
-            {"conversation_id": str(conversation_id), "user_id": str(user_id)},
+        raw = await self._relationships.find_one_and_update(
+            _membership_filter(conversation_id, user_id),
             {
                 "$set": {
-                    "draft_text": draft_text,
-                    "draft_updated_at": draft_updated_at,
+                    "state.draft_text": draft_text,
+                    "state.draft_updated_at": draft_updated_at,
                     "updated_at": datetime.now(UTC),
                 }
             },
             return_document=ReturnDocument.AFTER,
         )
-        return ParticipantDocument.model_validate(raw) if raw is not None else None
+        return _to_participant_or_none(raw)
 
     async def mark_read(
         self,
@@ -222,12 +279,12 @@ class ParticipantsRepositoryMixin:
         last_read_at: datetime | None = None,
     ) -> None:
         now = datetime.now(UTC)
-        await ParticipantDocument.get_pymongo_collection().update_one(
-            {"conversation_id": str(conversation_id), "user_id": str(user_id)},
+        await self._relationships.update_one(
+            _membership_filter(conversation_id, user_id),
             {
                 "$set": {
-                    "last_read_at": last_read_at or now,
-                    "last_read_message_id": last_read_message_id,
+                    "state.last_read_at": last_read_at or now,
+                    "state.last_read_message_id": last_read_message_id,
                     "updated_at": now,
                 }
             },
@@ -250,3 +307,6 @@ class ParticipantsRepositoryMixin:
         if last_read_at is not None:
             query["created_at"] = {"$gt": last_read_at}
         return await MessageDocument.find(query).count()
+
+
+__all__ = ["ParticipantsRepositoryMixin", "to_participant"]

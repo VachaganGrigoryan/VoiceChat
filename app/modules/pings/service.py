@@ -372,24 +372,30 @@ class PingsService:
     async def _shared_conversations(
         self, *, user_id: str, peer_user_id: str
     ) -> list[SharedConversationSummary]:
-        from app.db.models import ConversationDocument, ParticipantDocument
+        from app.db.models import ConversationDocument, RelationshipDocument
         from app.db.object_id import parse_object_id
 
-        my_parts = await ParticipantDocument.find(
-            {"user_id": str(user_id), "hidden": {"$ne": True}}
+        base_query = {
+            "kind": "membership",
+            "target_type": "conversation",
+            "status": "active",
+            "state.hidden": {"$ne": True},
+        }
+        my_parts = await RelationshipDocument.find(
+            {**base_query, "user_id": str(user_id)}
         ).to_list()
-        my_conv_ids = {str(part.conversation_id) for part in my_parts}
+        my_conv_ids = {str(part.target_id) for part in my_parts}
         if not my_conv_ids:
             return []
 
-        peer_parts = await ParticipantDocument.find(
+        peer_parts = await RelationshipDocument.find(
             {
+                **base_query,
                 "user_id": str(peer_user_id),
-                "conversation_id": {"$in": list(my_conv_ids)},
-                "hidden": {"$ne": True},
+                "target_id": {"$in": list(my_conv_ids)},
             }
         ).to_list()
-        shared_ids = [str(part.conversation_id) for part in peer_parts]
+        shared_ids = [str(part.target_id) for part in peer_parts]
         if not shared_ids:
             return []
 
@@ -411,23 +417,29 @@ class PingsService:
     async def _shared_spaces(
         self, *, user_id: str, peer_user_id: str
     ) -> list[SharedSpaceSummary]:
-        from app.db.models import SpaceDocument, SpaceMemberDocument
+        from app.db.models import RelationshipDocument, SpaceDocument
         from app.db.object_id import parse_object_id
 
-        my_members = await SpaceMemberDocument.find(
-            {"user_id": str(user_id)}
+        base_query = {
+            "kind": "membership",
+            "target_type": "space",
+            "status": "active",
+        }
+        my_members = await RelationshipDocument.find(
+            {**base_query, "user_id": str(user_id)}
         ).to_list()
-        my_space_ids = {str(member.space_id) for member in my_members}
+        my_space_ids = {str(member.target_id) for member in my_members}
         if not my_space_ids:
             return []
 
-        peer_members = await SpaceMemberDocument.find(
+        peer_members = await RelationshipDocument.find(
             {
+                **base_query,
                 "user_id": str(peer_user_id),
-                "space_id": {"$in": list(my_space_ids)},
+                "target_id": {"$in": list(my_space_ids)},
             }
         ).to_list()
-        shared_ids = [str(member.space_id) for member in peer_members]
+        shared_ids = [str(member.target_id) for member in peer_members]
         if not shared_ids:
             return []
 
