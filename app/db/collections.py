@@ -30,4 +30,6 @@ COL_WEBHOOKS = "webhooks"
 COL_REPORTS = "reports"
 COL_AUDIT_LOGS = "audit_logs"
 COL_SLASH_COMMANDS = "slash_commands"
+# unified-relationships
+COL_RELATIONSHIPS = "relationships"
 

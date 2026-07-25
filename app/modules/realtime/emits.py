@@ -168,3 +168,40 @@ async def emit_chat_permission_updated(
 
 async def emit_space_invite(sio: socketio.AsyncServer, *, to_user_id: str, payload: dict) -> None:
     await sio.emit("space:invite", payload, room=user_room(to_user_id))
+
+
+async def emit_relationship_event(
+    sio: socketio.AsyncServer,
+    *,
+    event: str,
+    to_user_ids: list[str],
+    payload: dict[str, Any],
+) -> None:
+    """Fan a `relationship.*` lifecycle event out to both sides of the edge."""
+    encoded = jsonable_encoder(payload)
+    for user_id in dict.fromkeys(str(uid) for uid in to_user_ids if uid):
+        await sio.emit(event, encoded, room=user_room(user_id))
+
+
+async def emit_relationship_requested(
+    sio: socketio.AsyncServer, *, to_user_ids: list[str], payload: dict[str, Any]
+) -> None:
+    await emit_relationship_event(
+        sio, event="relationship.requested", to_user_ids=to_user_ids, payload=payload
+    )
+
+
+async def emit_relationship_activated(
+    sio: socketio.AsyncServer, *, to_user_ids: list[str], payload: dict[str, Any]
+) -> None:
+    await emit_relationship_event(
+        sio, event="relationship.activated", to_user_ids=to_user_ids, payload=payload
+    )
+
+
+async def emit_relationship_revoked(
+    sio: socketio.AsyncServer, *, to_user_ids: list[str], payload: dict[str, Any]
+) -> None:
+    await emit_relationship_event(
+        sio, event="relationship.revoked", to_user_ids=to_user_ids, payload=payload
+    )

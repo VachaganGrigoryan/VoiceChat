@@ -15,6 +15,10 @@ from app.modules.realtime.emits import (
     emit_presence_update,
     emit_chat_permission_updated,
     emit_space_invite,
+    emit_relationship_event,
+    emit_relationship_requested,
+    emit_relationship_activated,
+    emit_relationship_revoked,
 )
 
 __all__ = [
@@ -34,4 +38,8 @@ __all__ = [
     "emit_presence_update",
     "emit_chat_permission_updated",
     "emit_space_invite",
+    "emit_relationship_event",
+    "emit_relationship_requested",
+    "emit_relationship_activated",
+    "emit_relationship_revoked",
 ]

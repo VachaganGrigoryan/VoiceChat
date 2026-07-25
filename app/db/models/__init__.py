@@ -47,6 +47,15 @@ from app.db.models.poll import (
     PollVoteDocument,
 )
 from app.db.models.push_token import PushTokenDocument
+from app.db.models.relationship import (
+    RelationshipDocument,
+    RelationshipInitiation,
+    RelationshipKind,
+    RelationshipPermissionOverrides,
+    RelationshipState,
+    RelationshipStatus,
+    RelationshipTargetType,
+)
 from app.db.models.report import ReportDocument
 from app.db.models.saved_message import SavedMessageDocument
 from app.db.models.space import SpaceDocument
@@ -66,6 +75,7 @@ DOCUMENT_MODELS: list[type[Document]] = [
     PasskeyDocument,
     PasskeyChallengeDocument,
     PingDocument,
+    RelationshipDocument,
     CallDocument,
     ChannelDocument,
     MessageDocument,
@@ -127,6 +137,13 @@ __all__ = [
     "PollVoteDocument",
     "PushTokenDocument",
     "RefreshTokenDocument",
+    "RelationshipDocument",
+    "RelationshipInitiation",
+    "RelationshipKind",
+    "RelationshipPermissionOverrides",
+    "RelationshipState",
+    "RelationshipStatus",
+    "RelationshipTargetType",
     "ReplyPreviewDocument",
     "ReportDocument",
     "SavedMessageDocument",
