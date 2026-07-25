@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from app.core.errors import AppError
 from app.db.models import (
     MediaDocument,
-    MessageDocument,
+    MessageContainerType,
     PlaintextContentDocument,
     PollRefDocument,
 )
 from app.infra.storage import get_storage
+from app.modules.authorization.permissions import (
+    MESSAGE_CREATE,
+    THREAD_REPLY,
+)
 from app.modules.messages.media_policy import resolve_media_policy
 from app.modules.messages.repository.mappers import (
     message_text,
@@ -22,7 +25,6 @@ from app.modules.messages.schemas import (
     MessageDoc,
     ReplyMode,
     SendRichContentRequest,
-    ThreadSummary,
 )
 from app.modules.messages.service.base import (
     ReleasedScheduledMessage,
@@ -32,10 +34,11 @@ from fastapi import UploadFile
 
 
 class CreateMessagesMixin:
-    async def upload_media_to_conversation(
+    async def upload_media(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         sender_id: str,
         message_type: str,
         media_kind: str | None,
@@ -63,8 +66,9 @@ class CreateMessagesMixin:
             )
         )
         try:
-            return await self._create_conversation_message(
-                conversation_id=conversation_id,
+            return await self._create_message(
+                container_type=container_type,
+                container_id=container_id,
                 sender_id=sender_id,
                 message_type=message_type,
                 text=self._normalize_optional_text(text),
@@ -80,10 +84,11 @@ class CreateMessagesMixin:
             await get_storage(stored.storage).delete(stored.key)
             raise
 
-    async def send_text_to_conversation(
+    async def send_text(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         sender_id: str,
         text: str,
         reply_mode: ReplyMode | None = None,
@@ -95,8 +100,9 @@ class CreateMessagesMixin:
                 reply_to_message_id=reply_to_message_id,
             )
         )
-        return await self._create_conversation_message(
-            conversation_id=conversation_id,
+        return await self._create_message(
+            container_type=container_type,
+            container_id=container_id,
             sender_id=sender_id,
             message_type="text",
             text=self._normalize_text(text),
@@ -104,10 +110,11 @@ class CreateMessagesMixin:
             reply_to_message_id=normalized_reply_to_message_id,
         )
 
-    async def send_rich_content_to_conversation(
+    async def send_rich_content(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         sender_id: str,
         body: SendRichContentRequest,
     ) -> SendMessageResult:
@@ -146,8 +153,9 @@ class CreateMessagesMixin:
                 reply_to_message_id=body.reply_to_message_id,
             )
         )
-        return await self._create_conversation_message(
-            conversation_id=conversation_id,
+        return await self._create_message(
+            container_type=container_type,
+            container_id=container_id,
             sender_id=sender_id,
             message_type=body.type,
             text=text,
@@ -157,11 +165,13 @@ class CreateMessagesMixin:
             reply_to_message_id=normalized_reply_to_message_id,
         )
 
-    async def send_poll_ref_message_to_conversation(
+    async def send_poll_ref_message(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         sender_id: str,
+        actor_user_id: str | None = None,
         poll_id: str,
         question: str,
     ) -> SendMessageResult:
@@ -169,27 +179,34 @@ class CreateMessagesMixin:
 
         The message embeds only a ``poll_ref`` (poll id + denormalized question);
         the poll's options/votes/tallies live in the linked ``PollDocument``.
+        ``sender_id`` is the authoring bot, so ``actor_user_id`` names the human
+        whose standing in the container is what gets authorized.
         """
         plaintext = PlaintextContentDocument(
             poll_ref=PollRefDocument(poll_id=poll_id, question=question)
         )
-        return await self._create_conversation_message(
-            conversation_id=conversation_id,
+        return await self._create_message(
+            container_type=container_type,
+            container_id=container_id,
             sender_id=sender_id,
+            actor_user_id=actor_user_id,
             message_type="poll",
             plaintext=plaintext,
         )
 
-    async def forward_message_to_conversation(
+    async def forward_message(
         self,
         *,
-        source_conversation_id: str,
+        source_container_type: MessageContainerType,
+        source_container_id: str,
         message_id: str,
-        target_conversation_id: str,
+        target_container_type: MessageContainerType,
+        target_container_id: str,
         sender_id: str,
     ) -> SendMessageResult:
-        source = await self.repo.get_by_id_for_conversation(
-            conversation_id=source_conversation_id,
+        source = await self.repo.get_by_id_in_container(
+            container_type=source_container_type,
+            container_id=source_container_id,
             message_id=message_id,
             user_id=sender_id,
         )
@@ -197,70 +214,34 @@ class CreateMessagesMixin:
             raise AppError(
                 code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
             )
+        await self._require_container_permission(
+            user_id=sender_id,
+            action=MESSAGE_CREATE,
+            container_type=target_container_type,
+            container_id=target_container_id,
+            message="Not allowed to post to this container",
+        )
         doc = await self.repo.create_forwarded_message(
             source=source,
-            target_conversation_id=target_conversation_id,
+            target_container_type=target_container_type,
+            target_container_id=target_container_id,
             sender_id=sender_id,
         )
         await self._materialize_conversation_message(doc)
         summaries = await self.repo.receipt_summaries_for_messages(
-            conversation_id=target_conversation_id,
+            container_type=target_container_type,
+            container_id=target_container_id,
             messages=[doc],
         )
         return SendMessageResult(
             message=to_message_doc(doc, receipt_summary=summaries.get(doc.str_id))
         )
 
-    async def import_thread_transcript_to_conversation(
+    async def schedule_message(
         self,
         *,
-        source_messages: Sequence[MessageDocument],
-        target_conversation_id: str,
-        actor_user_id: str,
-        parent_conversation_id: str,
-        root_message_id: str,
-    ) -> tuple[int, MessageDoc]:
-        imported_count = await self.repo.import_thread_transcript_messages(
-            messages=list(source_messages),
-            target_conversation_id=target_conversation_id,
-        )
-        notice = await self.repo.create_conversation_message(
-            conversation_id=target_conversation_id,
-            sender_id=actor_user_id,
-            message_type="text",
-            text=(
-                "Thread converted to group. "
-                f"Source: {parent_conversation_id} / {root_message_id}"
-            ),
-        )
-        await self._materialize_conversation_message(notice)
-        summaries = await self.repo.receipt_summaries_for_messages(
-            conversation_id=target_conversation_id,
-            messages=[notice],
-        )
-        return (
-            imported_count,
-            to_message_doc(notice, receipt_summary=summaries.get(notice.str_id)),
-        )
-
-    async def record_thread_conversation_reply(
-        self,
-        *,
-        parent_conversation_id: str,
-        root_message_id: str,
-        reply_created_at: datetime,
-    ) -> ThreadSummary:
-        root = await self.repo.bump_thread_root_summary_for_conversation(
-            parent_conversation_id=parent_conversation_id,
-            root_message_id=root_message_id,
-            reply_created_at=reply_created_at,
-        )
-        return to_thread_summary(root)
-
-    async def schedule_conversation_message(
-        self,
-        *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         sender_id: str,
         text: str,
         scheduled_for: datetime,
@@ -273,8 +254,16 @@ class CreateMessagesMixin:
                 message="scheduled_for must be in the future",
                 status_code=400,
             )
+        await self._require_container_permission(
+            user_id=sender_id,
+            action=MESSAGE_CREATE,
+            container_type=container_type,
+            container_id=container_id,
+            message="Not allowed to post to this container",
+        )
         doc = await self.repo.create_scheduled_message(
-            conversation_id=conversation_id,
+            container_type=container_type,
+            container_id=container_id,
             sender_id=sender_id,
             text=self._normalize_text(text),
             scheduled_for=scheduled_for,
@@ -282,18 +271,30 @@ class CreateMessagesMixin:
         return to_message_doc(doc)
 
     async def list_scheduled_messages(
-        self, *, conversation_id: str, sender_id: str
+        self,
+        *,
+        container_type: MessageContainerType,
+        container_id: str,
+        sender_id: str,
     ) -> list[MessageDoc]:
         docs = await self.repo.list_scheduled_for_sender(
-            conversation_id=conversation_id, sender_id=sender_id
+            container_type=container_type,
+            container_id=container_id,
+            sender_id=sender_id,
         )
         return [to_message_doc(doc) for doc in docs]
 
     async def cancel_scheduled_message(
-        self, *, conversation_id: str, message_id: str, sender_id: str
+        self,
+        *,
+        container_type: MessageContainerType,
+        container_id: str,
+        message_id: str,
+        sender_id: str,
     ) -> None:
         cancelled = await self.repo.cancel_scheduled_message(
-            conversation_id=conversation_id,
+            container_type=container_type,
+            container_id=container_id,
             message_id=message_id,
             sender_id=sender_id,
         )
@@ -310,7 +311,7 @@ class CreateMessagesMixin:
         """Release scheduled messages whose time has arrived.
 
         Flips each due message to ``sent``, materializes it onto the conversation
-        timeline, and returns the released messages together with their conversation
+        timeline, and returns the released messages together with their container
         participant ids so the caller can fan out realtime + notifications.
         """
         released = await self.repo.claim_due_scheduled_messages(
@@ -320,14 +321,18 @@ class CreateMessagesMixin:
         for doc in released:
             await self._materialize_conversation_message(doc)
             summaries = await self.repo.receipt_summaries_for_messages(
-                conversation_id=doc.conversation_id,
+                container_type=doc.container_type,
+                container_id=doc.container_id,
                 messages=[doc],
             )
             participant_ids: list[str] = []
-            if self.conversations_service is not None:
+            if (
+                doc.container_type == "conversation"
+                and self.conversations_service is not None
+            ):
                 participant_ids = (
                     await self.conversations_service.conversation_participant_ids(
-                        conversation_id=doc.conversation_id
+                        conversation_id=doc.container_id
                     )
                 )
             results.append(
@@ -342,12 +347,14 @@ class CreateMessagesMixin:
             )
         return results
 
-    async def _create_conversation_message(
+    async def _create_message(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         sender_id: str,
         message_type: str,
+        actor_user_id: str | None = None,
         text: str | None = None,
         media: MediaDocument | None = None,
         plaintext: PlaintextContentDocument | None = None,
@@ -355,15 +362,28 @@ class CreateMessagesMixin:
         reply_mode: ReplyMode | None = None,
         reply_to_message_id: str | None = None,
     ) -> SendMessageResult:
+        # Posting and replying are distinct rights: a channel may accept
+        # comments from an audience it does not let post (§59). The actor is who
+        # gets authorized — for bot-authored content that is not the sender.
+        await self._require_container_permission(
+            user_id=actor_user_id or sender_id,
+            action=THREAD_REPLY if reply_mode == "thread" else MESSAGE_CREATE,
+            container_type=container_type,
+            container_id=container_id,
+            message="Not allowed to post to this container",
+        )
+
         thread_summary = None
         mention_user_ids, mention_scope = await self._resolve_mentions(
-            conversation_id=conversation_id,
+            container_type=container_type,
+            container_id=container_id,
             text=text,
         )
 
         if reply_mode == "quote":
-            doc = await self.repo.create_conversation_quote_reply(
-                conversation_id=conversation_id,
+            doc = await self.repo.create_quote_reply(
+                container_type=container_type,
+                container_id=container_id,
                 sender_id=sender_id,
                 message_type=message_type,
                 text=text,
@@ -375,8 +395,9 @@ class CreateMessagesMixin:
                 mention_scope=mention_scope,
             )
         elif reply_mode == "thread":
-            doc = await self.repo.create_conversation_thread_reply(
-                conversation_id=conversation_id,
+            doc = await self.repo.create_thread_reply(
+                container_type=container_type,
+                container_id=container_id,
                 sender_id=sender_id,
                 message_type=message_type,
                 text=text,
@@ -387,15 +408,17 @@ class CreateMessagesMixin:
                 mention_user_ids=mention_user_ids,
                 mention_scope=mention_scope,
             )
-            summary_doc = await self.repo.load_thread_summary_for_conversation(
-                conversation_id=conversation_id,
+            summary_doc = await self.repo.load_thread_summary(
+                container_type=container_type,
+                container_id=container_id,
                 message_id=doc.thread_root_id or "",
                 user_id=sender_id,
             )
             thread_summary = to_thread_summary(summary_doc)
         else:
-            doc = await self.repo.create_conversation_message(
-                conversation_id=conversation_id,
+            doc = await self.repo.create_message(
+                container_type=container_type,
+                container_id=container_id,
                 sender_id=sender_id,
                 message_type=message_type,
                 text=text,
@@ -409,7 +432,8 @@ class CreateMessagesMixin:
         if reply_mode != "thread":
             await self._materialize_conversation_message(doc)
         summaries = await self.repo.receipt_summaries_for_messages(
-            conversation_id=conversation_id,
+            container_type=container_type,
+            container_id=container_id,
             messages=[doc],
         )
         return SendMessageResult(
@@ -418,10 +442,15 @@ class CreateMessagesMixin:
         )
 
     async def _materialize_conversation_message(self, doc) -> None:
-        if self.conversations_service is None:
+        """Advance the conversation's inbox preview for a just-created message.
+
+        Only conversations carry an inbox row; a channel's activity is tracked on
+        the channel entity itself (`channels-and-profile-feed`).
+        """
+        if self.conversations_service is None or doc.container_type != "conversation":
             return
         await self.conversations_service.materialize_conversation_message(
-            conversation_id=doc.conversation_id,
+            conversation_id=doc.container_id,
             sender_id=str(doc.sender_id),
             message_id=doc.str_id,
             message_type=doc.type,

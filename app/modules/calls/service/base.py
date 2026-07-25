@@ -181,7 +181,7 @@ class BaseCallsService:
 
             if self.conversations_service is not None:
                 await self.conversations_service.materialize_conversation_message(
-                    conversation_id=history_message_doc.conversation_id,
+                    conversation_id=history_message_doc.container_id,
                     sender_id=str(history_message_doc.sender_id),
                     message_id=history_message_id,
                     message_type=history_message_doc.type,

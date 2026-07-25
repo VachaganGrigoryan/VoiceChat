@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pymongo import ASCENDING, DESCENDING, TEXT, IndexModel
 
 from app.db.document import BaseDocument
@@ -18,9 +18,22 @@ from app.db.models.embedded import (
 )
 from app.db.object_id import StrId
 
+# The two things a message can live in (§29). A conversation is a DM or a group;
+# a channel is the feed-shaped container. Nothing else addresses a message.
+MessageContainerType = Literal["conversation", "channel"]
+
 
 class MessageDocument(BaseDocument):
-    conversation_id: str
+    """A message, addressed by its container rather than by a conversation (§29).
+
+    Threads and channel comments are topology on this one document: a root has
+    ``thread_root_id = None`` (a channel root is a Post), a thread reply carries
+    ``thread_root_id`` (a channel thread reply is a Comment). There are no
+    separate post/comment/thread documents (§31–35).
+    """
+
+    container_type: MessageContainerType
+    container_id: str = Field(min_length=1)
     sender_id: StrId
     type: ContentType = "text"
     content: MessageContentDocument | None = None
@@ -39,6 +52,9 @@ class MessageDocument(BaseDocument):
     mention_user_ids: list[StrId] = Field(default_factory=list)
     mention_scope: Literal["here", "all"] | None = None
     forwarded_from: ForwardedFromDocument | None = None
+    # Free-form labels used by feed/discovery queries (§29). Normalization and
+    # limits land with `dependent-models-cleanup` (§40).
+    tags: list[str] = Field(default_factory=list)
     # Scheduled send: withheld from timeline/fan-out until `scheduled_for`.
     scheduled_for: datetime | None = None
     state: Literal["sent", "scheduled"] = "sent"
@@ -46,20 +62,45 @@ class MessageDocument(BaseDocument):
     created_at: datetime
     updated_at: datetime
 
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_container(cls, data: Any) -> Any:
+        """Read a pre-migration row, which carries only `conversation_id`.
+
+        Writes never set `conversation_id` — it is dropped by
+        `migrate_message_containers` — but a row the migration has not reached
+        yet must still deserialize, so its conversation container is derived
+        here. Queries are keyed on `container_*`, so such a row is invisible
+        until the backfill runs; this only keeps direct id loads working.
+        """
+        if not isinstance(data, dict):
+            return data
+        conversation_id = data.get("conversation_id")
+        if not data.get("container_id") and conversation_id:
+            data["container_type"] = "conversation"
+            data["container_id"] = str(conversation_id)
+        return data
+
     class Settings:
         name = COL_MESSAGES
         indexes = [
+            # §98: the container timeline, and the thread/comment pool within it.
             IndexModel(
-                [("conversation_id", ASCENDING), ("created_at", DESCENDING)],
-                name="ix_messages_conversation_createdAt_desc",
+                [
+                    ("container_type", ASCENDING),
+                    ("container_id", ASCENDING),
+                    ("created_at", DESCENDING),
+                ],
+                name="ix_messages_container_createdAt_desc",
             ),
             IndexModel(
                 [
-                    ("conversation_id", ASCENDING),
+                    ("container_type", ASCENDING),
+                    ("container_id", ASCENDING),
                     ("thread_root_id", ASCENDING),
-                    ("created_at", DESCENDING),
+                    ("created_at", ASCENDING),
                 ],
-                name="ix_messages_conversation_threadRoot_createdAt_desc",
+                name="ix_messages_container_threadRoot_createdAt_asc",
             ),
             IndexModel(
                 [("thread_root_id", ASCENDING), ("created_at", ASCENDING)],
@@ -72,6 +113,10 @@ class MessageDocument(BaseDocument):
             IndexModel(
                 [("sender_id", ASCENDING), ("created_at", DESCENDING)],
                 name="ix_messages_sender_createdAt_desc",
+            ),
+            IndexModel(
+                [("tags", ASCENDING)],
+                name="ix_messages_tags",
             ),
             IndexModel(
                 [("content.plaintext.call.call_id", ASCENDING)],

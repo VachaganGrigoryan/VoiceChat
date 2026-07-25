@@ -283,7 +283,8 @@ def to_message_doc(
 
     return MessageDoc(
         id=message.str_id,
-        conversation_id=message.conversation_id,
+        container_type=message.container_type,
+        container_id=message.container_id,
         sender_id=str(message.sender_id),
         type=normalized_type,
         content=content,
@@ -314,7 +315,8 @@ def to_message_doc(
 def to_thread_summary(message: MessageDocument) -> ThreadSummary:
     return ThreadSummary(
         thread_root_id=message.str_id,
-        conversation_id=message.conversation_id,
+        container_type=message.container_type,
+        container_id=message.container_id,
         is_thread_root=message.is_thread_root,
         thread_reply_count=int(message.thread_reply_count),
         last_thread_reply_at=message.last_thread_reply_at,

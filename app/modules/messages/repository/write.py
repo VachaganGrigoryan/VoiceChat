@@ -5,12 +5,13 @@ from datetime import UTC, datetime
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
+from app.core.errors import AppError
 from app.db.models import (
     CallDocument,
     CallMessageDocument,
-    ConversationDocument,
     ForwardedFromDocument,
     MediaDocument,
+    MessageContainerType,
     MessageContentDocument,
     MessageDocument,
     PlaintextContentDocument,
@@ -23,10 +24,11 @@ from app.modules.messages.repository.helpers import (
 
 
 class WriteRepositoryMixin:
-    async def create_conversation_message(
+    async def create_message(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         sender_id: str,
         message_type: str,
         text: str | None = None,
@@ -49,7 +51,8 @@ class WriteRepositoryMixin:
             attachments=attachments or [],
         )
         message = MessageDocument(
-            conversation_id=conversation_id,
+            container_type=container_type,
+            container_id=container_id,
             sender_id=sender_id,
             type=message_type,
             content=content,
@@ -93,8 +96,9 @@ class WriteRepositoryMixin:
         }
 
         try:
-            return await self.create_conversation_message(
-                conversation_id=conversation_id,
+            return await self.create_message(
+                container_type="conversation",
+                container_id=conversation_id,
                 sender_id=call_doc.caller_user_id,
                 message_type="call",
                 call=CallMessageDocument.model_validate(payload),
@@ -113,10 +117,11 @@ class WriteRepositoryMixin:
         self,
         *,
         source: MessageDocument,
-        target_conversation_id: str,
+        target_container_type: MessageContainerType,
+        target_container_id: str,
         sender_id: str,
     ) -> MessageDocument:
-        """Copy ``source``'s content into ``target_conversation_id`` preserving a
+        """Copy ``source``'s content into the target container preserving a
         ``forwarded_from`` origin header referencing the original message."""
         now = datetime.now(UTC)
         content = (
@@ -125,12 +130,13 @@ class WriteRepositoryMixin:
             else MessageContentDocument(encryption="none", type=source.type)
         )
         message = MessageDocument(
-            conversation_id=target_conversation_id,
+            container_type=target_container_type,
+            container_id=target_container_id,
             sender_id=sender_id,
             type=source.type,
             content=content,
             forwarded_from=ForwardedFromDocument(
-                conversation_id=str(source.conversation_id),
+                conversation_id=str(source.container_id),
                 message_id=source.str_id,
                 sender_id=str(source.sender_id),
                 forwarded_at=now,
@@ -141,48 +147,19 @@ class WriteRepositoryMixin:
         await message.insert()
         return message
 
-    async def import_thread_transcript_messages(
-        self,
-        *,
-        messages: list[MessageDocument],
-        target_conversation_id: str,
-    ) -> int:
-        imported = 0
-        for source in messages:
-            content = (
-                source.content.model_copy(deep=True)
-                if source.content is not None
-                else MessageContentDocument(encryption="none", type=source.type)
-            )
-            message = MessageDocument(
-                conversation_id=target_conversation_id,
-                sender_id=source.sender_id,
-                type=source.type,
-                content=content,
-                forwarded_from=ForwardedFromDocument(
-                    conversation_id=str(source.conversation_id),
-                    message_id=source.str_id,
-                    sender_id=str(source.sender_id),
-                    forwarded_at=datetime.now(UTC),
-                ),
-                created_at=source.created_at,
-                updated_at=source.updated_at,
-            )
-            await message.insert()
-            imported += 1
-        return imported
-
     async def create_scheduled_message(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         sender_id: str,
         text: str,
         scheduled_for: datetime,
     ) -> MessageDocument:
         now = datetime.now(UTC)
         message = MessageDocument(
-            conversation_id=conversation_id,
+            container_type=container_type,
+            container_id=container_id,
             sender_id=sender_id,
             type="text",
             content=MessageContentDocument(
@@ -199,12 +176,17 @@ class WriteRepositoryMixin:
         return message
 
     async def list_scheduled_for_sender(
-        self, *, conversation_id: str, sender_id: str
+        self,
+        *,
+        container_type: MessageContainerType,
+        container_id: str,
+        sender_id: str,
     ) -> list[MessageDocument]:
         raw = (
             await self.col.find(
                 {
-                    "conversation_id": conversation_id,
+                    "container_type": container_type,
+                    "container_id": container_id,
                     "sender_id": sender_id,
                     "state": "scheduled",
                 }
@@ -215,12 +197,18 @@ class WriteRepositoryMixin:
         return [MessageDocument.model_validate(item) for item in raw]
 
     async def cancel_scheduled_message(
-        self, *, conversation_id: str, message_id: str, sender_id: str
+        self,
+        *,
+        container_type: MessageContainerType,
+        container_id: str,
+        message_id: str,
+        sender_id: str,
     ) -> bool:
         result = await self.col.delete_one(
             {
                 "_id": _oid(message_id),
-                "conversation_id": conversation_id,
+                "container_type": container_type,
+                "container_id": container_id,
                 "sender_id": sender_id,
                 "state": "scheduled",
             }
@@ -260,10 +248,11 @@ class WriteRepositoryMixin:
                 released.append(MessageDocument.model_validate(updated))
         return released
 
-    async def create_conversation_quote_reply(
+    async def create_quote_reply(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         sender_id: str,
         message_type: str,
         reply_to_message_id: str,
@@ -274,12 +263,14 @@ class WriteRepositoryMixin:
         mention_user_ids: list[str] | None = None,
         mention_scope: str | None = None,
     ) -> MessageDocument:
-        target = await self._load_reply_target_by_conversation(
-            conversation_id=conversation_id,
+        target = await self._load_reply_target_in_container(
+            container_type=container_type,
+            container_id=container_id,
             reply_to_message_id=reply_to_message_id,
         )
-        doc = await self.create_conversation_message(
-            conversation_id=conversation_id,
+        doc = await self.create_message(
+            container_type=container_type,
+            container_id=container_id,
             sender_id=sender_id,
             message_type=message_type,
             text=text,
@@ -298,10 +289,11 @@ class WriteRepositoryMixin:
             }
         )
 
-    async def create_conversation_thread_reply(
+    async def create_thread_reply(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         sender_id: str,
         message_type: str,
         reply_to_message_id: str,
@@ -312,30 +304,27 @@ class WriteRepositoryMixin:
         mention_user_ids: list[str] | None = None,
         mention_scope: str | None = None,
     ) -> MessageDocument:
-        target = await self._load_reply_target_by_conversation(
-            conversation_id=conversation_id,
+        """Create a thread reply (a channel container makes it a Comment, §35).
+
+        The reply is stored flat: it shares its root's container and carries
+        `thread_root_id`, with `reply_to_message_id` pointing at the specific
+        parent for UI nesting. No thread document is created (§37).
+        """
+        target = await self._load_reply_target_in_container(
+            container_type=container_type,
+            container_id=container_id,
             reply_to_message_id=reply_to_message_id,
         )
-        thread_root_id = target.thread_root_id or target.str_id
-        locked_thread = await ConversationDocument.find_one(
-            {
-                "type": "thread",
-                "parent_conversation_id": str(conversation_id),
-                "root_message_id": str(thread_root_id),
-                "settings.locked_at": {"$exists": True},
-            }
+        root = await self._load_thread_root_in_container(
+            container_type=container_type,
+            container_id=container_id,
+            thread_root_id=target.thread_root_id or target.str_id,
         )
-        if locked_thread is not None:
-            from app.core.errors import AppError
-
-            raise AppError(
-                code="THREAD_LOCKED",
-                message="This thread was converted to a group and is locked",
-                status_code=409,
-            )
         now = datetime.now(UTC)
         created = MessageDocument(
-            conversation_id=conversation_id,
+            # A thread item shares its root's container by construction (§36).
+            container_type=root.container_type,
+            container_id=root.container_id,
             sender_id=sender_id,
             type=message_type,
             content=MessageContentDocument(
@@ -346,7 +335,7 @@ class WriteRepositoryMixin:
             ),
             reply_mode="thread",
             reply_to_message_id=target.str_id,
-            thread_root_id=thread_root_id,
+            thread_root_id=root.str_id,
             reply_preview=build_reply_preview(target),
             mention_user_ids=mention_user_ids or [],
             mention_scope=mention_scope,
@@ -355,10 +344,11 @@ class WriteRepositoryMixin:
         )
         await created.insert()
 
-        root = await self.col.find_one_and_update(
+        bumped = await self.col.find_one_and_update(
             {
-                "_id": _oid(thread_root_id),
-                "conversation_id": conversation_id,
+                "_id": _oid(root.str_id),
+                "container_type": root.container_type,
+                "container_id": root.container_id,
             },
             {
                 "$set": {
@@ -370,9 +360,7 @@ class WriteRepositoryMixin:
             },
             return_document=ReturnDocument.AFTER,
         )
-        if root is None:
-            from app.core.errors import AppError
-
+        if bumped is None:
             raise AppError(
                 code="THREAD_ROOT_NOT_FOUND",
                 message="Thread root not found",

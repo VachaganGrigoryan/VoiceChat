@@ -8,8 +8,9 @@ from typing import Any, Optional, Protocol
 from fastapi import UploadFile
 
 from app.core.errors import AppError
-from app.db.models import MediaDocument
+from app.db.models import MediaDocument, MessageContainerType
 from app.infra.storage import FolderKind, get_storage, storage_key_builder
+from app.modules.authorization import AuthorizationService
 from app.modules.messages.repository import MessagesRepository
 from app.modules.messages.schemas import MessageDoc, ReplyMode, ThreadSummary
 
@@ -77,10 +78,39 @@ class BaseMessagesService:
         repo: MessagesRepository,
         pings_service: PingsServiceProto | None = None,
         conversations_service: ConversationsServiceProto | None = None,
+        authorization: AuthorizationService | None = None,
     ):
         self.repo = repo
         self.pings_service = pings_service
         self.conversations_service = conversations_service
+        # A message inherits authorization from its container (§91): every
+        # message action is decided against the container resource, never
+        # against the message itself.
+        self.authorization = authorization or AuthorizationService()
+
+    async def _require_container_permission(
+        self,
+        *,
+        user_id: str,
+        action: str,
+        container_type: MessageContainerType,
+        container_id: str,
+        sender_id: str | None = None,
+        message: str | None = None,
+    ) -> None:
+        """Authorize a message action against its container resource (§91).
+
+        ``sender_id`` is the message's author, which is what resolves the
+        ``*.own`` actions — a sender always acts on their own message.
+        """
+        await self.authorization.require(
+            user_id,
+            action,
+            container_type,
+            container_id,
+            sender_id=sender_id,
+            message=message,
+        )
 
     async def _read_upload(self, *, file: UploadFile) -> bytes:
         if not file or not file.filename:
@@ -173,15 +203,25 @@ class BaseMessagesService:
         return reply_mode, normalized_reply_to_message_id
 
     async def _resolve_mentions(
-        self, *, conversation_id: str, text: str | None
+        self,
+        *,
+        container_type: MessageContainerType,
+        container_id: str,
+        text: str | None,
     ) -> tuple[list[str], str | None]:
-        if not text or self.conversations_service is None:
+        # Mention targets come from the conversation roster; a channel resolves
+        # its audience through follows, which `channels-and-profile-feed` adds.
+        if (
+            not text
+            or container_type != "conversation"
+            or self.conversations_service is None
+        ):
             return [], None
 
         mention_user_ids: list[str] = []
         mention_scope: str | None = None
         targets = await self.conversations_service.mention_targets_for_conversation(
-            conversation_id=conversation_id
+            conversation_id=container_id
         )
         for match in MENTION_PATTERN.finditer(text):
             handle = match.group(1).lower()

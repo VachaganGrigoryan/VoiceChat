@@ -23,8 +23,9 @@ class SavedMessagesService:
     ) -> SavedMessageView:
         # The message must be accessible to the caller (in-conversation and not
         # hidden for them) before it can be bookmarked.
-        message = await self.messages_repo.get_by_id_for_conversation(
-            conversation_id=conversation_id,
+        message = await self.messages_repo.get_by_id_in_container(
+            container_type="conversation",
+            container_id=conversation_id,
             message_id=message_id,
             user_id=user_id,
         )
@@ -51,8 +52,9 @@ class SavedMessagesService:
         saved_items = await self.repo.list_for_user(user_id=user_id, limit=limit)
         views: list[SavedMessageView] = []
         for saved in saved_items:
-            message = await self.messages_repo.get_by_id_for_conversation(
-                conversation_id=saved.conversation_id,
+            message = await self.messages_repo.get_by_id_in_container(
+                container_type="conversation",
+                container_id=saved.conversation_id,
                 message_id=str(saved.message_id),
                 user_id=user_id,
             )

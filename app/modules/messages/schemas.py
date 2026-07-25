@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
+from app.db.models.message import MessageContainerType
 from app.db.object_id import StrId
 
 MessageType = Literal[
@@ -188,9 +189,25 @@ class MessageReceiptSummary(BaseModel):
     read_count: int = Field(default=0, ge=0)
 
 
-class MessageDoc(BaseModel):
+class ContainerEnvelope(BaseModel):
+    """The `{ container_type, container_id }` envelope every message-shaped
+    payload carries (§77–78).
+
+    `conversation_id` is the compatibility mirror clients still read; it goes
+    away with `fe-unified-data-layer`.
+    """
+
+    container_type: MessageContainerType
+    container_id: str
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def conversation_id(self) -> str:
+        return self.container_id
+
+
+class MessageDoc(ContainerEnvelope):
     id: StrId
-    conversation_id: str
     sender_id: StrId
 
     type: MessageType = "text"
@@ -223,9 +240,8 @@ class MessageDoc(BaseModel):
     updated_at: datetime
 
 
-class DeleteMessageResponse(BaseModel):
+class DeleteMessageResponse(ContainerEnvelope):
     message_id: StrId
-    conversation_id: str
     actor_user_id: StrId
     deleted_for_everyone: bool = False
     hidden_for_me: bool = False
@@ -263,9 +279,8 @@ class AddReactionRequest(BaseModel):
     emoji: str = Field(min_length=1, max_length=32)
 
 
-class ThreadSummary(BaseModel):
+class ThreadSummary(ContainerEnvelope):
     thread_root_id: StrId
-    conversation_id: str
     is_thread_root: bool = False
     thread_reply_count: int = Field(default=0, ge=0)
     last_thread_reply_at: Optional[datetime] = None

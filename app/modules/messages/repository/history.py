@@ -4,15 +4,16 @@ from typing import Any
 
 from app.core.errors import AppError
 from app.core.pagination.cursor import decode_cursor, encode_cursor
-from app.db.models import MessageDocument
+from app.db.models import MessageContainerType, MessageDocument
 from app.db.object_id import parse_object_id as _oid
 
 
 class HistoryRepositoryMixin:
-    async def list_history_for_conversation(
+    async def list_history_for_container(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         user_id: str,
         limit: int = 20,
         cursor: str | None = None,
@@ -25,7 +26,8 @@ class HistoryRepositoryMixin:
             )
 
         q: dict[str, Any] = {
-            "conversation_id": conversation_id,
+            "container_type": container_type,
+            "container_id": container_id,
             "thread_root_id": None,
             "hidden_for_user_ids": {"$ne": user_id},
             # Scheduled messages are withheld from the timeline until released.
@@ -63,20 +65,21 @@ class HistoryRepositoryMixin:
 
         return [MessageDocument.model_validate(item) for item in items], next_cursor
 
-    async def list_feed_for_conversations(
+    async def list_feed_for_containers(
         self,
         *,
-        conversation_ids: list[str],
+        container_type: MessageContainerType,
+        container_ids: list[str],
         limit: int = 20,
         cursor: str | None = None,
     ) -> tuple[list[MessageDocument], str | None]:
-        """Newest-first top-level posts across several channels (feed aggregate).
+        """Newest-first root messages across several containers (feed aggregate).
 
-        Unlike ``list_history_for_conversation`` this spans multiple conversations
-        and applies no per-user ``hidden_for`` filter — feed viewers are not
-        members, so they have no hidden entries. Excludes thread replies and
-        scheduled messages. Cursor is ``(created_at, message_id)``, same shape as
-        the single-conversation history cursor.
+        Unlike ``list_history_for_container`` this spans multiple containers and
+        applies no per-user ``hidden_for`` filter — feed viewers are not members,
+        so they have no hidden entries. Roots only (a channel root is a Post),
+        excluding scheduled messages. Cursor is ``(created_at, message_id)``,
+        same shape as the single-container history cursor.
         """
         if limit < 1 or limit > 100:
             raise AppError(
@@ -84,11 +87,12 @@ class HistoryRepositoryMixin:
                 message="limit must be between 1 and 100",
                 status_code=400,
             )
-        if not conversation_ids:
+        if not container_ids:
             return [], None
 
         q: dict[str, Any] = {
-            "conversation_id": {"$in": conversation_ids},
+            "container_type": container_type,
+            "container_id": {"$in": container_ids},
             "thread_root_id": None,
             "state": {"$ne": "scheduled"},
         }
@@ -127,24 +131,26 @@ class HistoryRepositoryMixin:
     async def search_messages(
         self,
         *,
-        conversation_ids: list[str],
+        container_type: MessageContainerType,
+        container_ids: list[str],
         user_id: str,
         query: str,
         limit: int,
         skip: int,
     ) -> tuple[list[MessageDocument], bool]:
-        """Full-text search over message plaintext in accessible conversations.
+        """Full-text search over message plaintext in accessible containers.
 
         Returns the page plus a ``has_more`` flag. Deleted messages are absent
         (hard-deleted), and messages hidden for the caller or still scheduled are
         excluded from results.
         """
-        if not conversation_ids:
+        if not container_ids:
             return [], False
 
         q: dict[str, Any] = {
             "$text": {"$search": query},
-            "conversation_id": {"$in": conversation_ids},
+            "container_type": container_type,
+            "container_id": {"$in": container_ids},
             "hidden_for_user_ids": {"$ne": user_id},
             "state": {"$ne": "scheduled"},
         }
@@ -161,17 +167,23 @@ class HistoryRepositoryMixin:
             has_more,
         )
 
-    async def list_by_ids_for_conversation(
-        self, *, conversation_id: str, message_ids: list[str], user_id: str
+    async def list_by_ids_in_container(
+        self,
+        *,
+        container_type: MessageContainerType,
+        container_id: str,
+        message_ids: list[str],
+        user_id: str,
     ) -> list[MessageDocument]:
-        """Fetch a set of messages in a conversation, preserving ``message_ids`` order."""
+        """Fetch a set of messages in a container, preserving ``message_ids`` order."""
         if not message_ids:
             return []
         oids = [_oid(mid) for mid in message_ids]
         raw = await self.col.find(
             {
                 "_id": {"$in": oids},
-                "conversation_id": conversation_id,
+                "container_type": container_type,
+                "container_id": container_id,
                 "hidden_for_user_ids": {"$ne": user_id},
             }
         ).to_list(length=None)
@@ -185,13 +197,19 @@ class HistoryRepositoryMixin:
     async def get_by_id(self, *, message_id: str) -> MessageDocument | None:
         return await MessageDocument.get(_oid(message_id))
 
-    async def get_by_id_for_conversation(
-        self, *, conversation_id: str, message_id: str, user_id: str
+    async def get_by_id_in_container(
+        self,
+        *,
+        container_type: MessageContainerType,
+        container_id: str,
+        message_id: str,
+        user_id: str,
     ) -> MessageDocument | None:
         raw = await self.col.find_one(
             {
                 "_id": _oid(message_id),
-                "conversation_id": conversation_id,
+                "container_type": container_type,
+                "container_id": container_id,
                 "hidden_for_user_ids": {"$ne": user_id},
             }
         )

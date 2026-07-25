@@ -51,7 +51,8 @@ def _message(
     now = datetime.now(UTC)
     return MessageDoc(
         id="507f1f77bcf86cd799439011",
-        conversation_id="conversation-1",
+        container_type="conversation",
+        container_id="conversation-1",
         sender_id=sender_id,
         type="text",
         content=MessageContent(

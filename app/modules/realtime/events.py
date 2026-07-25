@@ -243,8 +243,9 @@ def register_events(sio) -> None:
                 user_id=receiver_id,
                 conversation_id=conversation_id,
             )
-            msg = await messages_service.mark_delivered_for_conversation(
-                conversation_id=conversation_id,
+            msg = await messages_service.mark_delivered(
+                container_type="conversation",
+                container_id=conversation_id,
                 message_id=message_id,
                 user_id=receiver_id,
             )
@@ -303,8 +304,9 @@ def register_events(sio) -> None:
                 user_id=receiver_id,
                 conversation_id=conversation_id,
             )
-            msg = await messages_service.mark_read_for_conversation(
-                conversation_id=conversation_id,
+            msg = await messages_service.mark_read(
+                container_type="conversation",
+                container_id=conversation_id,
                 message_id=message_id,
                 user_id=receiver_id,
             )

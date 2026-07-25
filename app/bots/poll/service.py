@@ -105,9 +105,11 @@ class PollService:
             )
         )
 
-        send_result = await self.messages.send_poll_ref_message_to_conversation(
-            conversation_id=conversation.str_id,
+        send_result = await self.messages.send_poll_ref_message(
+            container_type="conversation",
+            container_id=conversation.str_id,
             sender_id=str(bot.user_id),
+            actor_user_id=user_id,
             poll_id=poll.str_id,
             question=poll.question,
         )

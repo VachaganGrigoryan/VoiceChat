@@ -35,7 +35,7 @@ from app.db.models.embedded import (
 )
 from app.db.models.invite_link import InviteLinkDocument
 from app.db.models.join_request import JoinRequestDocument
-from app.db.models.message import MessageDocument
+from app.db.models.message import MessageContainerType, MessageDocument
 from app.db.models.message_receipt import MessageReceiptDocument
 from app.db.models.notification import NotificationDocument
 from app.db.models.participant import ParticipantDocument
@@ -122,6 +122,7 @@ __all__ = [
     "JoinRequestDocument",
     "MediaDocument",
     "MessageContentDocument",
+    "MessageContainerType",
     "MessageDocument",
     "MessageEditDocument",
     "MessageReceiptDocument",

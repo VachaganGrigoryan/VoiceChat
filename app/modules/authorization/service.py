@@ -361,13 +361,25 @@ class AuthorizationService:
             # member reads. DMs and private groups rely on it — they seed no
             # roles, and reading is what membership means there.
             return True
+        if is_own_scoped(action) and is_member and resource_type == "conversation":
+            # Acting on one's own message needs no role in a conversation: a DM
+            # seeds none at all (§51), and the `.own` gate has already
+            # established authorship. Moderating *others*' messages still needs
+            # the `.any` sibling, which only a role grants.
+            return True
         if action in _POSTING_ACTIONS:
             if getattr(resource, "posting_policy", None) == "everyone":
                 return self._is_publicly_visible(
                     resource_type=resource_type, resource=resource
                 ) or is_member
         if action in _COMMENT_ACTIONS:
-            if getattr(resource, "comment_policy", None) == "everyone":
+            comment_policy = getattr(resource, "comment_policy", None)
+            if comment_policy is None:
+                # Only a channel separates commenting from posting. A DM or group
+                # has no comment audience of its own: replying in a thread and
+                # reacting are what membership there means.
+                return is_member
+            if comment_policy == "everyone":
                 return self._is_publicly_visible(
                     resource_type=resource_type, resource=resource
                 ) or is_member
