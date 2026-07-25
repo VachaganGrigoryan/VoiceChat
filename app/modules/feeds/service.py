@@ -81,8 +81,9 @@ class FeedsService:
     ) -> tuple[list[FeedPostView], str | None]:
         channel = await self._load_channel(channel_id)
         await self.assert_can_view_channel(viewer_id=viewer_id, channel=channel)
-        docs, next_cursor = await self.messages.get_conversation_history(
-            conversation_id=channel.str_id,
+        docs, next_cursor = await self.messages.get_history(
+            container_type="conversation",
+            container_id=channel.str_id,
             user_id=viewer_id,
             limit=limit,
             cursor=cursor,
@@ -94,8 +95,9 @@ class FeedsService:
     ) -> list[FeedPostView]:
         channel = await self._load_channel(channel_id)
         await self.assert_can_view_channel(viewer_id=viewer_id, channel=channel)
-        docs = await self.messages.get_thread_for_conversation(
-            conversation_id=channel.str_id,
+        docs = await self.messages.get_thread(
+            container_type="conversation",
+            container_id=channel.str_id,
             message_id=post_id,
             user_id=viewer_id,
         )
@@ -115,8 +117,11 @@ class FeedsService:
         if not viewable_ids:
             return [], None
 
-        docs, next_cursor = await self.messages_repo.list_feed_for_conversations(
-            conversation_ids=viewable_ids, limit=limit, cursor=cursor
+        docs, next_cursor = await self.messages_repo.list_feed_for_containers(
+            container_type="conversation",
+            container_ids=viewable_ids,
+            limit=limit,
+            cursor=cursor,
         )
         mapped = [to_message_doc(doc) for doc in docs]
         return await self._to_feed_posts(mapped), next_cursor
@@ -150,7 +155,7 @@ class FeedsService:
         )
         return FeedPostView(
             id=str(doc.id),
-            channel_id=str(doc.conversation_id),
+            channel_id=str(doc.container_id),
             author=author,
             type=doc.type,
             text=text,

@@ -90,7 +90,8 @@ async def test_to_feed_post_maps_content_media_reactions_author():
     )
     doc = MessageDoc(
         id="507f1f77bcf86cd7994390bb",
-        conversation_id="507f1f77bcf86cd7994390aa",
+        container_type="conversation",
+        container_id="507f1f77bcf86cd7994390aa",
         sender_id=OWNER,
         type="text",
         content=MessageContent(plaintext=MessagePlaintext(text="hi there", media=media)),
