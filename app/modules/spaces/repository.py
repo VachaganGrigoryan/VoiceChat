@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any
 
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
@@ -18,6 +18,7 @@ from app.db.repository import BaseRepository
 from app.modules.relationships.compat import (
     RELATIONSHIP_STATUS_BY_REQUEST_STATUS as _RELATIONSHIP_STATUS_BY_REQUEST_STATUS,
     membership_filter,
+    resolve_role_names,
     to_join_request,
     to_space_member,
 )
@@ -30,6 +31,22 @@ def _space_membership_filter(space_id: str, user_id: str) -> dict:
         target_type="space", target_id=space_id, user_id=user_id
     )
 
+async def _project_member(relationship: RelationshipDocument) -> SpaceMemberDocument:
+    """Project one space membership, resolving its role ids to a role name."""
+    return to_space_member(
+        relationship, role_names=await resolve_role_names([relationship])
+    )
+
+
+async def _space_role_id_for(space_id: str, role_name: str) -> str:
+    """The space-scoped role id for a role name, seeding the space if needed."""
+    from app.modules.authorization.roles import RoleService
+
+    return await RoleService().resolve_role_id(
+        scope_type="space", scope_id=space_id, name=role_name
+    )
+
+
 async def find_active_space_membership(
     *, space_id: str, user_id: str
 ) -> SpaceMemberDocument | None:
@@ -37,7 +54,7 @@ async def find_active_space_membership(
     doc = await RelationshipDocument.find_one(
         {**_space_membership_filter(space_id, user_id), "status": "active"}
     )
-    return to_space_member(doc) if doc is not None else None
+    return await _project_member(doc) if doc is not None else None
 
 
 class SpacesRepository(BaseRepository[SpaceDocument]):
@@ -54,17 +71,27 @@ class SpacesRepository(BaseRepository[SpaceDocument]):
     async def get_by_slug(self, slug: str) -> SpaceDocument | None:
         return await SpaceDocument.find_one({"slug": slug})
 
+    async def seed_roles(self, *, space_id: str) -> None:
+        """Create the space's default system roles (Admin/Moderator/Member/Guest)."""
+        from app.modules.authorization.roles import RoleService
+
+        await RoleService().seed_default_roles(
+            scope_type="space", scope_id=space_id
+        )
+
     async def ensure_membership(
-        self, *, space_id: str, user_id: str, role: Literal["owner", "admin", "member"]
+        self, *, space_id: str, user_id: str, role: str
     ) -> SpaceMemberDocument:
+        """Make ``user_id`` an active member holding the role named ``role``."""
         now = datetime.now(UTC)
+        role_id = await _space_role_id_for(space_id, role)
         collection = RelationshipDocument.get_pymongo_collection()
         try:
             raw = await collection.find_one_and_update(
                 _space_membership_filter(space_id, user_id),
                 {
                     "$set": {
-                        "role_ids": [role],
+                        "role_ids": [role_id],
                         "status": "active",
                         "activated_at": now,
                         "updated_at": now,
@@ -89,7 +116,7 @@ class SpacesRepository(BaseRepository[SpaceDocument]):
             raw = await collection.find_one(
                 _space_membership_filter(space_id, user_id)
             )
-        return to_space_member(RelationshipDocument.model_validate(raw))
+        return await _project_member(RelationshipDocument.model_validate(raw))
 
     async def get_membership(self, *, space_id: str, user_id: str) -> SpaceMemberDocument | None:
         return await find_active_space_membership(space_id=space_id, user_id=user_id)
@@ -103,7 +130,8 @@ class SpacesRepository(BaseRepository[SpaceDocument]):
                 "status": "active",
             }
         ).to_list()
-        return [to_space_member(doc) for doc in docs]
+        role_names = await resolve_role_names(docs)
+        return [to_space_member(doc, role_names=role_names) for doc in docs]
 
     async def list_members_for_space(self, *, space_id: str) -> list[SpaceMemberDocument]:
         docs = await RelationshipDocument.find(
@@ -114,7 +142,8 @@ class SpacesRepository(BaseRepository[SpaceDocument]):
                 "status": "active",
             }
         ).to_list()
-        return [to_space_member(doc) for doc in docs]
+        role_names = await resolve_role_names(docs)
+        return [to_space_member(doc, role_names=role_names) for doc in docs]
 
     async def create_invite_link(
         self,

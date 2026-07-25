@@ -14,13 +14,14 @@ from app.bots.poll.schemas import (
 from app.bots.registry import POLL_BOT
 from app.bots.repository import BotsRepository
 from app.core.errors import AppError
+from app.modules.authorization import AuthorizationService
+from app.modules.authorization.permissions import POLL_MANAGE
 from app.db.models import PollDocument
 from app.db.models.poll import PollOptionDocument
 from app.modules.conversations.service import ConversationsService
 from app.modules.messages.service import MessagesService
 from app.modules.messages.service.base import SendMessageResult
 
-_MANAGER_ROLES = {"owner", "admin"}
 
 
 def poll_broadcast_payload(poll: PollDocument) -> dict[str, Any]:
@@ -172,13 +173,13 @@ class PollService:
             user_id=user_id, conversation_id=conversation_id
         )
         if str(poll.created_by) != user_id:
-            role = await self.conversations.get_participant_role(
-                user_id=user_id, conversation_id=conversation_id
+            allowed = await AuthorizationService().can(
+                user_id, POLL_MANAGE, "conversation", conversation_id
             )
-            if role not in _MANAGER_ROLES:
+            if not allowed:
                 raise AppError(
                     code="POLL_CLOSE_FORBIDDEN",
-                    message="Only the poll creator or an admin can close this poll",
+                    message="Only the poll creator or a poll manager can close this poll",
                     status_code=403,
                 )
         if not poll.closed:

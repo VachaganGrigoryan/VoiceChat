@@ -6,6 +6,7 @@ from pymongo.errors import DuplicateKeyError
 
 from app.core.errors import AppError
 from app.db.models import ConversationDocument, ConversationPreviewDocument
+from app.modules.authorization.roles import ROLE_ADMIN, ROLE_MEMBER
 from app.modules.conversations.service.base import BaseConversationsService
 
 
@@ -30,11 +31,12 @@ class CreateConversationsMixin(BaseConversationsService):
             user_a=user_id, user_b=peer_user_id, created_by=user_id
         )
         conversation_id = conversation.str_id
+        # A DM has no owner and no roles: both sides are peers (§51).
         await self.repo.ensure_participant(
-            conversation_id=conversation_id, user_id=user_id, role="owner"
+            conversation_id=conversation_id, user_id=user_id, role=None
         )
         await self.repo.ensure_participant(
-            conversation_id=conversation_id, user_id=peer_user_id, role="member"
+            conversation_id=conversation_id, user_id=peer_user_id, role=None
         )
         return conversation
 
@@ -94,14 +96,16 @@ class CreateConversationsMixin(BaseConversationsService):
             space_id=space_id,
             space_visibility=space_visibility,
         )
+        # The creator owns the group via `OwnerRef`; the Admin role is what
+        # survives an ownership transfer (§51).
         await self.repo.ensure_participant(
-            conversation_id=conversation.str_id, user_id=user_id, role="owner"
+            conversation_id=conversation.str_id, user_id=user_id, role=ROLE_ADMIN
         )
         for participant_id in member_ids:
             await self.repo.ensure_participant(
                 conversation_id=conversation.str_id,
                 user_id=participant_id,
-                role="member",
+                role=ROLE_MEMBER,
             )
         return conversation
 

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.errors import AppError
+from app.modules.authorization.roles import ROLE_MEMBER
 from app.modules.conversations.service import ConversationsService
 
 
@@ -14,11 +15,14 @@ def service():
     users_repo = AsyncMock()
     presence_service = AsyncMock()
     
+    # These tests are about the ping gate, not authorization; a stub keeps the
+    # `AuthorizationService.can` step from short-circuiting them.
     svc = ConversationsService(
         repo=repo,
         pings_service=pings_service,
         users_repo=users_repo,
         presence_service=presence_service,
+        authorization=AsyncMock(),
     )
     return svc, repo, pings_service
 
@@ -109,7 +113,7 @@ async def test_add_group_members_bypasses_ping_for_space_members(service):
         repo.ensure_participant.assert_called_once_with(
             conversation_id="conv123",
             user_id="user2",
-            role="member",
+            role=ROLE_MEMBER,
         )
 
 

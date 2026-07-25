@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from app.core.errors import AppError
+from app.modules.authorization import AuthorizationService
 from app.modules.conversations.repository import ConversationsRepository
 from app.modules.realtime.presence import PresenceState
 
@@ -30,11 +31,14 @@ class BaseConversationsService:
         pings_service: PingsPermissionProto | None = None,
         users_repo: UsersRepositoryProto | None = None,
         presence_service: PresenceServiceProto | None = None,
+        authorization: AuthorizationService | None = None,
     ) -> None:
         self.repo = repo
         self.pings_service = pings_service
         self.users_repo = users_repo
         self.presence_service = presence_service
+        # One decision point for every conversation authorization question (§56).
+        self.authorization = authorization or AuthorizationService()
 
     def _require_distinct(self, *, user_id: str, peer_user_id: str) -> None:
         if str(user_id) == str(peer_user_id):

@@ -44,6 +44,8 @@ def to_conversation_view(
         encryption=conversation.encryption,
         participant_ids=[str(pid) for pid in conversation.participant_ids],
         created_by=str(conversation.created_by),
+        owner_type=conversation.owner.type if conversation.owner else None,
+        owner_id=str(conversation.owner.id) if conversation.owner else None,
         title=conversation.title,
         image=build_group_avatar_payload(conversation.image),
         visibility=conversation.visibility,

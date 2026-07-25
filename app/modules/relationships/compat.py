@@ -10,6 +10,8 @@ into every caller. The returned documents are views: they are never inserted.
 
 from __future__ import annotations
 
+from typing import Mapping, Sequence
+
 from app.db.models import (
     JoinRequestDocument,
     ParticipantDocument,
@@ -18,9 +20,10 @@ from app.db.models import (
 )
 from app.db.models.relationship import RelationshipTargetType
 
-# Legacy role string, carried in `role_ids` until `resource-authorization`
-# introduces real role documents.
-DEFAULT_ROLE = "member"
+# The role a new member gets when no role is named. `resource-authorization`
+# made `role_ids` a list of `RoleDocument` ids, so this is the *name* of the
+# seeded system role to resolve, not a value ever written to `role_ids`.
+DEFAULT_ROLE = "Member"
 
 REQUEST_STATUS_BY_RELATIONSHIP_STATUS: dict[str, str] = {
     "pending": "pending",
@@ -46,17 +49,50 @@ def membership_filter(
     }
 
 
-def _role_of(relationship: RelationshipDocument) -> str:
-    return str(relationship.role_ids[0]) if relationship.role_ids else DEFAULT_ROLE
+def _role_of(
+    relationship: RelationshipDocument, role_names: Mapping[str, str] | None
+) -> str | None:
+    """The highest-priority role's *name*, or None when the member holds none.
+
+    Names come from the `roles` collection; callers that don't resolve them get
+    `None` rather than a raw id, so no id ever leaks into an API response.
+    """
+    if not relationship.role_ids or not role_names:
+        return None
+    for role_id in relationship.role_ids:
+        name = role_names.get(str(role_id))
+        if name is not None:
+            return name
+    return None
 
 
-def to_participant(relationship: RelationshipDocument) -> ParticipantDocument:
+async def resolve_role_names(
+    relationships: Sequence[RelationshipDocument],
+) -> dict[str, str]:
+    """Batch role id -> name for a set of memberships (one cached lookup)."""
+    role_ids = [
+        str(role_id)
+        for relationship in relationships
+        for role_id in relationship.role_ids
+    ]
+    if not role_ids:
+        return {}
+    from app.modules.authorization.repository import RolesRepository
+
+    return await RolesRepository().names_by_id(role_ids)
+
+
+def to_participant(
+    relationship: RelationshipDocument,
+    *,
+    role_names: Mapping[str, str] | None = None,
+) -> ParticipantDocument:
     """Project a conversation membership into the participant shape."""
     state = relationship.state
     participant = ParticipantDocument(
         conversation_id=str(relationship.target_id),
         user_id=str(relationship.user_id),
-        role=_role_of(relationship),
+        role=_role_of(relationship, role_names),
         permissions=(
             {name: True for name in relationship.permission_overrides.allow}
             | {name: False for name in relationship.permission_overrides.deny}
@@ -87,12 +123,16 @@ def to_participant(relationship: RelationshipDocument) -> ParticipantDocument:
     return participant
 
 
-def to_space_member(relationship: RelationshipDocument) -> SpaceMemberDocument:
+def to_space_member(
+    relationship: RelationshipDocument,
+    *,
+    role_names: Mapping[str, str] | None = None,
+) -> SpaceMemberDocument:
     """Project a space membership into the space-member shape."""
     member = SpaceMemberDocument(
         space_id=str(relationship.target_id),
         user_id=str(relationship.user_id),
-        role=_role_of(relationship),
+        role=_role_of(relationship, role_names),
         joined_at=relationship.activated_at or relationship.requested_at,
         created_at=relationship.created_at,
         updated_at=relationship.updated_at,

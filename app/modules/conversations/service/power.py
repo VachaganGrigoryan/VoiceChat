@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from app.core.errors import AppError
 from app.db.models import ConversationDocument, ParticipantDocument
+from app.modules.authorization.permissions import MESSAGE_PIN
 from app.modules.conversations.service.base import BaseConversationsService
 
 
@@ -34,7 +35,7 @@ class PowerFeaturesServiceMixin(BaseConversationsService):
             return conversation
 
         await self.require_permission(
-            user_id=user_id, conversation_id=conversation_id, right="can_pin"
+            user_id=user_id, conversation_id=conversation_id, permission=MESSAGE_PIN
         )
         return conversation
 

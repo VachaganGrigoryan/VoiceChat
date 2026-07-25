@@ -218,6 +218,28 @@ class ConversationsWriteMixin:
         assert updated is not None
         return updated
 
+    async def set_owner_user(
+        self, *, conversation_id: str, user_id: str
+    ) -> ConversationDocument:
+        """Move a group's `OwnerRef` to a user — the ownership-transfer write.
+
+        Ownership lives on the resource, not on a role, so a transfer is a
+        write here rather than a role swap on two memberships (§51).
+        """
+        now = datetime.now(UTC)
+        await self.raw.update_one(
+            {"_id": parse_object_id(conversation_id)},
+            {
+                "$set": {
+                    "owner": {"type": "user", "id": str(user_id)},
+                    "updated_at": now,
+                }
+            },
+        )
+        updated = await self.get_by_id(conversation_id)
+        assert updated is not None
+        return updated
+
     async def delete_conversation(self, *, conversation_id: str) -> None:
         await self.raw.delete_one({"_id": parse_object_id(conversation_id)})
 

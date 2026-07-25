@@ -26,7 +26,9 @@ class SpaceView(BaseModel):
     settings: dict[str, Any]
     created_at: datetime
     updated_at: datetime
-    viewer_role: Literal["owner", "admin", "member"] | None = None
+    # Name of the role the viewer holds in this space, or None. The owner is
+    # identified by `owner_user_id`, not by a role.
+    viewer_role: str | None = None
 
 class SpaceMemberUserSummary(BaseModel):
     id: str
@@ -38,7 +40,7 @@ class SpaceMemberView(BaseModel):
     id: str
     space_id: str
     user_id: str
-    role: Literal["owner", "admin", "member"]
+    role: str | None = None
     joined_at: datetime
     user: SpaceMemberUserSummary | None = None
 

@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from app.core.errors import AppError
+from app.modules.authorization.permissions import MESSAGE_CREATE, POLL_MANAGE
 from app.db.models import ConversationDocument
 from app.modules.conversations.repository.mappers import to_conversation_view
 from app.modules.conversations.schemas import ConversationUserSummary, ConversationView
@@ -98,10 +99,9 @@ class ReadConversationsMixin(BaseConversationsService):
     ) -> ConversationDocument:
         """Assert the caller may post to the conversation.
 
-        Shared gate for REST and socket send paths: enforces membership and the
-        conversation's ``posting_policy``. When ``posting_policy == "admins"``
-        (broadcast channels) only ``owner``/``admin`` participants may post;
-        ``member``/``subscriber`` are read-only.
+        Shared gate for REST and socket send paths: enforces membership, the DM
+        ping rule, and then `message.create` — which is where the conversation's
+        ``posting_policy`` is weighed against the caller's standing (§59).
         """
         conversation = await self.require_participant(
             user_id=user_id, conversation_id=conversation_id
@@ -116,16 +116,15 @@ class ReadConversationsMixin(BaseConversationsService):
             peer_id = self._peer_id(conversation, user_id=user_id)
             if peer_id is not None:
                 await self._ensure_can_message(sender_id=user_id, receiver_id=peer_id)
-        if conversation.posting_policy != "admins":
-            return conversation
-
-        participant = await self.repo.get_participant(
-            conversation_id=conversation.str_id, user_id=user_id
+        # `posting_policy` is resource policy; `can` weighs it against the
+        # caller's ownership, overrides, and roles in one place (§59).
+        allowed = await self.authorization.can(
+            user_id, MESSAGE_CREATE, "conversation", conversation.str_id
         )
-        if participant is None or participant.role not in {"owner", "admin"}:
+        if not allowed:
             raise AppError(
                 code="CONVERSATION_POST_FORBIDDEN",
-                message="Only admins can post to this conversation",
+                message="Not allowed to post to this conversation",
                 status_code=403,
             )
         return conversation
@@ -135,9 +134,9 @@ class ReadConversationsMixin(BaseConversationsService):
     ) -> ConversationDocument:
         """Assert the caller may create a poll in the conversation.
 
-        Builds on ``require_can_post`` (membership + posting policy), then adds the
-        poll-specific rule: in ``group``/``channel`` conversations only ``owner``/
-        ``admin`` may create a poll, unless ``settings.allow_member_polls`` is set.
+        Builds on ``require_can_post`` (membership + posting policy), then adds
+        the poll-specific rule: in ``group``/``channel`` conversations the caller
+        needs `poll.create`, unless ``settings.allow_member_polls`` is set.
         ``dm``/``thread`` conversations allow any participant.
         """
         conversation = await self.require_can_post(
@@ -148,13 +147,13 @@ class ReadConversationsMixin(BaseConversationsService):
         if conversation.settings.get("allow_member_polls"):
             return conversation
 
-        participant = await self.repo.get_participant(
-            conversation_id=conversation.str_id, user_id=user_id
+        allowed = await self.authorization.can(
+            user_id, POLL_MANAGE, "conversation", conversation.str_id
         )
-        if participant is None or participant.role not in {"owner", "admin"}:
+        if not allowed:
             raise AppError(
                 code="POLL_CREATE_FORBIDDEN",
-                message="Only admins can create polls in this conversation",
+                message="Not allowed to create polls in this conversation",
                 status_code=403,
             )
         return conversation
@@ -162,6 +161,7 @@ class ReadConversationsMixin(BaseConversationsService):
     async def get_participant_role(
         self, *, user_id: str, conversation_id: str
     ) -> str | None:
+        """The name of the role the caller holds here, or None."""
         participant = await self.repo.get_participant(
             conversation_id=conversation_id, user_id=user_id
         )

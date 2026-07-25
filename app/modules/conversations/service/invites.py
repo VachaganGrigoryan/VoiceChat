@@ -9,17 +9,16 @@ from app.db.models import (
     JoinRequestDocument,
     ParticipantDocument,
 )
-from app.modules.conversations.permissions import participant_can
+from app.modules.authorization.permissions import MEMBER_APPROVE, MEMBER_INVITE
+from app.modules.authorization.roles import ROLE_MEMBER
 from app.modules.conversations.service.base import BaseConversationsService
-
-_MANAGER_ROLES = {"owner", "admin"}
 
 
 class InvitesServiceMixin(BaseConversationsService):
     """Invite links and join requests for group/channel conversations."""
 
     async def _require_invite_manager(
-        self, *, actor_user_id: str, conversation_id: str
+        self, *, actor_user_id: str, conversation_id: str, permission: str = MEMBER_INVITE
     ) -> ConversationDocument:
         conversation = await self.repo.get_for_participant(
             conversation_id=conversation_id, user_id=actor_user_id
@@ -36,26 +35,13 @@ class InvitesServiceMixin(BaseConversationsService):
                 message="Only group or channel conversations support invites",
                 status_code=400,
             )
-        participant = await self.repo.get_participant(
-            conversation_id=conversation.str_id, user_id=actor_user_id
+        await self.authorization.require(
+            actor_user_id,
+            permission,
+            "conversation",
+            conversation.str_id,
+            message="Not allowed to manage invites for this conversation",
         )
-        if participant is None or participant.role not in _MANAGER_ROLES:
-            raise AppError(
-                code="CONVERSATION_FORBIDDEN",
-                message="Not allowed to manage invites for this conversation",
-                status_code=403,
-            )
-        # Refine the base role by the optional granular permissions map.
-        if not participant_can(
-            role=participant.role,
-            permissions=participant.permissions,
-            right="can_invite",
-        ):
-            raise AppError(
-                code="CONVERSATION_FORBIDDEN",
-                message="Not permitted: can_invite",
-                status_code=403,
-            )
         return conversation
 
     async def create_invite(
@@ -165,7 +151,9 @@ class InvitesServiceMixin(BaseConversationsService):
         self, *, actor_user_id: str, conversation_id: str
     ) -> list[JoinRequestDocument]:
         conversation = await self._require_invite_manager(
-            actor_user_id=actor_user_id, conversation_id=conversation_id
+            actor_user_id=actor_user_id,
+            conversation_id=conversation_id,
+            permission=MEMBER_APPROVE,
         )
         return await self.repo.list_pending_join_requests(
             conversation_id=conversation.str_id
@@ -175,7 +163,9 @@ class InvitesServiceMixin(BaseConversationsService):
         self, *, actor_user_id: str, conversation_id: str, request_id: str
     ) -> JoinRequestDocument:
         conversation = await self._require_invite_manager(
-            actor_user_id=actor_user_id, conversation_id=conversation_id
+            actor_user_id=actor_user_id,
+            conversation_id=conversation_id,
+            permission=MEMBER_APPROVE,
         )
         request = await self._load_pending_request(
             conversation_id=conversation.str_id, request_id=request_id
@@ -200,7 +190,9 @@ class InvitesServiceMixin(BaseConversationsService):
         self, *, actor_user_id: str, conversation_id: str, request_id: str
     ) -> JoinRequestDocument:
         conversation = await self._require_invite_manager(
-            actor_user_id=actor_user_id, conversation_id=conversation_id
+            actor_user_id=actor_user_id,
+            conversation_id=conversation_id,
+            permission=MEMBER_APPROVE,
         )
         await self._load_pending_request(
             conversation_id=conversation.str_id, request_id=request_id
@@ -236,7 +228,7 @@ class InvitesServiceMixin(BaseConversationsService):
         self, *, conversation_id: str, user_id: str, invited_by: str | None
     ) -> ParticipantDocument:
         participant = await self.repo.ensure_participant(
-            conversation_id=conversation_id, user_id=user_id, role="member"
+            conversation_id=conversation_id, user_id=user_id, role=ROLE_MEMBER
         )
         await self.repo.add_participant_id(
             conversation_id=conversation_id, user_id=user_id

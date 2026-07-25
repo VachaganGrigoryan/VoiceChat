@@ -6,34 +6,86 @@ from app.core.errors import AppError
 from app.db.models import ConversationDocument, ParticipantDocument
 from app.infra.storage import get_storage, storage_key_builder
 from app.modules.conversations.group_avatar import read_group_image_upload
-from app.modules.conversations.permissions import (
-    CONVERSATION_RIGHTS,
-    participant_can,
+from app.modules.authorization.permissions import (
+    MEMBER_INVITE,
+    MEMBER_MANAGE,
+    MEMBER_REMOVE,
+    PERMISSIONS,
+    RESOURCE_DELETE,
+    RESOURCE_MANAGE,
+    ROLE_MANAGE,
 )
+from app.modules.authorization.roles import ROLE_ADMIN, ROLE_MEMBER
 from app.modules.conversations.service.base import BaseConversationsService
 
 
 class ParticipantsServiceMixin(BaseConversationsService):
     async def require_permission(
-        self, *, user_id: str, conversation_id: str, right: str
-    ) -> ParticipantDocument:
-        """Shared granular-permission gate.
+        self, *, user_id: str, conversation_id: str, permission: str
+    ) -> None:
+        """Authorize ``permission`` on a conversation, or raise 403.
 
-        Authorizes ``right`` for the caller by their base role refined by their
-        optional per-participant ``permissions`` map. Raises 403 when denied.
+        Thin wrapper over `AuthorizationService.can` so call sites read in the
+        permission vocabulary rather than in role names (§56).
         """
-        participant = await self._get_participant_or_404(
-            conversation_id=conversation_id, user_id=user_id
+        await self.authorization.require(
+            user_id,
+            permission,
+            "conversation",
+            conversation_id,
+            message=f"Not permitted: {permission}",
         )
-        if not participant_can(
-            role=participant.role, permissions=participant.permissions, right=right
+
+    async def _require_owner(self, *, user_id: str, conversation_id: str) -> None:
+        """Assert effective ownership — for actions only an owner may take (§51).
+
+        Ownership transfer and the like are ownership questions, not RBAC ones,
+        so they consult the resolver directly rather than a permission.
+        """
+        is_owner = await self.authorization.ownership.is_effective_owner(
+            user_id=user_id, resource_type="conversation", resource_id=conversation_id
+        )
+        if not is_owner:
+            raise AppError(
+                code="CONVERSATION_FORBIDDEN",
+                message="Only the owner can perform this action",
+                status_code=403,
+            )
+
+    async def _require_removable(
+        self, *, conversation_id: str, actor_user_id: str, target_user_id: str
+    ) -> None:
+        """Guard who a manager may remove.
+
+        The owner is never removable, and a manager may not remove a peer who
+        can also manage the conversation — only the owner can.
+        """
+        ownership = self.authorization.ownership
+        if await ownership.is_effective_owner(
+            user_id=target_user_id,
+            resource_type="conversation",
+            resource_id=conversation_id,
         ):
             raise AppError(
                 code="CONVERSATION_FORBIDDEN",
-                message=f"Not permitted: {right}",
+                message="The owner cannot be removed",
                 status_code=403,
             )
-        return participant
+        target_manages = await self.authorization.can(
+            target_user_id, RESOURCE_MANAGE, "conversation", conversation_id
+        )
+        if not target_manages:
+            return
+        if not await ownership.is_effective_owner(
+            user_id=actor_user_id,
+            resource_type="conversation",
+            resource_id=conversation_id,
+        ):
+            raise AppError(
+                code="CONVERSATION_FORBIDDEN",
+                message="Not allowed to remove this participant",
+                status_code=403,
+            )
 
     async def set_member_permissions(
         self,
@@ -43,7 +95,12 @@ class ParticipantsServiceMixin(BaseConversationsService):
         target_user_id: str,
         permissions: dict | None,
     ) -> ParticipantDocument:
-        """Set (or clear) a member's granular permissions map. Owner-only."""
+        """Set (or clear) a member's permission overrides.
+
+        The map is `{permission: granted}` in the permission vocabulary; it
+        becomes the membership's `permission_overrides.allow`/`.deny`, which
+        outrank roles in the resolution order (§55).
+        """
         conversation = await self.repo.get_for_participant(
             conversation_id=conversation_id, user_id=actor_user_id
         )
@@ -53,16 +110,16 @@ class ParticipantsServiceMixin(BaseConversationsService):
                 message="Conversation not found",
                 status_code=404,
             )
-        await self._require_actor_role(
-            conversation_id=conversation.str_id,
+        await self.require_permission(
             user_id=actor_user_id,
-            allowed_roles={"owner"},
+            conversation_id=conversation.str_id,
+            permission=MEMBER_MANAGE,
         )
         await self._get_participant_or_404(
             conversation_id=conversation.str_id, user_id=target_user_id
         )
         if permissions is not None:
-            unknown = set(permissions) - set(CONVERSATION_RIGHTS)
+            unknown = set(permissions) - PERMISSIONS
             if unknown:
                 raise AppError(
                     code="INVALID_PERMISSIONS",
@@ -110,32 +167,14 @@ class ParticipantsServiceMixin(BaseConversationsService):
             )
         return participant
 
-    async def _require_actor_role(
-        self,
-        *,
-        conversation_id: str,
-        user_id: str,
-        allowed_roles: set[str],
-    ) -> ParticipantDocument:
-        participant = await self._get_participant_or_404(
-            conversation_id=conversation_id, user_id=user_id
-        )
-        if participant.role not in allowed_roles:
-            raise AppError(
-                code="CONVERSATION_FORBIDDEN",
-                message="Not allowed to manage this conversation",
-                status_code=403,
-            )
-        return participant
-
     async def require_group_manager(
         self,
         *,
         user_id: str,
         conversation_id: str,
-        allowed_roles: set[str],
+        permission: str = RESOURCE_MANAGE,
     ) -> ConversationDocument:
-        """Load a group and assert the caller holds one of ``allowed_roles``.
+        """Load a group and authorize ``permission`` on it.
 
         Shared entry point for group-management actions that live outside this
         service (e.g. clearing history for everyone via the messages service).
@@ -143,10 +182,10 @@ class ParticipantsServiceMixin(BaseConversationsService):
         conversation = await self._get_group_for_participant(
             conversation_id=conversation_id, user_id=user_id
         )
-        await self._require_actor_role(
-            conversation_id=conversation.str_id,
+        await self.require_permission(
             user_id=user_id,
-            allowed_roles=allowed_roles,
+            conversation_id=conversation.str_id,
+            permission=permission,
         )
         return conversation
 
@@ -155,8 +194,8 @@ class ParticipantsServiceMixin(BaseConversationsService):
     ) -> ConversationDocument:
         """Toggle whether non-admin members may create polls in a group/channel.
 
-        Owner/admin only. Unlike ``require_group_manager`` (group-only) this also
-        covers channels, since both restrict poll creation to admins by default.
+        Requires `resource.manage`. Unlike ``require_group_manager``
+        (group-only) this also covers channels.
         """
         conversation = await self.repo.get_for_participant(
             conversation_id=conversation_id, user_id=actor_user_id
@@ -173,10 +212,10 @@ class ParticipantsServiceMixin(BaseConversationsService):
                 message="This setting only applies to groups and channels",
                 status_code=400,
             )
-        await self._require_actor_role(
-            conversation_id=conversation.str_id,
+        await self.require_permission(
             user_id=actor_user_id,
-            allowed_roles={"owner", "admin"},
+            conversation_id=conversation.str_id,
+            permission=RESOURCE_MANAGE,
         )
         return await self.repo.set_conversation_setting(
             conversation_id=conversation.str_id,
@@ -188,9 +227,7 @@ class ParticipantsServiceMixin(BaseConversationsService):
         self, *, actor_user_id: str, conversation_id: str, title: str
     ) -> ConversationDocument:
         conversation = await self.require_group_manager(
-            user_id=actor_user_id,
-            conversation_id=conversation_id,
-            allowed_roles={"owner", "admin"},
+            user_id=actor_user_id, conversation_id=conversation_id
         )
         return await self.repo.update_group_title(
             conversation_id=conversation.str_id, title=title.strip()
@@ -200,9 +237,7 @@ class ParticipantsServiceMixin(BaseConversationsService):
         self, *, actor_user_id: str, conversation_id: str, file: UploadFile
     ) -> ConversationDocument:
         conversation = await self.require_group_manager(
-            user_id=actor_user_id,
-            conversation_id=conversation_id,
-            allowed_roles={"owner", "admin"},
+            user_id=actor_user_id, conversation_id=conversation_id
         )
 
         content, content_type = await read_group_image_upload(file)
@@ -241,9 +276,7 @@ class ParticipantsServiceMixin(BaseConversationsService):
         self, *, actor_user_id: str, conversation_id: str
     ) -> ConversationDocument:
         conversation = await self.require_group_manager(
-            user_id=actor_user_id,
-            conversation_id=conversation_id,
-            allowed_roles={"owner", "admin"},
+            user_id=actor_user_id, conversation_id=conversation_id
         )
 
         previous = conversation.image
@@ -358,10 +391,10 @@ class ParticipantsServiceMixin(BaseConversationsService):
         conversation = await self._get_group_for_participant(
             conversation_id=conversation_id, user_id=actor_user_id
         )
-        await self._require_actor_role(
-            conversation_id=conversation.str_id,
+        await self.require_permission(
             user_id=actor_user_id,
-            allowed_roles={"owner", "admin"},
+            conversation_id=conversation.str_id,
+            permission=MEMBER_INVITE,
         )
 
         added: list[ParticipantDocument] = []
@@ -385,7 +418,7 @@ class ParticipantsServiceMixin(BaseConversationsService):
             participant = await self.repo.ensure_participant(
                 conversation_id=conversation.str_id,
                 user_id=participant_id,
-                role="member",
+                role=ROLE_MEMBER,
             )
             await self.repo.add_participant_id(
                 conversation_id=conversation.str_id,
@@ -413,21 +446,22 @@ class ParticipantsServiceMixin(BaseConversationsService):
         conversation = await self._get_group_for_participant(
             conversation_id=conversation_id, user_id=actor_user_id
         )
-        actor = await self._require_actor_role(
-            conversation_id=conversation.str_id,
+        await self.require_permission(
             user_id=actor_user_id,
-            allowed_roles={"owner", "admin"},
+            conversation_id=conversation.str_id,
+            permission=MEMBER_REMOVE,
         )
-        target = await self._get_participant_or_404(
+        await self._get_participant_or_404(
             conversation_id=conversation.str_id, user_id=target_user_id
         )
 
-        if target.role == "owner" or (actor.role == "admin" and target.role != "member"):
-            raise AppError(
-                code="CONVERSATION_FORBIDDEN",
-                message="Not allowed to remove this participant",
-                status_code=403,
-            )
+        # The owner is removable by nobody, and only the owner may remove
+        # someone who can manage the conversation.
+        await self._require_removable(
+            conversation_id=conversation.str_id,
+            actor_user_id=actor_user_id,
+            target_user_id=target_user_id,
+        )
 
         await self.repo.delete_participant(
             conversation_id=conversation.str_id, user_id=target_user_id
@@ -458,18 +492,22 @@ class ParticipantsServiceMixin(BaseConversationsService):
         conversation = await self._get_group_for_participant(
             conversation_id=conversation_id, user_id=actor_user_id
         )
-        await self._require_actor_role(
-            conversation_id=conversation.str_id,
+        await self.require_permission(
             user_id=actor_user_id,
-            allowed_roles={"owner"},
+            conversation_id=conversation.str_id,
+            permission=ROLE_MANAGE,
         )
-        target = await self._get_participant_or_404(
+        await self._get_participant_or_404(
             conversation_id=conversation.str_id, user_id=target_user_id
         )
-        if target.role == "owner":
+        if await self.authorization.ownership.is_effective_owner(
+            user_id=target_user_id,
+            resource_type="conversation",
+            resource_id=conversation.str_id,
+        ):
             raise AppError(
                 code="CONVERSATION_FORBIDDEN",
-                message="Owner role can only change through ownership transfer",
+                message="The owner's standing changes only through ownership transfer",
                 status_code=403,
             )
         updated = await self.repo.set_participant_role(
@@ -498,10 +536,8 @@ class ParticipantsServiceMixin(BaseConversationsService):
         conversation = await self._get_group_for_participant(
             conversation_id=conversation_id, user_id=actor_user_id
         )
-        await self._require_actor_role(
-            conversation_id=conversation.str_id,
-            user_id=actor_user_id,
-            allowed_roles={"owner"},
+        await self._require_owner(
+            user_id=actor_user_id, conversation_id=conversation.str_id
         )
         await self._get_participant_or_404(
             conversation_id=conversation.str_id, user_id=target_user_id
@@ -513,15 +549,20 @@ class ParticipantsServiceMixin(BaseConversationsService):
                 status_code=400,
             )
 
+        # Ownership moves on the resource; both parties keep the Admin role so
+        # the outgoing owner retains management standing (§51).
+        await self.repo.set_owner_user(
+            conversation_id=conversation.str_id, user_id=target_user_id
+        )
         new_owner = await self.repo.set_participant_role(
             conversation_id=conversation.str_id,
             user_id=target_user_id,
-            role="owner",
+            role=ROLE_ADMIN,
         )
         previous_owner = await self.repo.set_participant_role(
             conversation_id=conversation.str_id,
             user_id=actor_user_id,
-            role="admin",
+            role=ROLE_ADMIN,
         )
         assert new_owner is not None and previous_owner is not None
 
@@ -542,10 +583,14 @@ class ParticipantsServiceMixin(BaseConversationsService):
         conversation = await self._get_group_for_participant(
             conversation_id=conversation_id, user_id=user_id
         )
-        participant = await self._get_participant_or_404(
+        await self._get_participant_or_404(
             conversation_id=conversation.str_id, user_id=user_id
         )
-        if participant.role == "owner":
+        if await self.authorization.ownership.is_effective_owner(
+            user_id=user_id,
+            resource_type="conversation",
+            resource_id=conversation.str_id,
+        ):
             raise AppError(
                 code="CONVERSATION_FORBIDDEN",
                 message="Transfer ownership before leaving the group",
@@ -573,10 +618,10 @@ class ParticipantsServiceMixin(BaseConversationsService):
         conversation = await self._get_group_for_participant(
             conversation_id=conversation_id, user_id=user_id
         )
-        await self._require_actor_role(
-            conversation_id=conversation.str_id,
+        await self.require_permission(
             user_id=user_id,
-            allowed_roles={"owner"},
+            conversation_id=conversation.str_id,
+            permission=RESOURCE_DELETE,
         )
         participants = await self.repo.list_participants(
             conversation_id=conversation.str_id

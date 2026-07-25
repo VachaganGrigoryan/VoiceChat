@@ -14,7 +14,10 @@ ReplyMode = Literal["quote", "thread"]
 
 ConversationType = Literal["dm", "group", "channel", "thread"]
 EncryptionMode = Literal["none", "e2ee"]
-ParticipantRole = Literal["owner", "admin", "member", "subscriber"]
+# The name of the RoleDocument a participant holds (resource-authorization).
+# Free-form because roles are data: seeded system roles are "Admin",
+# "Moderator", "Member", "Guest", and a scope may define its own.
+ParticipantRole = str
 PreviewType = Literal[
     "text",
     "media",
@@ -62,6 +65,10 @@ class ConversationView(BaseModel):
     encryption: EncryptionMode
     participant_ids: list[StrId]
     created_by: StrId
+    # Who owns this conversation. Ownership is not a role (§51), so clients read
+    # it here rather than inferring it from a participant's role.
+    owner_type: Literal["user", "space"] | None = None
+    owner_id: StrId | None = None
     title: str | None = None
     image: dict | None = None
     visibility: ConversationVisibility = "private"
@@ -103,7 +110,7 @@ class ThreadConversationView(BaseModel):
 class ParticipantView(BaseModel):
     conversation_id: StrId
     user_id: StrId
-    role: ParticipantRole
+    role: ParticipantRole | None = None
     permissions: dict[str, bool] | None = None
     joined_at: datetime
     last_read_at: datetime | None = None
@@ -181,7 +188,9 @@ class AddGroupMembersRequest(BaseModel):
 
 
 class UpdateParticipantRoleRequest(BaseModel):
-    role: Literal["admin", "member"]
+    """Assign a conversation role by name (a `roles` document in this scope)."""
+
+    role: str = Field(min_length=1, max_length=64)
 
 
 class UpdateInboxStateRequest(BaseModel):

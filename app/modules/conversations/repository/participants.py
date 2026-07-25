@@ -8,8 +8,18 @@ from app.db.models import MessageDocument, ParticipantDocument, RelationshipDocu
 from app.modules.relationships.compat import (
     DEFAULT_ROLE as _DEFAULT_ROLE,
     membership_filter,
+    resolve_role_names,
     to_participant,
 )
+
+
+async def _role_id_for(conversation_id: str, role_name: str) -> str:
+    """The conversation-scoped role id for a role name, seeding if needed."""
+    from app.modules.authorization.roles import RoleService
+
+    return await RoleService().resolve_role_id(
+        scope_type="conversation", scope_id=conversation_id, name=role_name
+    )
 
 
 def _membership_filter(conversation_id: str, user_id: str) -> dict:
@@ -18,10 +28,17 @@ def _membership_filter(conversation_id: str, user_id: str) -> dict:
     )
 
 
-def _to_participant_or_none(raw: dict | None) -> ParticipantDocument | None:
+async def _project(relationship: RelationshipDocument) -> ParticipantDocument:
+    """Project one membership, resolving its role ids to a role name."""
+    return to_participant(
+        relationship, role_names=await resolve_role_names([relationship])
+    )
+
+
+async def _to_participant_or_none(raw: dict | None) -> ParticipantDocument | None:
     if raw is None:
         return None
-    return to_participant(RelationshipDocument.model_validate(raw))
+    return await _project(RelationshipDocument.model_validate(raw))
 
 
 def _state_updates(updates: dict, allowed: tuple[str, ...]) -> dict:
@@ -43,9 +60,16 @@ class ParticipantsRepositoryMixin:
         return RelationshipDocument.get_pymongo_collection()
 
     async def ensure_participant(
-        self, *, conversation_id: str, user_id: str, role: str = _DEFAULT_ROLE
+        self, *, conversation_id: str, user_id: str, role: str | None = _DEFAULT_ROLE
     ) -> ParticipantDocument:
+        """Make ``user_id`` an active participant holding the named role.
+
+        ``role=None`` assigns no role — what DMs use, since both sides are
+        peers and their access comes from membership and the conversation's
+        posting policy rather than from RBAC.
+        """
         now = datetime.now(UTC)
+        role_id = await _role_id_for(conversation_id, role) if role else None
         raw = await self._relationships.find_one_and_update(
             _membership_filter(conversation_id, user_id),
             {
@@ -55,7 +79,7 @@ class ParticipantsRepositoryMixin:
                     "target_type": "conversation",
                     "target_id": str(conversation_id),
                     "user_id": str(user_id),
-                    "role_ids": [role],
+                    "role_ids": [role_id] if role_id else [],
                     "initiation": "direct",
                     "initiated_by": str(user_id),
                     "requested_at": now,
@@ -67,7 +91,7 @@ class ParticipantsRepositoryMixin:
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )
-        return to_participant(RelationshipDocument.model_validate(raw))
+        return await _project(RelationshipDocument.model_validate(raw))
 
     async def get_participant(
         self, *, conversation_id: str, user_id: str
@@ -75,7 +99,7 @@ class ParticipantsRepositoryMixin:
         raw = await self._relationships.find_one(
             {**_membership_filter(conversation_id, user_id), "status": "active"}
         )
-        return _to_participant_or_none(raw)
+        return await _to_participant_or_none(raw)
 
     async def list_participants(
         self, *, conversation_id: str
@@ -88,17 +112,20 @@ class ParticipantsRepositoryMixin:
                 "status": "active",
             }
         ).to_list()
-        return [to_participant(doc) for doc in docs]
+        role_names = await resolve_role_names(docs)
+        return [to_participant(doc, role_names=role_names) for doc in docs]
 
     async def set_participant_role(
         self, *, conversation_id: str, user_id: str, role: str
     ) -> ParticipantDocument | None:
+        """Replace a member's roles with the single role named ``role``."""
+        role_id = await _role_id_for(conversation_id, role)
         raw = await self._relationships.find_one_and_update(
             _membership_filter(conversation_id, user_id),
-            {"$set": {"role_ids": [role], "updated_at": datetime.now(UTC)}},
+            {"$set": {"role_ids": [role_id], "updated_at": datetime.now(UTC)}},
             return_document=ReturnDocument.AFTER,
         )
-        return _to_participant_or_none(raw)
+        return await _to_participant_or_none(raw)
 
     async def set_participant_permissions(
         self, *, conversation_id: str, user_id: str, permissions: dict | None
@@ -121,7 +148,7 @@ class ParticipantsRepositoryMixin:
             },
             return_document=ReturnDocument.AFTER,
         )
-        return _to_participant_or_none(raw)
+        return await _to_participant_or_none(raw)
 
     async def delete_participant(self, *, conversation_id: str, user_id: str) -> bool:
         result = await self._relationships.delete_one(
@@ -140,7 +167,7 @@ class ParticipantsRepositoryMixin:
             {"$set": set_fields},
             return_document=ReturnDocument.AFTER,
         )
-        return _to_participant_or_none(raw)
+        return await _to_participant_or_none(raw)
 
     async def update_many_inbox_state(
         self, *, conversation_ids: list[str], user_id: str, updates: dict
@@ -183,7 +210,7 @@ class ParticipantsRepositoryMixin:
             },
             return_document=ReturnDocument.AFTER,
         )
-        return _to_participant_or_none(raw)
+        return await _to_participant_or_none(raw)
 
     async def aggregate_folders(self, *, user_id: str) -> list[dict]:
         """Return the caller's folders with total and archived conversation counts.
@@ -268,7 +295,7 @@ class ParticipantsRepositoryMixin:
             },
             return_document=ReturnDocument.AFTER,
         )
-        return _to_participant_or_none(raw)
+        return await _to_participant_or_none(raw)
 
     async def mark_read(
         self,

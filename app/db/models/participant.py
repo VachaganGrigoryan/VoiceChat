@@ -19,7 +19,10 @@ class ParticipantDocument(TimestampedDocument):
 
     conversation_id: StrId
     user_id: StrId
-    role: Literal["owner", "admin", "member", "subscriber"] = "member"
+    # The name of the `RoleDocument` this member holds (`resource-authorization`),
+    # or None when they hold no role. Ownership is not a role: it is resolved
+    # from the conversation's `OwnerRef` by `AuthorizationService`.
+    role: str | None = None
     # Optional granular rights that refine the base role (can_pin, can_invite,
     # can_delete, can_restrict, can_manage, ...). Absent => role defaults.
     permissions: dict[str, bool] | None = None

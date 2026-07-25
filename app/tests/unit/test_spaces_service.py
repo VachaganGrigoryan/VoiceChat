@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.errors import AppError
+from app.modules.authorization.roles import ROLE_MEMBER
 from app.modules.spaces.service import SpacesService
 
 
@@ -13,7 +14,6 @@ def service():
     repo = AsyncMock()
     notifications_service = AsyncMock()
     
-    # Mock require_manager / check_membership
     repo.get_membership = AsyncMock()
     
     svc = SpacesService(
@@ -27,8 +27,7 @@ def service():
 async def test_invite_user_success(service):
     svc, repo, notifications = service
     
-    # Mock require_manager and get_by_id checks
-    svc.require_manager = AsyncMock()
+    svc._require_can = AsyncMock()
     
     space = MagicMock()
     space.name = "My Test Space"
@@ -76,7 +75,7 @@ async def test_invite_user_success(service):
 @pytest.mark.asyncio
 async def test_invite_user_already_member(service):
     svc, repo, _ = service
-    svc.require_manager = AsyncMock()
+    svc._require_can = AsyncMock()
     
     space = MagicMock()
     repo.get_by_id.return_value = space
@@ -213,7 +212,7 @@ async def test_join_channel_reject_invite_only(service):
 @pytest.mark.asyncio
 async def test_update_space_success(service):
     svc, repo, _ = service
-    svc.require_manager = AsyncMock()
+    svc._require_can = AsyncMock()
     
     updated_space = MagicMock()
     updated_space.str_id = "space123"
@@ -290,7 +289,7 @@ async def test_redeem_invite_success_joined(service):
     repo.ensure_membership.assert_called_once_with(
         space_id="space123",
         user_id="user123",
-        role="member",
+        role=ROLE_MEMBER,
     )
 
 

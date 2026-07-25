@@ -10,6 +10,13 @@ from app.db.models import (
     InviteLinkDocument,
     JoinRequestDocument,
 )
+from app.modules.authorization import AuthorizationService
+from app.modules.authorization.permissions import (
+    MEMBER_APPROVE,
+    MEMBER_INVITE,
+    RESOURCE_MANAGE,
+)
+from app.modules.authorization.roles import ROLE_ADMIN, ROLE_MEMBER
 from app.modules.spaces.repository import SpacesRepository
 from app.modules.spaces.schemas import (
     SpaceView,
@@ -20,16 +27,16 @@ from app.modules.spaces.schemas import (
     SpaceChannelView,
 )
 
-_MANAGER_ROLES = {"owner", "admin"}
-
 class SpacesService:
     def __init__(
         self,
         repo: SpacesRepository,
         notifications_service: Any | None = None,
+        authorization: AuthorizationService | None = None,
     ) -> None:
         self.repo = repo
         self.notifications_service = notifications_service
+        self.authorization = authorization or AuthorizationService()
 
     async def create_space(
         self,
@@ -69,11 +76,13 @@ class SpacesService:
         )
         await space.insert()
 
-        # Add creator as owner
+        # The creator owns the space via `owner_user_id`; Admin is the role
+        # that outlives an ownership change (§51).
+        await self.repo.seed_roles(space_id=space.str_id)
         await self.repo.ensure_membership(
             space_id=space.str_id,
             user_id=created_by,
-            role="owner",
+            role=ROLE_ADMIN,
         )
 
         from app.db.models import AuditLogDocument
@@ -87,7 +96,7 @@ class SpacesService:
         )
         await log.insert()
 
-        return self._to_view(space, viewer_role="owner")
+        return self._to_view(space, viewer_role=ROLE_ADMIN)
 
     async def get_space(self, *, space_id: str, user_id: str) -> SpaceView:
         space = await self.repo.get_by_id(space_id)
@@ -124,7 +133,14 @@ class SpacesService:
         membership = await self.repo.get_membership(space_id=space_id, user_id=user_id)
         return membership is not None
 
-    async def require_manager(self, *, space_id: str, user_id: str) -> SpaceDocument:
+    async def _require_can(
+        self, *, space_id: str, user_id: str, permission: str
+    ) -> SpaceDocument:
+        """Authorize a space action through `AuthorizationService.can` (§56).
+
+        The space owner passes on effective ownership; everyone else needs a
+        role on their active space membership that grants ``permission``.
+        """
         space = await self.repo.get_by_id(space_id)
         if space is None:
             raise AppError(
@@ -132,8 +148,10 @@ class SpacesService:
                 message="Space not found",
                 status_code=404,
             )
-        membership = await self.repo.get_membership(space_id=space_id, user_id=user_id)
-        if membership is None or membership.role not in _MANAGER_ROLES:
+        allowed = await self.authorization.can(
+            user_id, permission, "space", space.str_id
+        )
+        if not allowed:
             raise AppError(
                 code="SPACE_FORBIDDEN",
                 message="Not allowed to manage this space",
@@ -150,7 +168,9 @@ class SpacesService:
         max_uses: int | None = None,
         requires_approval: bool = False,
     ) -> SpaceInviteLinkView:
-        await self.require_manager(space_id=space_id, user_id=actor_user_id)
+        await self._require_can(
+            space_id=space_id, user_id=actor_user_id, permission=MEMBER_INVITE
+        )
         invite = await self.repo.create_invite_link(
             target_id=space_id,
             created_by=actor_user_id,
@@ -168,7 +188,9 @@ class SpacesService:
         space_id: str,
         user_id: str,
     ) -> SpaceInviteLinkView:
-        await self.require_manager(space_id=space_id, user_id=actor_user_id)
+        await self._require_can(
+            space_id=space_id, user_id=actor_user_id, permission=MEMBER_INVITE
+        )
 
         space = await self.repo.get_by_id(space_id)
         if space is None:
@@ -216,14 +238,18 @@ class SpacesService:
     async def list_invites(
         self, *, actor_user_id: str, space_id: str
     ) -> list[SpaceInviteLinkView]:
-        await self.require_manager(space_id=space_id, user_id=actor_user_id)
+        await self._require_can(
+            space_id=space_id, user_id=actor_user_id, permission=MEMBER_INVITE
+        )
         invites = await self.repo.list_invites_for_space(space_id=space_id)
         return [self._to_invite_view(inv) for inv in invites]
 
     async def revoke_invite(
         self, *, actor_user_id: str, space_id: str, invite_id: str
     ) -> None:
-        await self.require_manager(space_id=space_id, user_id=actor_user_id)
+        await self._require_can(
+            space_id=space_id, user_id=actor_user_id, permission=MEMBER_INVITE
+        )
         invite = await self.repo.get_invite_by_id(invite_id=invite_id)
         if invite is None or str(invite.target_id) != space_id:
             raise AppError(
@@ -287,7 +313,7 @@ class SpacesService:
         await self.repo.ensure_membership(
             space_id=space.str_id,
             user_id=user_id,
-            role="member",
+            role=ROLE_MEMBER,
         )
 
         return "joined", self._to_view(space), None
@@ -295,14 +321,18 @@ class SpacesService:
     async def list_join_requests(
         self, *, actor_user_id: str, space_id: str
     ) -> list[SpaceJoinRequestView]:
-        await self.require_manager(space_id=space_id, user_id=actor_user_id)
+        await self._require_can(
+            space_id=space_id, user_id=actor_user_id, permission=MEMBER_APPROVE
+        )
         requests = await self.repo.list_pending_join_requests(space_id=space_id)
         return [self._to_join_request_view(req) for req in requests]
 
     async def approve_join_request(
         self, *, actor_user_id: str, space_id: str, request_id: str
     ) -> SpaceJoinRequestView:
-        await self.require_manager(space_id=space_id, user_id=actor_user_id)
+        await self._require_can(
+            space_id=space_id, user_id=actor_user_id, permission=MEMBER_APPROVE
+        )
         request = await self.repo.get_join_request(request_id=request_id)
         if request is None or str(request.target_id) != space_id:
             raise AppError(
@@ -324,7 +354,7 @@ class SpacesService:
         await self.repo.ensure_membership(
             space_id=space_id,
             user_id=str(request.user_id),
-            role="member",
+            role=ROLE_MEMBER,
         )
 
         from app.db.models import AuditLogDocument
@@ -343,7 +373,9 @@ class SpacesService:
     async def reject_join_request(
         self, *, actor_user_id: str, space_id: str, request_id: str
     ) -> SpaceJoinRequestView:
-        await self.require_manager(space_id=space_id, user_id=actor_user_id)
+        await self._require_can(
+            space_id=space_id, user_id=actor_user_id, permission=MEMBER_APPROVE
+        )
         request = await self.repo.get_join_request(request_id=request_id)
         if request is None or str(request.target_id) != space_id:
             raise AppError(
@@ -400,7 +432,7 @@ class SpacesService:
             pending = await self.repo.create_join_request(space_id=space_id, user_id=user_id)
         return self._to_join_request_view(pending)
 
-    def _to_view(self, space: SpaceDocument, viewer_role: Literal["owner", "admin", "member"] | None = None) -> SpaceView:
+    def _to_view(self, space: SpaceDocument, viewer_role: str | None = None) -> SpaceView:
         return SpaceView(
             id=space.str_id,
             name=space.name,
@@ -483,7 +515,7 @@ class SpacesService:
         await conv_repo.ensure_participant(
             conversation_id=conversation_id,
             user_id=user_id,
-            role="member",
+            role=ROLE_MEMBER,
         )
         await conv_repo.add_participant_id(
             conversation_id=conversation_id,
@@ -533,7 +565,9 @@ class SpacesService:
         visibility: Literal["private", "public"] | None = None,
         settings: dict[str, Any] | None = None,
     ) -> SpaceView:
-        await self.require_manager(space_id=space_id, user_id=actor_user_id)
+        await self._require_can(
+            space_id=space_id, user_id=actor_user_id, permission=RESOURCE_MANAGE
+        )
 
         updated = await self.repo.update_space(
             space_id=space_id,

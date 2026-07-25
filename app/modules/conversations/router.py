@@ -1728,9 +1728,7 @@ async def clear_messages_for_everyone(
     messages: MessagesService = Depends(get_messages_service),
 ):
     conversation = await service.require_group_manager(
-        user_id=user.str_id,
-        conversation_id=conversation_id,
-        allowed_roles={"owner", "admin"},
+        user_id=user.str_id, conversation_id=conversation_id
     )
     conv_id, count = await messages.clear_chat_history_for_everyone(
         conversation_id=conversation_id
