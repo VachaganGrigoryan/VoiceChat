@@ -222,6 +222,44 @@ async def list_user_following(
 
 
 @follows_router.post(
+    "/follows/{relationship_id}/accept",
+    response_model=SuccessResponse[RelationshipView],
+)
+async def accept_follow(
+    request: Request,
+    relationship_id: str,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    current_user_id: str = Depends(get_current_user_id),
+    service: FollowService = Depends(get_follow_service),
+):
+    doc = await service.accept(
+        user_id=current_user_id,
+        relationship_id=relationship_id,
+    )
+    await _emit_lifecycle(sio, doc)
+    return ok(request, data=to_relationship_view(doc))
+
+
+@follows_router.post(
+    "/follows/{relationship_id}/decline",
+    response_model=SuccessResponse[RelationshipView],
+)
+async def decline_follow(
+    request: Request,
+    relationship_id: str,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    current_user_id: str = Depends(get_current_user_id),
+    service: FollowService = Depends(get_follow_service),
+):
+    doc = await service.decline(
+        user_id=current_user_id,
+        relationship_id=relationship_id,
+    )
+    await _emit_lifecycle(sio, doc)
+    return ok(request, data=to_relationship_view(doc))
+
+
+@follows_router.post(
     "/channels/{channel_id}/follow",
     status_code=201,
     response_model=SuccessResponse[RelationshipView],

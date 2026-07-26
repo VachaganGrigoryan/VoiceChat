@@ -38,6 +38,7 @@ class ChannelDocument(TimestampedDocument):
     follower_count: int = Field(default=0, ge=0)
     last_message_id: str | None = None
     last_activity_at: datetime | None = None
+    legacy_conversation_id: str | None = None
     created_by: StrId
 
     @model_validator(mode="after")

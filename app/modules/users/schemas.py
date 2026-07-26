@@ -103,8 +103,8 @@ class UserChannelView(BaseModel):
     title: str | None = None
     slug: str | None = None
     description: str | None = None
-    visibility: Literal["private", "public"]
-    posting_policy: Literal["everyone", "admins"]
+    visibility: Literal["private", "members", "public"]
+    posting_policy: Literal["owner", "moderators", "members", "everyone"]
     read_policy: Literal["members", "contacts", "public"] = "members"
     member_count: int = 0
     last_message_at: datetime | None = None

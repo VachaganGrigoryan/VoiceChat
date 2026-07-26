@@ -48,12 +48,32 @@ class UsersRepository(BaseRepository[UserDocument]):
             updated_at=now,
         )
 
+    async def _ensure_profile_channel(self, user: UserDocument) -> UserDocument:
+        if user.main_channel_id is not None:
+            return user
+        from app.modules.channels.repository import ChannelsRepository
+        from app.modules.channels.service import ChannelService
+
+        channel = await ChannelService(
+            repo=ChannelsRepository()
+        ).ensure_profile_channel(
+            user_id=user.str_id,
+            username=user.username,
+            is_private=user.is_private,
+        )
+        return await user.set(
+            {
+                UserDocument.main_channel_id: channel.str_id,
+                UserDocument.updated_at: datetime.now(UTC),
+            }
+        )
+
     async def create_user(self, email: str) -> UserDocument:
         username = await self._generate_unique_username()
         doc = self._build_new_user_doc(email, username)
         try:
             await doc.insert()
-            return doc
+            return await self._ensure_profile_channel(doc)
         except DuplicateKeyError as exc:
             raise AppError(
                 code="EMAIL_ALREADY_EXISTS",
@@ -66,17 +86,17 @@ class UsersRepository(BaseRepository[UserDocument]):
         email_n = email.lower().strip()
         existing = await UserDocument.find_one(UserDocument.email == email_n)
         if existing:
-            return existing
+            return await self._ensure_profile_channel(existing)
 
         username = await self._generate_unique_username()
         doc = self._build_new_user_doc(email_n, username)
         try:
             await doc.insert()
-            return doc
+            return await self._ensure_profile_channel(doc)
         except DuplicateKeyError:
             existing2 = await UserDocument.find_one(UserDocument.email == email_n)
             if existing2:
-                return existing2
+                return await self._ensure_profile_channel(existing2)
             raise
 
     async def find_by_id(self, user_id: str) -> UserDocument | None:

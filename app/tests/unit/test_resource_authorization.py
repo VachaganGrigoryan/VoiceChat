@@ -100,6 +100,24 @@ def make_membership(
     )
 
 
+def make_follow(
+    *,
+    user_id: str,
+    target_type: str,
+    target_id: str,
+    status: str = "active",
+) -> RelationshipDocument:
+    return RelationshipDocument(
+        kind="follow",
+        user_id=user_id,
+        target_type=target_type,
+        target_id=target_id,
+        status=status,
+        initiation="request",
+        initiated_by=user_id,
+    )
+
+
 def make_channel(**overrides) -> ChannelDocument:
     fields = {
         "owner": OwnerRef(type="user", id=OWNER),
@@ -140,6 +158,7 @@ class _Fixture:
     def __init__(self) -> None:
         self.resources: dict[tuple[str, str], object] = {}
         self.memberships: list[RelationshipDocument] = []
+        self.follows: list[RelationshipDocument] = []
         self.roles: dict[str, RoleDocument] = {}
         self.blocked_pairs: set[tuple[str, str]] = set()
         self.known_users: set[str] = {OWNER, MEMBER, STRANGER, PEER}
@@ -153,13 +172,28 @@ class _Fixture:
     def add_role(self, role: RoleDocument) -> None:
         self.roles[role.str_id] = role
 
-    def _find_membership(self, query: dict) -> RelationshipDocument | None:
-        for doc in self.memberships:
+    def add_follow(self, follow: RelationshipDocument) -> None:
+        self.follows.append(follow)
+
+    def _find_relationship(self, query: dict) -> RelationshipDocument | None:
+        candidates = self.memberships if query["kind"] == "membership" else self.follows
+        targets = query.get("$or")
+        if targets is None:
+            targets = [
+                {
+                    "target_type": query["target_type"],
+                    "target_id": query["target_id"],
+                }
+            ]
+        for doc in candidates:
             if (
                 str(doc.user_id) == query["user_id"]
-                and doc.target_type == query["target_type"]
-                and str(doc.target_id) == query["target_id"]
                 and doc.status == query["status"]
+                and any(
+                    doc.target_type == target["target_type"]
+                    and str(doc.target_id) == target["target_id"]
+                    for target in targets
+                )
             ):
                 return doc
         return None
@@ -206,7 +240,7 @@ class _Fixture:
             patch.object(UserDocument, "get", new=AsyncMock(side_effect=fake_user_get)),
             patch(
                 "app.modules.authorization.service.RelationshipDocument.find_one",
-                new=AsyncMock(side_effect=lambda q: self._find_membership(q)),
+                new=AsyncMock(side_effect=lambda q: self._find_relationship(q)),
             ),
             patch(
                 "app.modules.authorization.service.BlockDocument.find_one",
@@ -521,6 +555,45 @@ async def test_comment_policy_disabled_blocks_reactions(fx):
     )
 
     assert await fx.can(MEMBER, "reaction.create", "channel", CHANNEL_ID) is False
+
+
+@pytest.mark.asyncio
+async def test_comment_policy_followers_requires_active_follow(fx):
+    fx.add_resource(
+        "channel",
+        CHANNEL_ID,
+        make_channel(comment_policy="followers", posting_policy="owner"),
+    )
+    fx.add_follow(
+        make_follow(
+            user_id=MEMBER,
+            target_type="channel",
+            target_id=CHANNEL_ID,
+        )
+    )
+
+    assert await fx.can(MEMBER, "thread.reply", "channel", CHANNEL_ID) is True
+    assert await fx.can(STRANGER, "thread.reply", "channel", CHANNEL_ID) is False
+
+
+@pytest.mark.asyncio
+async def test_private_profile_read_accepts_approved_user_follower(fx):
+    fx.add_resource(
+        "channel",
+        CHANNEL_ID,
+        make_channel(kind="profile", visibility="members"),
+    )
+    fx.add_follow(
+        make_follow(
+            user_id=MEMBER,
+            target_type="user",
+            target_id=OWNER,
+        )
+    )
+
+    assert await fx.can(MEMBER, MESSAGE_READ, "channel", CHANNEL_ID) is True
+    assert await fx.can(MEMBER, "thread.reply", "channel", CHANNEL_ID) is True
+    assert await fx.can(STRANGER, MESSAGE_READ, "channel", CHANNEL_ID) is False
 
 
 @pytest.mark.asyncio

@@ -26,6 +26,7 @@ from app.modules.relationships import (
 )
 from app.modules.authorization import roles_router
 from app.modules.extensibility.router import extensibility_router
+from app.modules.channels.router import router as channels_router
 
 
 def register_routers(app: FastAPI) -> None:
@@ -38,6 +39,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(pings_router)
     app.include_router(discovery_router)
     app.include_router(conversations_router)
+    app.include_router(channels_router)
     app.include_router(feeds_router)
     app.include_router(devices_router)
     app.include_router(calls_router)
@@ -53,4 +55,3 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(memberships_router)
     app.include_router(extensibility_router)
     app.include_router(realtime_router)
-

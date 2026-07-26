@@ -20,65 +20,86 @@ OWNER = "507f1f77bcf86cd799439011"
 VIEWER = "507f1f77bcf86cd799439012"
 
 
-def make_channel(*, read_policy: str = "members", created_by: str = OWNER):
+def make_channel(*, visibility: str = "public"):
     return SimpleNamespace(
-        type="channel",
-        created_by=created_by,
-        read_policy=read_policy,
+        visibility=visibility,
         str_id="507f1f77bcf86cd7994390aa",
     )
 
 
-def make_service(*, participant=None, has_permission=False):
-    conversations_repo = AsyncMock()
-    conversations_repo.get_participant.return_value = participant
-    pings = AsyncMock()
-    pings.has_chat_permission.return_value = has_permission
+def make_service(*, allowed: bool = True):
+    authorization = AsyncMock()
+    authorization.can.return_value = allowed
     return FeedsService(
-        conversations_repo=conversations_repo,
+        channels_repo=AsyncMock(),
         messages_service=AsyncMock(),
-        messages_repo=AsyncMock(),
-        pings_service=pings,
         users_repo=AsyncMock(),
+        authorization=authorization,
     )
 
 
 @pytest.mark.asyncio
-async def test_owner_can_view():
+async def test_authorization_allows_channel_view():
     svc = make_service()
-    assert await svc._can_view_channel(viewer_id=OWNER, channel=make_channel()) is True
+    channel = make_channel()
 
-
-@pytest.mark.asyncio
-async def test_member_can_view_regardless_of_policy():
-    svc = make_service(participant=SimpleNamespace(role="member"))
-    channel = make_channel(read_policy="members")
     assert await svc._can_view_channel(viewer_id=VIEWER, channel=channel) is True
-
-
-@pytest.mark.asyncio
-async def test_public_policy_allows_any_viewer():
-    svc = make_service()
-    channel = make_channel(read_policy="public")
-    assert await svc._can_view_channel(viewer_id=VIEWER, channel=channel) is True
-
+    svc.authorization.can.assert_awaited_once_with(
+        VIEWER,
+        "message.read",
+        "channel",
+        channel.str_id,
+    )
 
 @pytest.mark.asyncio
-async def test_contacts_policy_requires_accepted_ping():
-    allowed = make_service(has_permission=True)
-    denied = make_service(has_permission=False)
-    channel = make_channel(read_policy="contacts")
-    assert await allowed._can_view_channel(viewer_id=VIEWER, channel=channel) is True
-    assert await denied._can_view_channel(viewer_id=VIEWER, channel=channel) is False
-
-
-@pytest.mark.asyncio
-async def test_members_policy_denies_outsider():
-    svc = make_service()
-    channel = make_channel(read_policy="members")
+async def test_authorization_denies_channel_view():
+    svc = make_service(allowed=False)
+    channel = make_channel(visibility="private")
     assert await svc._can_view_channel(viewer_id=VIEWER, channel=channel) is False
     with pytest.raises(AppError):
         await svc.assert_can_view_channel(viewer_id=VIEWER, channel=channel)
+
+
+@pytest.mark.asyncio
+async def test_channel_feed_reads_channel_container():
+    svc = make_service()
+    channel = make_channel()
+    svc.channels_repo.get_by_id.return_value = channel
+    svc.messages.get_history.return_value = ([], None)
+
+    await svc.list_channel_posts(
+        viewer_id=VIEWER,
+        channel_id=channel.str_id,
+        limit=20,
+        cursor=None,
+    )
+
+    svc.messages.get_history.assert_awaited_once_with(
+        container_type="channel",
+        container_id=channel.str_id,
+        user_id=VIEWER,
+        limit=20,
+        cursor=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_profile_feed_resolves_main_channel():
+    svc = make_service()
+    svc.users_repo.find_by_username.return_value = SimpleNamespace(
+        main_channel_id="507f1f77bcf86cd7994390aa"
+    )
+    svc.channels_repo.get_by_id.return_value = make_channel()
+    svc.messages.get_history.return_value = ([], None)
+
+    await svc.list_profile_posts(
+        viewer_id=VIEWER,
+        username="alice",
+        limit=20,
+        cursor=None,
+    )
+
+    svc.messages.get_history.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -90,7 +111,7 @@ async def test_to_feed_post_maps_content_media_reactions_author():
     )
     doc = MessageDoc(
         id="507f1f77bcf86cd7994390bb",
-        container_type="conversation",
+        container_type="channel",
         container_id="507f1f77bcf86cd7994390aa",
         sender_id=OWNER,
         type="text",

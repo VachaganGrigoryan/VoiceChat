@@ -1,15 +1,28 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, UploadFile, File
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from starlette.requests import Request
 
 from app.core.errors.openapi import build_error_responses
-from app.core.http import SuccessResponse, ok
+from app.core.http import (
+    PaginatedResponse,
+    PaginationMeta,
+    SuccessResponse,
+    ok,
+    ok_paginated,
+)
 from app.core.security import get_current_user_id
 from app.modules.auth.repository import UsersRepository
+from app.modules.channels.dependencies import get_channel_service
+from app.modules.channels.schemas import ChannelMessageCreateRequest
+from app.modules.channels.service import ChannelService
+from app.modules.feeds.dependencies import get_feeds_service
+from app.modules.feeds.schemas import FeedPostView
+from app.modules.feeds.service import FeedsService
+from app.modules.messages.schemas import MessageDoc
 from app.modules.pings.dependencies import get_pings_service
 from app.modules.realtime.presence.factory import get_presence_backend
-from app.modules.conversations.repository import ConversationsRepository
+from app.modules.channels.repository import ChannelsRepository
 from app.modules.users.schemas import (
     SelectedUserProfileResponse,
     SetMainChannelRequest,
@@ -34,7 +47,7 @@ def get_users_service() -> UsersService:
         UsersRepository(),
         get_pings_service(),
         get_presence_backend(),
-        ConversationsRepository(),
+        ChannelsRepository(),
     )
 
 
@@ -126,6 +139,51 @@ async def delete_my_avatar(
 ):
     result = await service.delete_avatar(user_id=current_user_id)
     return ok(request, data=result)
+
+
+@router.post(
+    "/me/posts",
+    status_code=201,
+    response_model=SuccessResponse[MessageDoc],
+)
+async def create_my_profile_post(
+    request: Request,
+    body: ChannelMessageCreateRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    service: ChannelService = Depends(get_channel_service),
+):
+    result = await service.create_profile_message(
+        user_id=current_user_id,
+        text=body.text,
+        reply_mode=body.reply_mode,
+        reply_to_message_id=body.reply_to_message_id,
+    )
+    return ok(request, data=result, status_code=201)
+
+
+@router.get(
+    "/{username}/posts",
+    response_model=PaginatedResponse[list[FeedPostView]],
+)
+async def list_profile_posts(
+    request: Request,
+    username: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    cursor: str | None = Query(default=None),
+    current_user_id: str = Depends(get_current_user_id),
+    service: FeedsService = Depends(get_feeds_service),
+):
+    items, next_cursor = await service.list_profile_posts(
+        viewer_id=current_user_id,
+        username=username,
+        limit=limit,
+        cursor=cursor,
+    )
+    return ok_paginated(
+        request,
+        data=items,
+        meta=PaginationMeta(cursor=cursor, next_cursor=next_cursor, limit=limit),
+    )
 
 
 @router.get(

@@ -76,6 +76,7 @@ class AuthorizationService:
         self.ownership = ownership or OwnershipResolver()
         self.roles_repo = roles_repo or RolesRepository()
         self._memberships: dict[tuple[str, str, str], RelationshipDocument | None] = {}
+        self._follows: dict[tuple[str, str], bool] = {}
         self._role_docs: dict[str, RoleDocument] = {}
         self._users: dict[str, UserDocument | None] = {}
 
@@ -148,6 +149,23 @@ class AuthorizationService:
         effective |= await self._parent_space_permissions(
             user_id=user_id, resource_type=resource_type, resource_id=resource_id
         )
+        is_follower = False
+        needs_follow = action in _COMMENT_ACTIONS and getattr(
+            resource, "comment_policy", None
+        ) == "followers"
+        needs_private_profile_follow = (
+            action in _READ_ACTIONS | _COMMENT_ACTIONS
+            and resource_type == "channel"
+            and getattr(resource, "kind", None) == "profile"
+            and getattr(resource, "visibility", None) == "members"
+        )
+        if needs_follow or needs_private_profile_follow:
+            is_follower = await self._is_active_follower(
+                user_id=user_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                resource=resource,
+            )
 
         # Policy caps what roles may grant: when a resource restricts an action
         # to a narrower audience than this user is in, no role widens it back
@@ -158,6 +176,7 @@ class AuthorizationService:
             resource_type=resource_type,
             resource=resource,
             is_member=membership is not None,
+            is_follower=is_follower,
             effective=effective,
         ):
             return False
@@ -171,6 +190,7 @@ class AuthorizationService:
             resource_type=resource_type,
             resource=resource,
             is_member=membership is not None,
+            is_follower=is_follower,
         ):
             return True
 
@@ -253,6 +273,42 @@ class AuthorizationService:
                 granted.update(role.permissions)
         return granted
 
+    async def _is_active_follower(
+        self,
+        *,
+        user_id: str,
+        resource_type: ResourceType,
+        resource_id: str,
+        resource: Any,
+    ) -> bool:
+        if resource_type != "channel":
+            return False
+        key = (user_id, resource_id)
+        if key in self._follows:
+            return self._follows[key]
+
+        targets: list[dict[str, str]] = [
+            {"target_type": "channel", "target_id": resource_id}
+        ]
+        owner = getattr(resource, "owner", None)
+        if getattr(resource, "kind", None) == "profile" and getattr(
+            owner, "type", None
+        ) == "user":
+            targets.append(
+                {"target_type": "user", "target_id": str(owner.id)}
+            )
+
+        follow = await RelationshipDocument.find_one(
+            {
+                "kind": "follow",
+                "user_id": user_id,
+                "status": "active",
+                "$or": targets,
+            }
+        )
+        self._follows[key] = follow is not None
+        return self._follows[key]
+
     async def _parent_space_permissions(
         self, *, user_id: str, resource_type: ResourceType, resource_id: str
     ) -> set[str]:
@@ -307,6 +363,7 @@ class AuthorizationService:
         resource_type: ResourceType,
         resource: Any,
         is_member: bool,
+        is_follower: bool,
         effective: set[str],
     ) -> bool:
         """Whether the resource's own policy puts ``action`` out of reach.
@@ -333,6 +390,8 @@ class AuthorizationService:
             comment = getattr(resource, "comment_policy", None)
             if comment == "disabled":
                 return True
+            if comment == "followers" and not is_follower:
+                return True
             if comment == "members" and not is_member:
                 return True
 
@@ -354,12 +413,20 @@ class AuthorizationService:
         resource_type: ResourceType,
         resource: Any,
         is_member: bool,
+        is_follower: bool,
     ) -> bool:
         """Policy as a grant: an open resource lets anyone interact (§59)."""
         if action in _READ_ACTIONS and is_member:
             # `visibility`/`read_policy = members` says exactly this: an active
             # member reads. DMs and private groups rely on it — they seed no
             # roles, and reading is what membership means there.
+            return True
+        if (
+            action in _READ_ACTIONS
+            and resource_type == "channel"
+            and getattr(resource, "kind", None) == "profile"
+            and is_follower
+        ):
             return True
         if is_own_scoped(action) and is_member and resource_type == "conversation":
             # Acting on one's own message needs no role in a conversation: a DM
@@ -382,7 +449,9 @@ class AuthorizationService:
             if comment_policy == "everyone":
                 return self._is_publicly_visible(
                     resource_type=resource_type, resource=resource
-                ) or is_member
+                ) or is_member or is_follower
+            if comment_policy == "followers":
+                return is_follower
         return False
 
     @staticmethod

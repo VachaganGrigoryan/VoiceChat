@@ -1,5 +1,6 @@
 from app.modules.messages.repository import MessagesRepository
 from app.modules.messages.service import MessagesService
+from app.modules.channels.repository import ChannelsRepository
 from app.modules.pings.repository import PingsRepository
 from app.modules.pings.service import PingsService
 from app.modules.auth.repository import UsersRepository
@@ -24,4 +25,5 @@ def get_messages_service() -> MessagesService:
         repo=MessagesRepository(),
         pings_service=pings_service,
         conversations_service=conversations_service,
+        channels_repo=ChannelsRepository(),
     )

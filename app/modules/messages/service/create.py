@@ -429,6 +429,12 @@ class CreateMessagesMixin:
                 mention_scope=mention_scope,
             )
 
+        if doc.container_type == "channel" and self.channels_repo is not None:
+            await self.channels_repo.record_message(
+                channel_id=doc.container_id,
+                message_id=doc.str_id,
+                created_at=doc.created_at,
+            )
         if reply_mode != "thread":
             await self._materialize_conversation_message(doc)
         summaries = await self.repo.receipt_summaries_for_messages(
