@@ -108,25 +108,6 @@ class CreateConversationsMixin(BaseConversationsService):
             )
         return conversation
 
-    async def create_channel_conversation(
-        self,
-        *,
-        user_id: str,
-        title: str,
-        participant_ids: list[str],
-        description: str | None = None,
-        visibility: str = "private",
-        posting_policy: str = "admins",
-        read_policy: str = "members",
-        slug: str | None = None,
-        space_id: str | None = None,
-        space_visibility: str | None = None,
-    ) -> ConversationDocument:
-        raise AppError(
-            code="INVALID_CONVERSATION_TYPE",
-            message="Channel creation as a conversation type is disallowed; use the channels collection",
-            status_code=400,
-        )
 
     async def get_public_conversation_by_slug(
         self, *, slug: str

@@ -146,29 +146,6 @@ class ConversationsReadMixin:
 
         return [ConversationDocument.model_validate(row) for row in rows], next_cursor
 
-    async def list_public_channels_by_creator(
-        self, *, creator_id: str, limit: int, skip: int = 0
-    ) -> list[ConversationDocument]:
-        """Public channels a user owns, newest-created first.
-
-        Backs the Facebook-style profile channel tabs. Bounded by ``limit``;
-        ``skip`` provides simple offset pagination for users with many channels.
-        """
-        rows = (
-            await self.raw.find(
-                {
-                    "created_by": str(creator_id),
-                    "type": "channel",
-                    "visibility": "public",
-                }
-            )
-            .sort([("created_at", -1), ("_id", -1)])
-            .skip(skip)
-            .limit(limit)
-            .to_list(length=limit)
-        )
-        return [ConversationDocument.model_validate(row) for row in rows]
-
     async def get_conversation_message(
         self, *, conversation_id: str, message_id: str
     ) -> MessageDocument | None:

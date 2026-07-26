@@ -17,21 +17,14 @@ from app.db.object_id import StrId
 # ``channels`` collection; threads are message topology and no longer exist here.
 ConversationType = Literal["dm", "group"]
 
-# Legacy discriminator values that still exist on disk. Kept in the field's Literal so
-# reads of un-migrated rows validate; rejected on insert by ``_reject_legacy_types``.
-LEGACY_CONVERSATION_TYPES: frozenset[str] = frozenset({"channel"})
-
-
 class ConversationDocument(TimestampedDocument):
     """First-class conversation entity.
 
-    The write contract is ``ConversationType`` (``dm`` or ``group``). The persisted field
-    still accepts the legacy ``channel`` value so un-migrated rows remain readable until
-    ``channels-and-profile-feed`` re-homes them; creating one is rejected. DMs have no
-    owner; Groups carry an owner (User or Space via OwnerRef).
+    Conversations are DMs or groups. Channels live in their own collection and
+    threads are message topology. DMs have no owner; groups carry an owner.
     """
 
-    type: Literal["dm", "group", "channel"] = "dm"
+    type: ConversationType = "dm"
     owner: OwnerRef | None = None
     participant_ids: list[StrId] = Field(default_factory=list)
     created_by: StrId
@@ -43,11 +36,6 @@ class ConversationDocument(TimestampedDocument):
     # All default so existing dm/group docs remain valid without a rewrite.
     visibility: Literal["private", "public"] = "private"
     posting_policy: Literal["everyone", "admins"] = "everyone"
-    # Who may read this channel's feed of posts. Independent of ``visibility``
-    # (which governs slug-based discoverability): ``members`` keeps today's
-    # membership-gated behavior; ``contacts`` opens reads to the owner's accepted
-    # contacts; ``public`` to any authenticated user. Only meaningful for channels.
-    read_policy: Literal["members", "contacts", "public"] = "members"
     space_id: StrId | None = None
     space_visibility: Literal["space_public", "invite_only"] | None = None
     # Public/discoverable + broadcast metadata.
@@ -79,18 +67,7 @@ class ConversationDocument(TimestampedDocument):
         return self
 
     @before_event(Insert)
-    def _reject_legacy_types(self) -> None:
-        """Block new ``channel``/``thread`` conversations at the persistence boundary.
-
-        Placed on insert rather than in the field's Literal so reads of un-migrated rows
-        keep validating, and so the guard covers every write path (repository included),
-        not just the conversation service.
-        """
-        if self.type in LEGACY_CONVERSATION_TYPES:
-            raise ValueError(
-                f"Cannot create a conversation of type {self.type!r}: "
-                "channels live in the channels collection"
-            )
+    def _validate_write_invariants(self) -> None:
         if self.type == "dm" and len(set(map(str, self.participant_ids))) != 2:
             raise ValueError("DM conversation must have exactly two distinct participants")
 

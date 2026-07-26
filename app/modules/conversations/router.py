@@ -29,7 +29,6 @@ from app.modules.conversations.schemas import (
     BulkInboxStateResult,
     ConversationSendTextRequest,
     ConversationView,
-    CreateChannelRequest,
     CreateGroupRequest,
     CreateDmRequest,
     CreateInviteRequest,
@@ -128,39 +127,6 @@ async def create_group(
         user_id=user.str_id,
         title=body.title,
         participant_ids=body.participant_ids,
-        space_id=body.space_id,
-        space_visibility=body.space_visibility,
-    )
-    data = (
-        await service.views_for_user(user_id=user.str_id, conversations=[conversation])
-    )[0]
-    return ok(request, data=data, status_code=201)
-
-
-@router.post(
-    "/channels",
-    status_code=201,
-    response_model=SuccessResponse[ConversationView],
-    responses=build_error_responses(409),
-    dependencies=[
-        Depends(rate_limit("20/minute", scope="channel_conversation_create"))
-    ],
-)
-async def create_channel(
-    request: Request,
-    body: CreateChannelRequest,
-    user=Depends(require_verified_user),
-    service: ConversationsService = Depends(get_conversations_service),
-):
-    conversation = await service.create_channel_conversation(
-        user_id=user.str_id,
-        title=body.title,
-        participant_ids=body.participant_ids,
-        description=body.description,
-        visibility=body.visibility,
-        posting_policy=body.posting_policy,
-        read_policy=body.read_policy,
-        slug=body.slug,
         space_id=body.space_id,
         space_visibility=body.space_visibility,
     )

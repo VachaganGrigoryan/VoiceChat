@@ -131,29 +131,13 @@ def test_group_conversation_owner_derivation():
     assert group_space.owner.id == "sp_100"
 
 
-# `thread` is gone entirely (unified-messages): threads are message topology, so
-# the type is no longer even readable. `channel` stays until channels re-home.
-@pytest.mark.parametrize("legacy_type", ["channel"])
-def test_legacy_conversation_types_rejected_on_insert(legacy_type):
-    """Blocked below the service layer, so repository writes cannot bypass the contract."""
-    conversation = ConversationDocument(
-        type=legacy_type,
-        participant_ids=["usr_1", "usr_2"],
-        created_by="usr_1",
-    )
-    with pytest.raises(ValueError, match=f"Cannot create a conversation of type '{legacy_type}'"):
-        conversation._reject_legacy_types()
-
-
-def test_legacy_conversation_types_still_readable():
-    """Un-migrated rows must keep validating until downstream changes re-home them."""
-    legacy = ConversationDocument(
-        type="channel",
-        participant_ids=["usr_1", "usr_2"],
-        created_by="usr_1",
-        slug="announcements",
-    )
-    assert legacy.type == "channel"
+def test_channel_is_not_a_conversation_type():
+    with pytest.raises(ValueError, match="Input should be 'dm' or 'group'"):
+        ConversationDocument(
+            type="channel",
+            participant_ids=["usr_1", "usr_2"],
+            created_by="usr_1",
+        )
 
 
 @pytest.mark.parametrize(
@@ -167,7 +151,7 @@ def test_dm_requires_exactly_two_distinct_participants(participant_ids):
         created_by="usr_1",
     )
     with pytest.raises(ValueError, match="exactly two distinct participants"):
-        dm._reject_legacy_types()
+        dm._validate_write_invariants()
 
 
 def test_dm_with_two_distinct_participants_passes_insert_guard():
@@ -176,7 +160,7 @@ def test_dm_with_two_distinct_participants_passes_insert_guard():
         participant_ids=["usr_1", "usr_2"],
         created_by="usr_1",
     )
-    dm._reject_legacy_types()
+    dm._validate_write_invariants()
 
 
 def test_group_conversation_passes_insert_guard():
@@ -186,7 +170,7 @@ def test_group_conversation_passes_insert_guard():
         created_by="usr_1",
         title="Solo for now",
     )
-    group._reject_legacy_types()
+    group._validate_write_invariants()
 
 
 def test_space_defaults_owner_user_id_from_created_by():

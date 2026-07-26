@@ -15,7 +15,7 @@ from app.modules.conversations.service.base import BaseConversationsService
 
 
 class InvitesServiceMixin(BaseConversationsService):
-    """Invite links and join requests for group/channel conversations."""
+    """Invite links and join requests for group conversations."""
 
     async def _require_invite_manager(
         self, *, actor_user_id: str, conversation_id: str, permission: str = MEMBER_INVITE
@@ -29,10 +29,10 @@ class InvitesServiceMixin(BaseConversationsService):
                 message="Conversation not found",
                 status_code=404,
             )
-        if conversation.type not in {"group", "channel"}:
+        if conversation.type != "group":
             raise AppError(
                 code="CONVERSATION_NOT_INVITABLE",
-                message="Only group or channel conversations support invites",
+                message="Only group conversations support invites",
                 status_code=400,
             )
         await self.authorization.require(

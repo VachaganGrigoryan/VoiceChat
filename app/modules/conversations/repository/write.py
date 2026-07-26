@@ -78,51 +78,9 @@ class ConversationsWriteMixin:
         await conversation.insert()
         return conversation
 
-    async def create_channel(
-        self,
-        *,
-        created_by: str,
-        participant_ids: list[str],
-        title: str,
-        description: str | None,
-        visibility: str,
-        posting_policy: str,
-        slug: str | None,
-        read_policy: str = "members",
-        space_id: str | None = None,
-        space_visibility: str | None = None,
-    ) -> ConversationDocument:
-        """Create a ``channel`` conversation. **Unreachable: rejected on insert.**
-
-        ``core-resource-model`` narrowed Conversation to ``dm|group``, so
-        ``ConversationDocument._reject_legacy_types`` raises on insert here. Kept until
-        ``channels-and-profile-feed`` (task 4.4) removes the channel branch outright.
-        """
-        now = datetime.now(UTC)
-        conversation = ConversationDocument(
-            type="channel",
-            participant_ids=participant_ids,
-            created_by=str(created_by),
-            title=title,
-            description=description,
-            visibility=visibility,  # type: ignore[arg-type]
-            posting_policy=posting_policy,  # type: ignore[arg-type]
-            read_policy=read_policy,  # type: ignore[arg-type]
-            slug=slug,
-            space_id=parse_object_id(space_id) if space_id is not None else None,
-            space_visibility=space_visibility,  # type: ignore[arg-type]
-            member_count=len(participant_ids),
-            encryption="none",
-            dm_key=None,
-            created_at=now,
-            updated_at=now,
-        )
-        await conversation.insert()
-        return conversation
-
     async def get_public_by_slug(self, slug: str) -> ConversationDocument | None:
         return await ConversationDocument.find_one(
-            {"slug": slug, "visibility": "public"}
+            {"slug": slug, "visibility": "public", "type": "group"}
         )
 
     async def update_group_title(

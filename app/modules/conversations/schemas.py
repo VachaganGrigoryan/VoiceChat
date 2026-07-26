@@ -11,7 +11,7 @@ from app.modules.realtime.presence.base import PresenceState
 
 ReplyMode = Literal["quote", "thread"]
 
-ConversationType = Literal["dm", "group", "channel"]
+ConversationType = Literal["dm", "group"]
 EncryptionMode = Literal["none", "e2ee"]
 # The name of the RoleDocument a participant holds (resource-authorization).
 # Free-form because roles are data: seeded system roles are "Admin",
@@ -32,7 +32,6 @@ PreviewType = Literal[
 ]
 ConversationVisibility = Literal["private", "public"]
 PostingPolicy = Literal["everyone", "admins"]
-ChannelReadPolicy = Literal["members", "contacts", "public"]
 NotificationLevel = Literal["all", "mentions", "none"]
 
 
@@ -72,7 +71,6 @@ class ConversationView(BaseModel):
     image: dict | None = None
     visibility: ConversationVisibility = "private"
     posting_policy: PostingPolicy = "everyone"
-    read_policy: ChannelReadPolicy = "members"
     space_id: StrId | None = None
     space_visibility: Literal["space_public", "invite_only"] | None = None
     slug: str | None = None
@@ -127,35 +125,12 @@ class CreateGroupRequest(BaseModel):
     space_visibility: Literal["space_public", "invite_only"] | None = None
 
 
-SLUG_PATTERN = r"^[a-z0-9](?:[a-z0-9-]{1,78}[a-z0-9])$"
-
-
-class CreateChannelRequest(BaseModel):
-    """Create a broadcast/public channel conversation."""
-
-    title: str = Field(min_length=1, max_length=80)
-    participant_ids: list[str] = Field(default_factory=list, max_length=100)
-    description: str | None = Field(default=None, max_length=500)
-    visibility: ConversationVisibility = "private"
-    posting_policy: PostingPolicy = "admins"
-    read_policy: ChannelReadPolicy = "members"
-    slug: str | None = Field(default=None, pattern=SLUG_PATTERN)
-    space_id: str | None = None
-    space_visibility: Literal["space_public", "invite_only"] | None = None
-
-    @model_validator(mode="after")
-    def validate_public_slug(self) -> "CreateChannelRequest":
-        if self.visibility == "public" and not self.slug:
-            raise ValueError("slug is required for public conversations")
-        return self
-
-
 class UpdateGroupRequest(BaseModel):
     title: str = Field(min_length=1, max_length=80)
 
 
 class UpdateConversationSettingsRequest(BaseModel):
-    """Whitelisted conversation settings mutations (group/channel, owner/admin)."""
+    """Whitelisted group conversation settings mutations."""
 
     allow_member_polls: bool
 

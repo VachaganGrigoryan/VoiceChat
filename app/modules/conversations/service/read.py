@@ -23,7 +23,7 @@ class ReadConversationsMixin(BaseConversationsService):
         cursor: str | None,
         archived: bool = False,
         folder: str | None = None,
-        conversation_types: Sequence[str] | None = ("dm", "group", "channel"),
+        conversation_types: Sequence[str] | None = ("dm", "group"),
         space_id: str | None = None,
     ) -> tuple[list[ConversationDocument], str | None]:
         if space_id is not None:
@@ -113,14 +113,14 @@ class ReadConversationsMixin(BaseConversationsService):
         """Assert the caller may create a poll in the conversation.
 
         Builds on ``require_can_post`` (membership + posting policy), then adds
-        the poll-specific rule: in ``group``/``channel`` conversations the caller
+        the poll-specific rule: in group conversations the caller
         needs `poll.create`, unless ``settings.allow_member_polls`` is set. A
         ``dm`` allows any participant.
         """
         conversation = await self.require_can_post(
             user_id=user_id, conversation_id=conversation_id
         )
-        if conversation.type not in {"group", "channel"}:
+        if conversation.type != "group":
             return conversation
         if conversation.settings.get("allow_member_polls"):
             return conversation
