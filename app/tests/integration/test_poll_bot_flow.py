@@ -38,9 +38,12 @@ async def _group(inprocess_client, owner_email: str, *member_emails: str):
     return owner, owner_tokens, members, resp.json()["data"]["id"]
 
 
-def _poll_body(conversation_id: str, **overrides) -> dict:
+def _poll_body(
+    container_id: str, *, container_type: str = "conversation", **overrides
+) -> dict:
     body = {
-        "conversation_id": conversation_id,
+        "container_type": container_type,
+        "container_id": container_id,
         "question": "Ship it?",
         "options": [{"id": "yes", "text": "Yes"}, {"id": "no", "text": "No"}],
         "allows_multiple": False,
@@ -76,6 +79,9 @@ async def test_create_poll_is_bot_authored_and_links_message(inprocess_client):
     assert data["message"]["sender_id"] != str(owner["_id"])
     # Message links to the poll (no embedded poll payload).
     assert data["message"]["type"] == "poll"
+    assert data["poll"]["message_id"] == data["message"]["id"]
+    assert data["poll"]["container_type"] == "conversation"
+    assert data["poll"]["container_id"] == conv
     ref = data["message"]["content"]["plaintext"]["poll_ref"]
     assert ref["poll_id"] == data["poll"]["id"]
     assert ref["question"] == "Ship it?"
@@ -86,6 +92,48 @@ async def test_create_poll_is_bot_authored_and_links_message(inprocess_client):
     )
     convo = next(c for c in inbox.json()["data"] if c["id"] == conv)
     assert convo["last_message_preview"]["text"] == "Ship it?"
+
+
+@pytest.mark.asyncio
+async def test_poll_resolves_dm_and_channel_through_message(inprocess_client):
+    owner, owner_tokens = await _create_verified_user_and_tokens(
+        "poll-containers-owner@test.com"
+    )
+    peer, _peer_tokens = await _create_verified_user_and_tokens(
+        "poll-containers-peer@test.com"
+    )
+    await _grant_chat_permission(str(owner["_id"]), str(peer["_id"]))
+
+    dm = await inprocess_client.post(
+        "/conversations",
+        json={"peer_user_id": str(peer["_id"])},
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert dm.status_code == 200, dm.text
+
+    channel = await inprocess_client.post(
+        "/channels",
+        json={"name": "Polls", "slug": "polls"},
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert channel.status_code == 201, channel.text
+
+    containers = (
+        ("conversation", dm.json()["data"]["id"]),
+        ("channel", channel.json()["data"]["id"]),
+    )
+    for container_type, container_id in containers:
+        response = await _create_poll(
+            inprocess_client,
+            owner_tokens,
+            _poll_body(container_id, container_type=container_type),
+        )
+        assert response.status_code == 201, response.text
+        data = response.json()["data"]
+        assert data["poll"]["message_id"] == data["message"]["id"]
+        assert data["poll"]["container_type"] == container_type
+        assert data["poll"]["container_id"] == container_id
+        assert "conversation_id" not in data["poll"]
 
 
 @pytest.mark.asyncio
@@ -124,7 +172,7 @@ async def test_member_cannot_toggle_settings(inprocess_client):
         headers=_auth(member_tokens["access_token"]),
     )
     assert resp.status_code == 403
-    assert resp.json()["error"]["code"] == "CONVERSATION_FORBIDDEN"
+    assert resp.json()["error"]["code"] == "FORBIDDEN"
 
 
 @pytest.mark.asyncio

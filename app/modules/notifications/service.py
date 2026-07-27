@@ -6,6 +6,7 @@ from typing import Any, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.core.errors import AppError
+from app.db.models.notification import NotificationKind, NotificationResourceType
 from app.infra.queue.base import JobQueue
 from app.modules.messages.schemas import MessageDoc
 from app.modules.notifications.repository import NotificationsRepository
@@ -45,8 +46,9 @@ class NotificationsService:
     async def generate_for_message(
         self, *, message: MessageDoc
     ) -> list[GeneratedNotification]:
-        participants = await self.repo.list_conversation_participants(
-            conversation_id=message.conversation_id
+        participants = await self.repo.list_notification_recipients(
+            resource_type=message.container_type,
+            resource_id=message.container_id,
         )
         user_ids = [str(participant.user_id) for participant in participants]
         users = await self.repo.users_by_ids(user_ids)
@@ -80,10 +82,11 @@ class NotificationsService:
             tokens = await self.repo.push_tokens_for_user(user_id=user_id)
             notification = await self.repo.create_notification(
                 user_id=user_id,
-                kind="message",
-                source_type="message",
-                source_id=message.id,
-                conversation_id=message.conversation_id,
+                kind="mention" if mentioned else "message",
+                actor_user_id=str(message.sender_id),
+                resource_type=message.container_type,
+                resource_id=message.container_id,
+                message_id=str(message.id),
                 data={
                     "sender_id": message.sender_id,
                     "message_type": message.type,
@@ -113,18 +116,20 @@ class NotificationsService:
         self,
         *,
         user_id: str,
-        kind: str,
-        source_type: str | None = None,
-        source_id: str | None = None,
-        conversation_id: str | None = None,
+        kind: NotificationKind,
+        actor_user_id: str,
+        resource_type: NotificationResourceType,
+        resource_id: str,
+        message_id: str | None = None,
         data: dict[str, Any] | None = None,
     ) -> NotificationView:
         notification = await self.repo.create_notification(
             user_id=user_id,
             kind=kind,
-            source_type=source_type,
-            source_id=source_id,
-            conversation_id=conversation_id,
+            actor_user_id=actor_user_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            message_id=message_id,
             data=data or {},
         )
         return self._to_notification_view(notification)
@@ -298,13 +303,14 @@ class NotificationsService:
             id=notification.str_id,
             user_id=str(notification.user_id),
             kind=notification.kind,
-            source_type=notification.source_type,
-            source_id=(
-                str(notification.source_id)
-                if notification.source_id is not None
+            actor_user_id=str(notification.actor_user_id),
+            resource_type=notification.resource_type,
+            resource_id=str(notification.resource_id),
+            message_id=(
+                str(notification.message_id)
+                if notification.message_id is not None
                 else None
             ),
-            conversation_id=notification.conversation_id,
             read_at=notification.read_at,
             data=notification.data,
             created_at=notification.created_at,

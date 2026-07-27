@@ -32,7 +32,8 @@ async def save_message(
 ):
     saved = await service.save_message(
         user_id=user.str_id,
-        conversation_id=body.conversation_id,
+        container_type=body.container_type,
+        container_id=body.container_id,
         message_id=body.message_id,
     )
     return ok(request, data=saved, status_code=201)

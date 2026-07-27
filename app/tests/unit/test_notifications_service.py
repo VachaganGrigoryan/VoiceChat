@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import get_args
 
 import pytest
 
+from app.db.models.notification import NotificationKind
 from app.modules.messages.schemas import (
     MessageContent,
     MessageDoc,
@@ -75,7 +77,9 @@ class FakeNotificationsRepository:
         self.push_tokens = push_tokens or {}
         self.created = []
 
-    async def list_conversation_participants(self, *, conversation_id: str):
+    async def list_notification_recipients(
+        self, *, resource_type: str, resource_id: str
+    ):
         return self.participants
 
     async def users_by_ids(self, user_ids: list[str]):
@@ -89,9 +93,10 @@ class FakeNotificationsRepository:
         *,
         user_id: str,
         kind: str,
-        source_type: str | None,
-        source_id: str | None,
-        conversation_id: str | None,
+        actor_user_id: str,
+        resource_type: str,
+        resource_id: str,
+        message_id: str | None,
         data: dict,
     ):
         now = datetime.now(UTC)
@@ -99,9 +104,10 @@ class FakeNotificationsRepository:
             str_id=f"notification-{len(self.created) + 1}",
             user_id=user_id,
             kind=kind,
-            source_type=source_type,
-            source_id=source_id,
-            conversation_id=conversation_id,
+            actor_user_id=actor_user_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            message_id=message_id,
             read_at=None,
             data=data,
             created_at=now,
@@ -144,6 +150,12 @@ async def test_message_notifications_honor_levels_mutes_dnd_keywords_and_sender(
 
     notified_user_ids = {item.notification.user_id for item in generated}
     assert notified_user_ids == {"mentions-user", "keyword-user", "dnd-user"}
+    assert all(
+        item.notification.resource_type == "conversation"
+        and item.notification.resource_id == "conversation-1"
+        and item.notification.message_id == "507f1f77bcf86cd799439011"
+        for item in generated
+    )
     assert "sender" not in notified_user_ids
     assert "mentions-suppressed" not in notified_user_ids
     assert "muted-user" not in notified_user_ids
@@ -177,3 +189,55 @@ async def test_expired_mute_resumes_notifications():
     assert [item.notification.user_id for item in generated] == [
         "expired-muted-user"
     ]
+
+
+@pytest.mark.asyncio
+async def test_generic_targeting_and_unified_kind_vocabulary():
+    service = NotificationsService(
+        repo=FakeNotificationsRepository(participants=[], users={})
+    )
+
+    membership = await service.create_notification(
+        user_id="invitee",
+        kind="membership_invite",
+        actor_user_id="inviter",
+        resource_type="space",
+        resource_id="space-1",
+    )
+    comment = await service.create_notification(
+        user_id="post-author",
+        kind="comment",
+        actor_user_id="commenter",
+        resource_type="channel",
+        resource_id="channel-1",
+        message_id="message-1",
+    )
+
+    assert (
+        membership.kind,
+        membership.actor_user_id,
+        membership.resource_type,
+        membership.resource_id,
+        membership.message_id,
+    ) == ("membership_invite", "inviter", "space", "space-1", None)
+    assert (
+        comment.kind,
+        comment.actor_user_id,
+        comment.resource_type,
+        comment.resource_id,
+        comment.message_id,
+    ) == ("comment", "commenter", "channel", "channel-1", "message-1")
+    assert set(get_args(NotificationKind)) == {
+        "connection_request",
+        "connection_accepted",
+        "follow",
+        "follow_request",
+        "membership_invite",
+        "membership_approved",
+        "message",
+        "mention",
+        "comment",
+        "comment_reply",
+        "thread_reply",
+        "reaction",
+    }

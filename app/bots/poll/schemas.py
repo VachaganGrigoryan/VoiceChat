@@ -4,6 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.db.models import MessageContainerType
 from app.db.models.poll import PollResultsVisibility
 from app.db.object_id import StrId
 from app.modules.messages.schemas import MessageDoc
@@ -15,7 +16,8 @@ class PollOptionInput(BaseModel):
 
 
 class CreatePollRequest(BaseModel):
-    conversation_id: str = Field(min_length=1)
+    container_type: MessageContainerType
+    container_id: str = Field(min_length=1)
     question: str = Field(min_length=1, max_length=500)
     options: list[PollOptionInput] = Field(min_length=2, max_length=10)
     allows_multiple: bool = False
@@ -44,8 +46,9 @@ class PollOptionView(BaseModel):
 
 class PollView(BaseModel):
     id: StrId
-    conversation_id: str
-    message_id: str | None = None
+    container_type: MessageContainerType
+    container_id: str
+    message_id: StrId
     created_by: StrId
     bot_id: StrId
     question: str

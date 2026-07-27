@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.db.models.notification import NotificationKind, NotificationResourceType
 from app.db.object_id import StrId
 
 NotificationLevel = Literal["all", "mentions", "none"]
@@ -14,12 +15,13 @@ PushPlatform = Literal["ios", "android", "web"]
 class NotificationView(BaseModel):
     id: StrId
     user_id: StrId
-    kind: str
-    source_type: str | None = None
-    source_id: StrId | None = None
-    conversation_id: str | None = None
+    kind: NotificationKind
+    actor_user_id: StrId
+    resource_type: NotificationResourceType
+    resource_id: StrId
+    message_id: StrId | None = None
     read_at: datetime | None = None
-    data: dict = Field(default_factory=dict)
+    data: dict[str, object] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
 

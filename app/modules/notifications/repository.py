@@ -6,12 +6,14 @@ from typing import Any
 from pymongo import ReturnDocument
 
 from app.db.models import (
+    MessageContainerType,
     NotificationDocument,
     ParticipantDocument,
     PushTokenDocument,
     RelationshipDocument,
     UserDocument,
 )
+from app.db.models.notification import NotificationKind, NotificationResourceType
 from app.db.repository import BaseRepository
 from app.modules.relationships.compat import to_participant
 from app.modules.notifications.schemas import NotificationLevel, PushPlatform
@@ -20,14 +22,18 @@ from app.modules.notifications.schemas import NotificationLevel, PushPlatform
 class NotificationsRepository(BaseRepository[NotificationDocument]):
     model = NotificationDocument
 
-    async def list_conversation_participants(
-        self, *, conversation_id: str
+    async def list_notification_recipients(
+        self, *, resource_type: MessageContainerType, resource_id: str
     ) -> list[ParticipantDocument]:
+        kinds = ["membership"] if resource_type == "conversation" else [
+            "follow",
+            "membership",
+        ]
         docs = await RelationshipDocument.find(
             {
-                "kind": "membership",
-                "target_type": "conversation",
-                "target_id": str(conversation_id),
+                "kind": {"$in": kinds},
+                "target_type": resource_type,
+                "target_id": str(resource_id),
                 "status": "active",
                 "state.hidden": {"$ne": True},
             }
@@ -43,19 +49,21 @@ class NotificationsRepository(BaseRepository[NotificationDocument]):
         self,
         *,
         user_id: str,
-        kind: str,
-        source_type: str | None,
-        source_id: str | None,
-        conversation_id: str | None,
+        kind: NotificationKind,
+        actor_user_id: str,
+        resource_type: NotificationResourceType,
+        resource_id: str,
+        message_id: str | None,
         data: dict[str, Any],
     ) -> NotificationDocument:
         now = datetime.now(UTC)
         notification = NotificationDocument(
             user_id=str(user_id),
             kind=kind,
-            source_type=source_type,
-            source_id=source_id,
-            conversation_id=conversation_id,
+            actor_user_id=actor_user_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            message_id=message_id,
             data=data,
             created_at=now,
             updated_at=now,

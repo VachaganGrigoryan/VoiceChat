@@ -12,16 +12,13 @@ from app.db.repository import BaseRepository
 class SavedMessagesRepository(BaseRepository[SavedMessageDocument]):
     model = SavedMessageDocument
 
-    async def save(
-        self, *, user_id: str, message_id: str, conversation_id: str
-    ) -> SavedMessageDocument:
+    async def save(self, *, user_id: str, message_id: str) -> SavedMessageDocument:
         now = datetime.now(UTC)
         try:
             raw = await SavedMessageDocument.get_pymongo_collection().find_one_and_update(
                 {"user_id": str(user_id), "message_id": str(message_id)},
                 {
                     "$set": {
-                        "conversation_id": conversation_id,
                         "saved_at": now,
                         "updated_at": now,
                     },

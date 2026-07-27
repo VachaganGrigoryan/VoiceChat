@@ -7,7 +7,7 @@ import pytest
 
 from app.bots.poll.service import PollService, poll_broadcast_payload
 from app.core.errors import AppError
-from app.db.models import PollDocument
+from app.db.models import MessageDocument, PollDocument
 from app.db.models.poll import PollOptionDocument, PollVoteDocument
 from app.modules.realtime.emits import emit_poll_updated
 
@@ -20,7 +20,7 @@ def _svc() -> PollService:
 
 def _poll(**overrides) -> PollDocument:
     data: dict = dict(
-        conversation_id="c1",
+        message_id="m1",
         created_by="creator",
         bot_id="bot",
         question="Q?",
@@ -40,6 +40,18 @@ def _poll(**overrides) -> PollDocument:
 def _vote(user_id: str, *option_ids: str) -> PollVoteDocument:
     return PollVoteDocument(
         user_id=user_id, option_ids=list(option_ids), voted_at=datetime.now(UTC)
+    )
+
+
+def _message() -> MessageDocument:
+    now = datetime.now(UTC)
+    return MessageDocument(
+        container_type="conversation",
+        container_id="c1",
+        sender_id="bot",
+        type="poll",
+        created_at=now,
+        updated_at=now,
     )
 
 
@@ -102,7 +114,7 @@ def test_ensure_open_allows_future_deadline():
 
 def test_always_visible_to_non_voter():
     poll = _poll(results_visibility="always", votes=[_vote("x", "a"), _vote("y", "a")])
-    view = _svc()._to_view(poll, viewer_id="stranger")
+    view = _svc()._to_view(poll, message=_message(), viewer_id="stranger")
     assert view.results_visible is True
     assert {o.id: o.vote_count for o in view.options} == {"a": 2, "b": 0, "c": 0}
     assert view.total_votes == 2
@@ -111,13 +123,13 @@ def test_always_visible_to_non_voter():
 
 def test_after_vote_hidden_before_vote_visible_after():
     poll = _poll(results_visibility="after_vote", votes=[_vote("other", "a")])
-    hidden = _svc()._to_view(poll, viewer_id="me")
+    hidden = _svc()._to_view(poll, message=_message(), viewer_id="me")
     assert hidden.results_visible is False
     assert hidden.total_votes is None
     assert all(o.vote_count is None for o in hidden.options)
 
     poll.votes.append(_vote("me", "b"))
-    shown = _svc()._to_view(poll, viewer_id="me")
+    shown = _svc()._to_view(poll, message=_message(), viewer_id="me")
     assert shown.results_visible is True
     assert shown.my_option_ids == ["b"]
     assert {o.id: o.vote_count for o in shown.options} == {"a": 1, "b": 1, "c": 0}
@@ -125,9 +137,15 @@ def test_after_vote_hidden_before_vote_visible_after():
 
 def test_after_close_hidden_while_open_even_if_voted():
     poll = _poll(results_visibility="after_close", votes=[_vote("me", "a")])
-    assert _svc()._to_view(poll, viewer_id="me").results_visible is False
+    assert (
+        _svc()._to_view(poll, message=_message(), viewer_id="me").results_visible
+        is False
+    )
     poll.closed = True
-    assert _svc()._to_view(poll, viewer_id="me").results_visible is True
+    assert (
+        _svc()._to_view(poll, message=_message(), viewer_id="me").results_visible
+        is True
+    )
 
 
 def test_anonymous_view_exposes_no_voter_identities():
@@ -136,7 +154,9 @@ def test_anonymous_view_exposes_no_voter_identities():
         results_visibility="always",
         votes=[_vote("secret_voter", "a")],
     )
-    view = _svc()._to_view(poll, viewer_id="secret_voter")
+    view = _svc()._to_view(
+        poll, message=_message(), viewer_id="secret_voter"
+    )
     dumped = view.model_dump()
     # Only aggregate counts + the caller's own selection are ever exposed.
     assert "secret_voter" not in str({k: v for k, v in dumped.items() if k != "my_option_ids"})
@@ -149,13 +169,16 @@ def test_anonymous_view_exposes_no_voter_identities():
 
 def test_broadcast_payload_hides_totals_until_globally_visible():
     open_after_vote = _poll(results_visibility="after_vote", votes=[_vote("x", "a")])
-    assert poll_broadcast_payload(open_after_vote)["total_votes"] is None
+    assert (
+        poll_broadcast_payload(open_after_vote, message=_message())["total_votes"]
+        is None
+    )
 
     always = _poll(results_visibility="always", votes=[_vote("x", "a")])
-    assert poll_broadcast_payload(always)["total_votes"] == 1
+    assert poll_broadcast_payload(always, message=_message())["total_votes"] == 1
 
     closed = _poll(results_visibility="after_vote", closed=True, votes=[_vote("x", "a")])
-    payload = poll_broadcast_payload(closed)
+    payload = poll_broadcast_payload(closed, message=_message())
     assert payload["total_votes"] == 1 and payload["closed"] is True
 
 

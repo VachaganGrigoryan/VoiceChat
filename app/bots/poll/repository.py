@@ -21,13 +21,6 @@ class PollRepository(BaseRepository[PollDocument]):
         await poll.insert()
         return poll
 
-    async def set_message_id(
-        self, poll: PollDocument, *, message_id: str
-    ) -> PollDocument:
-        poll.message_id = message_id
-        await poll.save()
-        return poll
-
     async def upsert_vote(
         self, poll: PollDocument, *, user_id: str, option_ids: list[str]
     ) -> PollDocument:

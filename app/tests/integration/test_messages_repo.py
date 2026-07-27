@@ -8,28 +8,26 @@ from app.db.models import CallDocument, MediaDocument
 from app.db.mongo import get_db
 from app.modules.messages.repository import MessagesRepository
 from app.modules.messages.repository.mappers import message_call, message_text
+from app.modules.relationships.service import RelationshipService
 
 
 async def _add_participants(db, conversation_id: str, *user_ids: str) -> None:
-    await db["conversation_participants"].delete_many(
-        {"conversation_id": conversation_id}
+    await db["relationships"].delete_many(
+        {
+            "kind": "membership",
+            "target_type": "conversation",
+            "target_id": conversation_id,
+        }
     )
-    now = datetime.now(UTC)
-    await db["conversation_participants"].insert_many(
-        [
-            {
-                "conversation_id": conversation_id,
-                "user_id": user_id,
-                "role": "member",
-                "joined_at": now,
-                "hidden": False,
-                "muted": False,
-                "created_at": now,
-                "updated_at": now,
-            }
-            for user_id in user_ids
-        ]
-    )
+    relationships = RelationshipService()
+    for user_id in user_ids:
+        await relationships.request(
+            kind="membership",
+            user_id=user_id,
+            target_type="conversation",
+            target_id=conversation_id,
+            status="active",
+        )
 
 
 @pytest.mark.asyncio
@@ -100,7 +98,8 @@ async def test_message_receipts_track_delivered_and_read_counts():
     )
 
     read_summary = await repo.upsert_message_receipt(
-        conversation_id=conversation_id,
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=message.str_id,
         user_id=receiver_id,
         delivered=True,
@@ -111,7 +110,8 @@ async def test_message_receipts_track_delivered_and_read_counts():
     assert read_summary.read_count == 1
 
     delivered_summary = await repo.upsert_message_receipt(
-        conversation_id=conversation_id,
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=message.str_id,
         user_id=receiver_id,
         delivered=True,
@@ -328,6 +328,7 @@ async def test_create_call_message_is_unique_per_call():
 
     call_doc = CallDocument.model_validate({
         "_id": call_oid,
+        "conversation_id": "conversation-call",
         "caller_user_id": caller_id,
         "callee_user_id": callee_id,
         "participant_user_ids": [caller_id, callee_id],

@@ -29,7 +29,8 @@ class UpdateMessagesMixin:
                 code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
             )
         summary = await self.repo.upsert_message_receipt(
-            conversation_id=container_id,
+            container_type=container_type,
+            container_id=container_id,
             message_id=message_id,
             user_id=user_id,
             delivered=True,
@@ -55,7 +56,8 @@ class UpdateMessagesMixin:
                 code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
             )
         summary = await self.repo.upsert_message_receipt(
-            conversation_id=container_id,
+            container_type=container_type,
+            container_id=container_id,
             message_id=message_id,
             user_id=user_id,
             delivered=True,

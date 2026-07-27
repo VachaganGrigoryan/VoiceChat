@@ -39,8 +39,7 @@ class PollDocument(TimestampedDocument):
     chat message only references it via ``poll_ref`` (see ``PlaintextContentDocument``).
     """
 
-    conversation_id: StrId
-    message_id: StrId | None = None
+    message_id: StrId
     created_by: StrId
     bot_id: StrId
     question: str
@@ -58,7 +57,9 @@ class PollDocument(TimestampedDocument):
         name = COL_POLLS
         indexes = [
             IndexModel(
-                [("conversation_id", ASCENDING)], name="ix_polls_conversation"
+                [("message_id", ASCENDING)],
+                unique=True,
+                name="ux_polls_message",
             ),
             # Cheap due-poll lookup for the auto-close poller: only indexes polls
             # still open (mirrors the scheduled-message poller index).

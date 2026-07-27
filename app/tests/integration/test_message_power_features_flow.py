@@ -311,7 +311,11 @@ async def test_saved_messages_are_private_to_the_user(inprocess_client):
 
     saved = await inprocess_client.post(
         "/me/saved-messages",
-        json={"conversation_id": conversation_id, "message_id": message["id"]},
+        json={
+            "container_type": "conversation",
+            "container_id": conversation_id,
+            "message_id": message["id"],
+        },
         headers=_auth(receiver_tokens["access_token"]),
     )
     assert saved.status_code == 201, saved.text

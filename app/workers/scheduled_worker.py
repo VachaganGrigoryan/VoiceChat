@@ -15,10 +15,12 @@ from app.db.mongo import connect_mongo
 from app.modules.conversations.repository import ConversationsRepository
 from app.modules.messages.dependencies import get_messages_service
 from app.modules.messages.emit_helpers import emit_send_result
+from app.modules.messages.repository import MessagesRepository
 from app.modules.messages.service import MessagesService
 from app.modules.notifications.dependencies import get_notifications_service
 from app.modules.notifications.service import NotificationsService
 from app.modules.realtime import emit_poll_updated, emit_to_user
+from app.modules.relationships.repository import RelationshipsRepository
 from app.workers.socket_emitter import create_worker_emitter
 
 log = logging.getLogger("app.scheduled_worker")
@@ -81,24 +83,50 @@ async def close_due_polls(
 ) -> int:
     """Close every poll past its deadline and broadcast the change to participants."""
     repo = repo or PollRepository()
+    messages_repo = MessagesRepository()
+    relationships_repo = RelationshipsRepository()
     reference = now or datetime.now(UTC)
     closed = 0
     while True:
         poll = await repo.claim_due_for_close(now=reference)
         if poll is None:
             break
-        conversation = await ConversationsRepository().get_by_id(
-            str(poll.conversation_id)
-        )
-        participant_ids = (
-            [str(pid) for pid in conversation.participant_ids]
-            if conversation is not None
-            else []
-        )
+        message = await messages_repo.get_by_id(message_id=str(poll.message_id))
+        if message is None:
+            log.warning("auto-closed poll without linked message poll_id=%s", poll.str_id)
+            closed += 1
+            continue
+        if message.container_type == "conversation":
+            conversation = await ConversationsRepository().get_by_id(
+                message.container_id
+            )
+            participant_ids = (
+                [str(pid) for pid in conversation.participant_ids]
+                if conversation is not None
+                else []
+            )
+        else:
+            relationships = [
+                *await relationships_repo.list_for_target(
+                    kind="follow",
+                    target_type="channel",
+                    target_id=message.container_id,
+                    status="active",
+                ),
+                *await relationships_repo.list_for_target(
+                    kind="membership",
+                    target_type="channel",
+                    target_id=message.container_id,
+                    status="active",
+                ),
+            ]
+            participant_ids = list(
+                dict.fromkeys(str(relationship.user_id) for relationship in relationships)
+            )
         await emit_poll_updated(
             sio,
             participant_ids=participant_ids,
-            payload=poll_broadcast_payload(poll),
+            payload=poll_broadcast_payload(poll, message=message),
         )
         closed += 1
     if closed:
