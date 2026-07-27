@@ -91,8 +91,50 @@ class SpaceUpdateRequest(BaseModel):
     settings: dict[str, Any] | None = None
 
 class SpaceChannelView(BaseModel):
+    """A channel owned by a space (§21, §24).
+
+    ``joined`` reports an explicit channel membership, which is distinct from
+    read access: a `members`-visibility channel is readable by any active space
+    member without one (§63).
+    """
+
+    id: str
+    name: str
+    slug: str
+    description: str | None = None
+    kind: Literal["profile", "text", "announcement"] = "text"
+    visibility: Literal["public", "members", "private"] = "public"
+    posting_policy: Literal["owner", "moderators", "members", "everyone"] = "everyone"
+    joined: bool = False
+
+
+class SpaceChannelCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    slug: str = Field(
+        ..., min_length=1, max_length=80, pattern=r"^[a-z0-9](?:[a-z0-9-]{1,78}[a-z0-9])$"
+    )
+    description: str | None = Field(default=None, max_length=500)
+    kind: Literal["text", "announcement"] = "text"
+    visibility: Literal["public", "members", "private"] = "members"
+    posting_policy: Literal["owner", "moderators", "members", "everyone"] = "members"
+    comment_policy: Literal["disabled", "followers", "members", "everyone"] = "members"
+    tags: list[str] = Field(default_factory=list)
+
+
+class SpaceGroupView(BaseModel):
+    """A group conversation owned by a space (§21, §25).
+
+    Participation is always explicit — a space member is not implicitly a
+    participant — so ``joined`` is the authoritative membership signal here.
+    """
+
     id: str
     title: str | None = None
-    description: str | None = None
-    space_visibility: Literal["space_public", "invite_only"] | None = None
+    participant_count: int = 0
     joined: bool = False
+    created_at: datetime
+
+
+class SpaceGroupCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=80)
+    participant_ids: list[str] = Field(default_factory=list)

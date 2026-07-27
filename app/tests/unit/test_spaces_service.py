@@ -113,100 +113,93 @@ async def test_redeem_invite_guard_invitee(service):
     assert exc_info.value.status_code == 403
 
 
+def _channel_doc(str_id: str, name: str, visibility: str) -> MagicMock:
+    """A stand-in ChannelDocument. `name` is a reserved MagicMock kwarg, so it
+    has to be assigned rather than passed to the constructor."""
+    doc = MagicMock(
+        str_id=str_id,
+        slug=name.lower(),
+        description=f"{name} desc",
+        kind="text",
+        visibility=visibility,
+        posting_policy="members",
+    )
+    doc.name = name
+    return doc
+
+
 @pytest.mark.asyncio
 async def test_list_channels(service):
+    """Space channels come from `channels`, filtered by per-channel read access."""
     svc, repo, _ = service
     svc.check_membership = AsyncMock(return_value=True)
-    
-    with patch("app.db.models.ConversationDocument.find") as mock_find:
+    # `visible` passes the authorization gate, `hidden` does not.
+    svc.authorization = AsyncMock()
+    svc.authorization.can = AsyncMock(side_effect=[True, False])
+    svc.relationships.find_edge = AsyncMock(
+        return_value=MagicMock(status="active")
+    )
+
+    with patch("app.modules.spaces.service.ChannelDocument.find") as mock_find:
         mock_query = MagicMock()
-        mock_query.to_list = AsyncMock(return_value=[
-            MagicMock(
-                str_id="c1",
-                title="Channel 1",
-                description="Desc 1",
-                space_visibility="space_public",
-                participant_ids=["user123"]
-            ),
-            MagicMock(
-                str_id="c2",
-                title="Channel 2",
-                description="Desc 2",
-                space_visibility="invite_only",
-                participant_ids=["other_user"]
-            ),
-        ])
+        mock_query.to_list = AsyncMock(
+            return_value=[_channel_doc("c1", "Visible", "members"),
+                          _channel_doc("c2", "Hidden", "private")]
+        )
         mock_find.return_value = mock_query
-        
+
         channels = await svc.list_channels(
             space_id="507f1f77bcf86cd799439011",
             user_id="user123",
         )
-        
-        assert len(channels) == 2
-        assert channels[0].id == "c1"
-        assert channels[0].joined is True
-        assert channels[1].id == "c2"
-        assert channels[1].joined is False
 
-        from app.db.object_id import parse_object_id
-        mock_find.assert_called_once_with({
-            "space_id": parse_object_id("507f1f77bcf86cd799439011"),
-            "type": "channel",
-            "$or": [
-                {"space_visibility": "space_public"},
-                {"participant_ids": "user123"}
-            ]
-        })
+        assert [c.id for c in channels] == ["c1"]
+        assert channels[0].joined is True
+        # `space_id` is a StrId, so the query must use the string form.
+        mock_find.assert_called_once_with({"space_id": "507f1f77bcf86cd799439011"})
 
 
 @pytest.mark.asyncio
 async def test_join_channel_success(service):
     svc, repo, _ = service
     svc.check_membership = AsyncMock(return_value=True)
-    
-    with patch("app.db.models.ConversationDocument.get") as mock_get:
-        conv = MagicMock()
-        conv.type = "channel"
-        conv.space_id = "space123"
-        from app.db.object_id import parse_object_id
-        conv.space_id = parse_object_id("507f1f77bcf86cd799439011")
-        conv.space_visibility = "space_public"
-        mock_get.return_value = conv
-        
-        with patch("app.modules.conversations.repository.ConversationsRepository") as mock_conv_repo_cls:
-            mock_conv_repo = MagicMock()
-            mock_conv_repo.ensure_participant = AsyncMock()
-            mock_conv_repo.add_participant_id = AsyncMock()
-            mock_conv_repo_cls.return_value = mock_conv_repo
-            
-            await svc.join_channel(
-                space_id="507f1f77bcf86cd799439011",
-                conversation_id="507f1f77bcf86cd799439012",
-                user_id="user123",
-            )
-            
-            mock_conv_repo.ensure_participant.assert_called_once()
-            mock_conv_repo.add_participant_id.assert_called_once()
+    svc.relationships.upsert_membership = AsyncMock()
+
+    with patch("app.modules.spaces.service.ChannelDocument.get") as mock_get:
+        channel = MagicMock()
+        channel.str_id = "507f1f77bcf86cd799439012"
+        channel.space_id = "507f1f77bcf86cd799439011"
+        channel.join_policy = "open"
+        mock_get.return_value = channel
+
+        await svc.join_channel(
+            space_id="507f1f77bcf86cd799439011",
+            channel_id="507f1f77bcf86cd799439012",
+            user_id="user123",
+        )
+
+        svc.relationships.upsert_membership.assert_called_once()
+        kwargs = svc.relationships.upsert_membership.call_args.kwargs
+        assert kwargs["target_type"] == "channel"
+        assert kwargs["user_id"] == "user123"
 
 
 @pytest.mark.asyncio
-async def test_join_channel_reject_invite_only(service):
+async def test_join_channel_rejects_non_open_policy(service):
     svc, repo, _ = service
     svc.check_membership = AsyncMock(return_value=True)
-    
-    with patch("app.db.models.ConversationDocument.get") as mock_get:
-        conv = MagicMock()
-        conv.type = "channel"
-        from app.db.object_id import parse_object_id
-        conv.space_id = parse_object_id("507f1f77bcf86cd799439011")
-        conv.space_visibility = "invite_only"
-        mock_get.return_value = conv
-        
+
+    with patch("app.modules.spaces.service.ChannelDocument.get") as mock_get:
+        channel = MagicMock()
+        channel.str_id = "507f1f77bcf86cd799439012"
+        channel.space_id = "507f1f77bcf86cd799439011"
+        channel.join_policy = "invite_only"
+        mock_get.return_value = channel
+
         with pytest.raises(AppError) as exc_info:
             await svc.join_channel(
                 space_id="507f1f77bcf86cd799439011",
-                conversation_id="507f1f77bcf86cd799439012",
+                channel_id="507f1f77bcf86cd799439012",
                 user_id="user123",
             )
         assert exc_info.value.code == "CHANNEL_JOIN_FORBIDDEN"
@@ -214,6 +207,28 @@ async def test_join_channel_reject_invite_only(service):
 
 
 @pytest.mark.asyncio
+async def test_join_channel_rejects_channel_outside_space(service):
+    svc, repo, _ = service
+    svc.check_membership = AsyncMock(return_value=True)
+
+    with patch("app.modules.spaces.service.ChannelDocument.get") as mock_get:
+        channel = MagicMock()
+        channel.str_id = "507f1f77bcf86cd799439012"
+        channel.space_id = "507f1f77bcf86cd799439099"
+        channel.join_policy = "open"
+        mock_get.return_value = channel
+
+        with pytest.raises(AppError) as exc_info:
+            await svc.join_channel(
+                space_id="507f1f77bcf86cd799439011",
+                channel_id="507f1f77bcf86cd799439012",
+                user_id="user123",
+            )
+        assert exc_info.value.code == "CHANNEL_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+
 async def test_update_space_success(service):
     svc, repo, _ = service
     svc._require_can = AsyncMock()

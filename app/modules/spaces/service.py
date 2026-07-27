@@ -6,16 +6,22 @@ from typing import Any, Literal
 
 from app.core.errors import AppError
 from app.db.models import (
+    ChannelDocument,
+    ConversationDocument,
     SpaceDocument,
     InviteLinkDocument,
     JoinRequestDocument,
     RelationshipDocument,
 )
+from app.db.object_id import parse_object_id
 from app.modules.authorization import AuthorizationService
 from app.modules.authorization.permissions import (
+    CHANNEL_CREATE,
+    GROUP_CREATE,
     MEMBER_APPROVE,
     MEMBER_INVITE,
     RESOURCE_MANAGE,
+    RESOURCE_VIEW,
 )
 from app.modules.authorization.roles import ROLE_ADMIN, ROLE_MEMBER
 from app.modules.relationships.repository import RelationshipsRepository
@@ -28,6 +34,7 @@ from app.modules.spaces.schemas import (
     SpaceMemberUserSummary,
     SpaceMemberView,
     SpaceChannelView,
+    SpaceGroupView,
 )
 
 class SpacesService:
@@ -83,7 +90,14 @@ class SpacesService:
 
         # The creator owns the space via `owner_user_id`; Admin is the role
         # that outlives an ownership change (§51).
-        await self.repo.seed_roles(space_id=space.str_id)
+        seeded = await self.repo.seed_roles(space_id=space.str_id)
+        # What a joiner gets when no role is named. Without this a new member
+        # holds an active membership with no permissions, and nothing inherits
+        # to the space's channels or groups (§53, §63).
+        member_role = seeded.get(ROLE_MEMBER)
+        if member_role is not None:
+            space.default_role_ids = [member_role.str_id]
+            await space.save()
         await self.repo.ensure_membership(
             space_id=space.str_id,
             user_id=created_by,
@@ -477,77 +491,185 @@ class SpacesService:
             viewer_role=viewer_role,
         )
 
-    async def list_channels(self, *, space_id: str, user_id: str) -> list[SpaceChannelView]:
-        is_member = await self.check_membership(space_id=space_id, user_id=user_id)
-        if not is_member:
+    async def _require_space_member(self, *, space_id: str, user_id: str) -> None:
+        if not await self.check_membership(space_id=space_id, user_id=user_id):
             raise AppError(
                 code="SPACE_FORBIDDEN",
                 message="Not a member of this space",
                 status_code=403,
             )
 
-        from app.db.models import ConversationDocument
-        from app.db.object_id import parse_object_id
+    async def list_channels(
+        self, *, space_id: str, user_id: str
+    ) -> list[SpaceChannelView]:
+        """Space channels the caller may read (§63).
 
-        sp_id = parse_object_id(space_id)
-        channels = await ConversationDocument.find({
-            "space_id": sp_id,
-            "type": "channel",
-            "$or": [
-                {"space_visibility": "space_public"},
-                {"participant_ids": str(user_id)}
-            ]
-        }).to_list()
+        Visibility is decided per channel by `AuthorizationService.can`, which
+        already encodes the rules this change needs: a `members` channel is
+        readable on space membership alone through parent-scope inheritance,
+        while a `private` one is capped until an explicit channel membership
+        exists. Filtering here rather than in the query keeps one source of
+        truth for access.
+        """
+        await self._require_space_member(space_id=space_id, user_id=user_id)
+
+        # `space_id` is a `StrId`, stored as a string — an ObjectId here never
+        # matches, which is what left the previous implementation dead.
+        channels = await ChannelDocument.find({"space_id": str(space_id)}).to_list()
+
+        views: list[SpaceChannelView] = []
+        for channel in channels:
+            if not await self.authorization.can(
+                user_id, RESOURCE_VIEW, "channel", channel.str_id
+            ):
+                continue
+            membership = await self.relationships.find_edge(
+                kind="membership",
+                user_id=str(user_id),
+                target_type="channel",
+                target_id=channel.str_id,
+            )
+            views.append(
+                SpaceChannelView(
+                    id=channel.str_id,
+                    name=channel.name,
+                    slug=channel.slug,
+                    description=channel.description,
+                    kind=channel.kind,
+                    visibility=channel.visibility,
+                    posting_policy=channel.posting_policy,
+                    joined=membership is not None and membership.status == "active",
+                )
+            )
+        return views
+
+    async def create_channel(
+        self,
+        *,
+        space_id: str,
+        user_id: str,
+        channel_service: Any,
+        name: str,
+        slug: str,
+        description: str | None = None,
+        kind: Literal["text", "announcement"] = "text",
+        visibility: Literal["public", "members", "private"] = "members",
+        posting_policy: Literal[
+            "owner", "moderators", "members", "everyone"
+        ] = "members",
+        comment_policy: Literal[
+            "disabled", "followers", "members", "everyone"
+        ] = "members",
+        tags: list[str] | None = None,
+    ) -> Any:
+        """Create a space-owned channel (§21, §24).
+
+        `channel.create` is a space-scoped permission, so the gate is on the
+        space; the resulting channel carries `owner={type:space}` and
+        `space_id`, which is what makes role inheritance resolve later.
+        """
+        space = await self._require_can(
+            space_id=space_id, user_id=user_id, permission=CHANNEL_CREATE
+        )
+        return await channel_service.create(
+            created_by=str(user_id),
+            name=name,
+            slug=slug,
+            kind=kind,
+            description=description,
+            visibility=visibility,
+            posting_policy=posting_policy,
+            comment_policy=comment_policy,
+            tags=tags or [],
+            owner_type="space",
+            owner_id=space.str_id,
+            space_id=space.str_id,
+        )
+
+    async def list_groups(
+        self, *, space_id: str, user_id: str
+    ) -> list[SpaceGroupView]:
+        """Space-owned groups (§25).
+
+        Unlike channels, participation is never implied by space membership, so
+        this lists the space's groups and reports `joined` per group rather than
+        hiding the ones the caller has not joined.
+        """
+        await self._require_space_member(space_id=space_id, user_id=user_id)
+
+        groups = await ConversationDocument.find(
+            {"space_id": str(space_id), "type": "group"}
+        ).to_list()
 
         return [
-            SpaceChannelView(
-                id=c.str_id,
-                title=c.title,
-                description=c.description,
-                space_visibility=c.space_visibility,
-                joined=str(user_id) in c.participant_ids,
+            SpaceGroupView(
+                id=group.str_id,
+                title=group.title,
+                participant_count=len(group.participant_ids),
+                joined=str(user_id) in {str(pid) for pid in group.participant_ids},
+                created_at=group.created_at,
             )
-            for c in channels
+            for group in groups
         ]
 
-    async def join_channel(self, *, space_id: str, conversation_id: str, user_id: str) -> None:
-        is_member = await self.check_membership(space_id=space_id, user_id=user_id)
-        if not is_member:
-            raise AppError(
-                code="SPACE_FORBIDDEN",
-                message="Not a member of this space",
-                status_code=403,
-            )
+    async def create_group(
+        self,
+        *,
+        space_id: str,
+        user_id: str,
+        conversations_service: Any,
+        title: str,
+        participant_ids: list[str],
+    ) -> SpaceGroupView:
+        """Create a space-owned group (§21, §25)."""
+        space = await self._require_can(
+            space_id=space_id, user_id=user_id, permission=GROUP_CREATE
+        )
+        conversation = await conversations_service.create_group_conversation(
+            user_id=str(user_id),
+            title=title,
+            participant_ids=participant_ids,
+            space_id=space.str_id,
+        )
+        return SpaceGroupView(
+            id=conversation.str_id,
+            title=conversation.title,
+            participant_count=len(conversation.participant_ids),
+            joined=True,
+            created_at=conversation.created_at,
+        )
 
-        from app.db.models import ConversationDocument
-        from app.db.object_id import parse_object_id
+    async def join_channel(self, *, space_id: str, channel_id: str, user_id: str) -> None:
+        """Join a space channel explicitly (§63).
 
-        conv = await ConversationDocument.get(parse_object_id(conversation_id))
-        if conv is None or conv.type != "channel" or getattr(conv, "space_id", None) != parse_object_id(space_id):
+        Only `open` channels are self-joinable; `private` ones require an invite
+        or approval, which is the membership flow rather than this one.
+        """
+        await self._require_space_member(space_id=space_id, user_id=user_id)
+
+        channel = await ChannelDocument.get(parse_object_id(channel_id))
+        if channel is None or str(channel.space_id or "") != str(space_id):
             raise AppError(
-                code="CONVERSATION_NOT_FOUND",
+                code="CHANNEL_NOT_FOUND",
                 message="Channel not found in this space",
                 status_code=404,
             )
 
-        if conv.space_visibility != "space_public":
+        if channel.join_policy != "open":
             raise AppError(
                 code="CHANNEL_JOIN_FORBIDDEN",
-                message="Cannot join an invite-only channel",
+                message="This channel is not open to self-join",
                 status_code=403,
             )
 
-        from app.modules.conversations.repository import ConversationsRepository
-        conv_repo = ConversationsRepository()
-
-        await conv_repo.ensure_participant(
-            conversation_id=conversation_id,
-            user_id=user_id,
-            role=ROLE_MEMBER,
-        )
-        await conv_repo.add_participant_id(
-            conversation_id=conversation_id,
-            user_id=user_id,
+        # No role_ids: channels seed no scope roles, and read for a space
+        # channel resolves through space-role inheritance. The membership row
+        # itself is what `private` visibility checks for (§63).
+        await self.relationships.upsert_membership(
+            user_id=str(user_id),
+            target_type="channel",
+            target_id=channel.str_id,
+            initiated_by=str(user_id),
         )
 
     async def list_members(self, *, space_id: str, user_id: str) -> list[SpaceMemberView]:

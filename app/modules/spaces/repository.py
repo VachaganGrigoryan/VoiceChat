@@ -71,11 +71,11 @@ class SpacesRepository(BaseRepository[SpaceDocument]):
     async def get_by_slug(self, slug: str) -> SpaceDocument | None:
         return await SpaceDocument.find_one({"slug": slug})
 
-    async def seed_roles(self, *, space_id: str) -> None:
+    async def seed_roles(self, *, space_id: str) -> dict[str, Any]:
         """Create the space's default system roles (Admin/Moderator/Member/Guest)."""
         from app.modules.authorization.roles import RoleService
 
-        await RoleService().seed_default_roles(
+        return await RoleService().seed_default_roles(
             scope_type="space", scope_id=space_id
         )
 

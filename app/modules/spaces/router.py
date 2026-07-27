@@ -20,10 +20,18 @@ from app.modules.spaces.schemas import (
     RedeemSpaceInviteResponse,
     CreateSpaceInviteRequest,
     SpaceUpdateRequest,
+    SpaceChannelCreateRequest,
     SpaceChannelView,
+    SpaceGroupCreateRequest,
+    SpaceGroupView,
     SpaceMemberView,
     SpaceUserInviteRequest,
 )
+from app.modules.channels.dependencies import get_channel_service
+from app.modules.channels.schemas import ChannelView
+from app.modules.channels.service import ChannelService
+from app.modules.conversations.dependencies import get_conversations_service
+from app.modules.conversations.service import ConversationsService
 from app.modules.spaces.service import SpacesService
 from app.modules.relationships.schemas import to_relationship_view
 from app.modules.realtime import emit_space_invite
@@ -273,20 +281,89 @@ async def list_channels(
     return ok(request, data=channels)
 
 @router.post(
-    "/{space_id}/channels/{conversation_id}/join",
+    "/{space_id}/channels",
+    status_code=201,
+    response_model=SuccessResponse[ChannelView],
+    dependencies=[Depends(rate_limit("20/minute", scope="space_channel_create"))],
+)
+async def create_channel(
+    request: Request,
+    space_id: str,
+    body: SpaceChannelCreateRequest,
+    user=Depends(require_verified_user),
+    service: SpacesService = Depends(get_spaces_service),
+    channels: ChannelService = Depends(get_channel_service),
+):
+    channel = await service.create_channel(
+        space_id=space_id,
+        user_id=user.str_id,
+        channel_service=channels,
+        name=body.name,
+        slug=body.slug,
+        description=body.description,
+        kind=body.kind,
+        visibility=body.visibility,
+        posting_policy=body.posting_policy,
+        comment_policy=body.comment_policy,
+        tags=body.tags,
+    )
+    return ok(request, data=channel, status_code=201)
+
+
+@router.get(
+    "/{space_id}/groups",
+    response_model=SuccessResponse[list[SpaceGroupView]],
+    dependencies=[Depends(rate_limit("30/minute", scope="space_groups_list"))],
+)
+async def list_groups(
+    request: Request,
+    space_id: str,
+    user=Depends(require_verified_user),
+    service: SpacesService = Depends(get_spaces_service),
+):
+    groups = await service.list_groups(space_id=space_id, user_id=user.str_id)
+    return ok(request, data=groups)
+
+
+@router.post(
+    "/{space_id}/groups",
+    status_code=201,
+    response_model=SuccessResponse[SpaceGroupView],
+    dependencies=[Depends(rate_limit("20/minute", scope="space_group_create"))],
+)
+async def create_group(
+    request: Request,
+    space_id: str,
+    body: SpaceGroupCreateRequest,
+    user=Depends(require_verified_user),
+    service: SpacesService = Depends(get_spaces_service),
+    conversations: ConversationsService = Depends(get_conversations_service),
+):
+    group = await service.create_group(
+        space_id=space_id,
+        user_id=user.str_id,
+        conversations_service=conversations,
+        title=body.title,
+        participant_ids=body.participant_ids,
+    )
+    return ok(request, data=group, status_code=201)
+
+
+@router.post(
+    "/{space_id}/channels/{channel_id}/join",
     status_code=204,
     dependencies=[Depends(rate_limit("20/minute", scope="space_channel_join"))],
 )
 async def join_channel(
     request: Request,
     space_id: str,
-    conversation_id: str,
+    channel_id: str,
     user=Depends(require_verified_user),
     service: SpacesService = Depends(get_spaces_service),
 ):
     await service.join_channel(
         space_id=space_id,
-        conversation_id=conversation_id,
+        channel_id=channel_id,
         user_id=user.str_id,
     )
     return ok(request, data=None, status_code=204)
