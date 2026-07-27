@@ -567,10 +567,16 @@ class SpacesService:
         `channel.create` is a space-scoped permission, so the gate is on the
         space; the resulting channel carries `owner={type:space}` and
         `space_id`, which is what makes role inheritance resolve later.
+
+        `join_policy` is derived from `visibility` rather than defaulted: a
+        `private` channel that stayed self-joinable would let any space member
+        create their own membership, and membership is exactly what grants read
+        on a private channel (§63) — the isolation would be decorative.
         """
         space = await self._require_can(
             space_id=space_id, user_id=user_id, permission=CHANNEL_CREATE
         )
+        join_policy = "invite_only" if visibility == "private" else "open"
         return await channel_service.create(
             created_by=str(user_id),
             name=name,
@@ -578,6 +584,7 @@ class SpacesService:
             kind=kind,
             description=description,
             visibility=visibility,
+            join_policy=join_policy,
             posting_policy=posting_policy,
             comment_policy=comment_policy,
             tags=tags or [],

@@ -12,6 +12,9 @@ from app.core.http import SuccessResponse, ok
 from app.core.http import PaginationMeta, PaginatedResponse, ok_paginated
 from app.core.security import get_current_user_id
 from app.db.models import RelationshipDocument
+from app.modules.authorization import AuthorizationService
+from app.modules.authorization.permissions import MEMBER_INVITE
+from app.modules.authorization.router import get_authorization_service
 from app.modules.relationships.connections import ConnectionService
 from app.modules.relationships.dependencies import (
     get_connection_service,
@@ -383,7 +386,18 @@ def _register_membership_routes(prefix: str) -> None:
         sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
         current_user_id: str = Depends(get_current_user_id),
         service: MembershipService = Depends(get_membership_service),
+        authorization: AuthorizationService = Depends(get_authorization_service),
     ):
+        # Inviting is an authority over the target, not something any
+        # authenticated user may do to any resource. `target_type` is always a
+        # valid `ResourceType`, so one gate covers all three mounts.
+        await authorization.require(
+            current_user_id,
+            MEMBER_INVITE,
+            target_type,
+            target_id,
+            message="Not allowed to invite members to this resource",
+        )
         doc = await service.invite(
             user_id=user_id,
             target_type=target_type,

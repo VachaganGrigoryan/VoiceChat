@@ -195,6 +195,15 @@ class MembershipService:
                 message="Not allowed to accept this membership",
                 status_code=403,
             )
+        # Only an invite is the caller's to accept. A join *request* has the
+        # requester as `user_id` too, so without this check they could accept
+        # their own request and self-activate, bypassing `member.approve`.
+        if doc.initiation != "invite":
+            raise AppError(
+                code="MEMBERSHIP_NOT_INVITED",
+                message="This membership is a join request; it needs approval",
+                status_code=403,
+            )
         return await self.engine.accept(relationship_id=doc.str_id, approved_by=user_id)
 
     async def approve(
