@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from unittest.mock import ANY
 
 import pytest
 
@@ -187,7 +188,7 @@ async def test_get_me_requires_auth(inprocess_client):
 
 
 @pytest.mark.asyncio
-async def test_get_selected_user_profile_allows_accepted_ping(inprocess_client):
+async def test_get_selected_user_profile_allows_active_connection(inprocess_client):
     viewer, viewer_tokens = await _create_verified_user_and_tokens(f"viewer-{uuid.uuid4().hex[:8]}@test.com")
     target, target_tokens = await _create_verified_user_and_tokens(f"target-{uuid.uuid4().hex[:8]}@test.com")
 
@@ -198,7 +199,7 @@ async def test_get_selected_user_profile_allows_accepted_ping(inprocess_client):
         headers={"Authorization": f"Bearer {target_tokens['access_token']}"},
         json={
             "display_name": "Target User",
-            "bio": "Visible through accepted ping",
+            "bio": "Visible through active connection",
         },
     )
     assert update_res.status_code == 200, update_res.text
@@ -217,7 +218,7 @@ async def test_get_selected_user_profile_allows_accepted_ping(inprocess_client):
         "id": str(target["_id"]),
         "username": target["username"],
         "display_name": "Target User",
-        "bio": "Visible through accepted ping",
+        "bio": "Visible through active connection",
         "avatar": None,
         "is_bot": False,
         "status_emoji": None,
@@ -232,10 +233,17 @@ async def test_get_selected_user_profile_allows_accepted_ping(inprocess_client):
         "relationship": {
             "can_ping": False,
             "chat_allowed": True,
-            "ping_status": "accepted",
+            "connection_status": "active",
+            "direction": "outgoing",
+            "relationship_id": ANY,
             "blocked_by_me": False,
             "blocks_me": False,
         },
+        "connection_timestamp": None,
+        "conversation_id": None,
+        "main_channel_id": None,
+        "shared_conversations": [],
+        "shared_spaces": [],
     }
     assert "email" not in data
     assert "is_private" not in data

@@ -15,10 +15,12 @@ def service():
     notifications_service = AsyncMock()
     
     repo.get_membership = AsyncMock()
+    relationships = AsyncMock()
     
     svc = SpacesService(
         repo=repo,
         notifications_service=notifications_service,
+        relationships=relationships,
     )
     return svc, repo, notifications_service
 
@@ -41,8 +43,9 @@ async def test_invite_user_success(service):
     invite_doc.created_by = "owner123"
     invite_doc.expires_at = None
     invite_doc.max_uses = 1
-    invite_doc.use_count = 0
-    invite_doc.requires_approval = False
+    invite_doc.uses = 0
+    invite_doc.approval_required = False
+    invite_doc.role_ids = []
     invite_doc.revoked = False
     invite_doc.invitee_id = "invitee123"
     
@@ -60,9 +63,10 @@ async def test_invite_user_success(service):
     repo.create_invite_link.assert_called_once()
     notifications.create_notification.assert_called_once_with(
         user_id="invitee123",
-        kind="space_invite",
-        source_type="space",
-        source_id="space123",
+        kind="membership_invite",
+        actor_user_id="owner123",
+        resource_type="space",
+        resource_id="space123",
         data={
             "space_id": "space123",
             "space_name": "My Test Space",
@@ -254,7 +258,8 @@ async def test_redeem_invite_success_joined(service):
     invite = MagicMock()
     invite.target_id = "space123"
     invite.invitee_id = "user123"
-    invite.requires_approval = False
+    invite.approval_required = False
+    invite.role_ids = []
     invite.code = "secretcode"
     
     repo.get_invite_by_code.return_value = invite
@@ -276,15 +281,18 @@ async def test_redeem_invite_success_joined(service):
     repo.get_by_id.return_value = space
     repo.consume_invite_use.return_value = invite
     repo.ensure_membership = AsyncMock()
+    membership = MagicMock()
+    membership.status = "active"
+    svc.relationships.find_edge.side_effect = [None, membership]
     
-    status, space_view, req_view = await svc.redeem_invite(
+    status, space_view, returned_membership = await svc.redeem_invite(
         user_id="user123",
         code="secretcode",
     )
     
     assert status == "joined"
     assert space_view.name == "Test Space"
-    assert req_view is None
+    assert returned_membership is membership
     repo.consume_invite_use.assert_called_once_with(code="secretcode")
     repo.ensure_membership.assert_called_once_with(
         space_id="space123",
@@ -300,41 +308,42 @@ async def test_redeem_invite_success_pending(service):
     invite = MagicMock()
     invite.target_id = "space123"
     invite.invitee_id = "user123"
-    invite.requires_approval = True
+    invite.approval_required = True
+    invite.role_ids = []
     invite.code = "secretcode"
     
     repo.get_invite_by_code.return_value = invite
-    repo.get_membership.return_value = None
+    svc.relationships.find_edge.return_value = None
     
     space = MagicMock()
     space.str_id = "space123"
     space.visibility = "public"
     repo.get_by_id.return_value = space
     
-    repo.get_pending_join_request.return_value = None
-    
-    req_doc = MagicMock()
-    req_doc.str_id = "req123"
-    req_doc.space_id = "space123"
-    req_doc.user_id = "user123"
-    req_doc.status = "pending"
-    req_doc.invite_code = "secretcode"
-    req_doc.created_at = datetime.now(UTC)
-    repo.create_join_request.return_value = req_doc
-    
-    status, space_view, req_view = await svc.redeem_invite(
-        user_id="user123",
-        code="secretcode",
-    )
+    repo.consume_invite_use.return_value = invite
+    membership = MagicMock()
+    membership.str_id = "membership123"
+    membership.status = "pending"
+
+    with patch(
+        "app.modules.spaces.service.RelationshipService.request",
+        new=AsyncMock(return_value=membership),
+    ) as request:
+        status, space_view, returned_membership = await svc.redeem_invite(
+            user_id="user123",
+            code="secretcode",
+        )
     
     assert status == "pending"
     assert space_view is None
-    assert req_view.id == "req123"
-    assert req_view.status == "pending"
-    repo.create_join_request.assert_called_once_with(
-        space_id="space123",
+    assert returned_membership is membership
+    request.assert_awaited_once_with(
+        kind="membership",
         user_id="user123",
-        invite_code="secretcode",
+        target_type="space",
+        target_id="space123",
+        status="pending",
+        role_ids=[],
     )
 
 

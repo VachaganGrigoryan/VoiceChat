@@ -23,6 +23,7 @@ from app.modules.channels.schemas import (
 )
 from app.modules.messages.schemas import MessageDoc, ReplyMode
 from app.modules.messages.service import SendMessageResult
+from app.modules.relationships.repository import RelationshipsRepository
 
 
 class MessagesServiceProto(Protocol):
@@ -47,6 +48,15 @@ class MessagesServiceProto(Protocol):
         reply_to_message_id: str | None = None,
     ) -> SendMessageResult: ...
 
+    async def get_message(
+        self,
+        *,
+        container_type: Literal["channel"],
+        container_id: str,
+        message_id: str,
+        user_id: str,
+    ) -> MessageDoc: ...
+
 
 class UsersRepositoryProto(Protocol):
     async def find_by_id(self, user_id: str) -> UserDocument | None: ...
@@ -59,11 +69,13 @@ class ChannelService:
         repo: ChannelsRepository,
         messages: MessagesServiceProto | None = None,
         users: UsersRepositoryProto | None = None,
+        relationships: RelationshipsRepository | None = None,
         authorization: AuthorizationService | None = None,
     ) -> None:
         self.repo = repo
         self.messages = messages
         self.users = users
+        self.relationships = relationships or RelationshipsRepository()
         self.authorization = authorization or AuthorizationService()
 
     async def create(
@@ -241,6 +253,46 @@ class ChannelService:
             reply_to_message_id=reply_to_message_id,
         )
         return result.message
+
+    async def mark_read(
+        self, *, channel_id: str, message_id: str, user_id: str
+    ) -> MessageDoc:
+        channel = await self._get(channel_id)
+        await self.authorization.require(
+            user_id,
+            MESSAGE_READ,
+            "channel",
+            channel.str_id,
+            message="Not allowed to read this channel",
+        )
+        message = await self._require_messages().get_message(
+            container_type="channel",
+            container_id=channel.str_id,
+            message_id=message_id,
+            user_id=user_id,
+        )
+        relationship = await self.relationships.find_edge(
+            kind="membership",
+            user_id=user_id,
+            target_type="channel",
+            target_id=channel.str_id,
+        )
+        if relationship is None:
+            relationship = await self.relationships.find_edge(
+                kind="follow",
+                user_id=user_id,
+                target_type="channel",
+                target_id=channel.str_id,
+            )
+        if relationship is not None:
+            await self.relationships.update_state(
+                relationship_id=relationship.str_id,
+                updates={
+                    "last_read_at": datetime.now(UTC),
+                    "last_read_message_id": message_id,
+                },
+            )
+        return message
 
     async def create_profile_message(
         self,

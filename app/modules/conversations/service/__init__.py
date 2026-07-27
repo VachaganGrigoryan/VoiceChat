@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.modules.conversations.service.base import (
     BaseConversationsService,
-    PingsPermissionProto,
+    ConnectionPermissionProto,
 )
 from app.modules.conversations.service.create import CreateConversationsMixin
 from app.modules.conversations.service.invites import InvitesServiceMixin
@@ -25,5 +25,5 @@ class ConversationsService(
 __all__ = [
     "ConversationsService",
     "BaseConversationsService",
-    "PingsPermissionProto",
+    "ConnectionPermissionProto",
 ]

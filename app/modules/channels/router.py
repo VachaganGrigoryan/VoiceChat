@@ -141,3 +141,22 @@ async def create_channel_message(
         reply_to_message_id=body.reply_to_message_id,
     )
     return ok(request, data=message, status_code=201)
+
+
+@router.post(
+    "/{channel_id}/messages/{message_id}/read",
+    response_model=SuccessResponse[MessageDoc],
+)
+async def mark_channel_message_read(
+    request: Request,
+    channel_id: str,
+    message_id: str,
+    user=Depends(require_verified_user),
+    service: ChannelService = Depends(get_channel_service),
+):
+    message = await service.mark_read(
+        channel_id=channel_id,
+        message_id=message_id,
+        user_id=user.str_id,
+    )
+    return ok(request, data=message)

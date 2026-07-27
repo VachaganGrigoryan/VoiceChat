@@ -20,7 +20,7 @@ from app.modules.users.schemas import (
     UserChannelView,
     UserProfileResponse,
 )
-from app.modules.pings.schemas import ContactExtras, ContactState
+from app.modules.relationships.schemas import ConnectionExtras, ConnectionState
 from app.modules.realtime.presence import PresenceState
 from app.infra.storage import get_storage, storage_key_builder
 
@@ -42,14 +42,14 @@ class PresenceServiceProto(Protocol):
     async def get_state(self, user_id: str) -> PresenceState: ...
 
 
-class PingsServiceProto(Protocol):
-    async def get_contact_state(
+class ConnectionServiceProto(Protocol):
+    async def get_connection_state(
         self, *, viewer_user_id: str, peer_user_id: str
-    ) -> ContactState: ...
+    ) -> ConnectionState: ...
 
-    async def get_contact_extras(
+    async def get_connection_extras(
         self, *, viewer_user_id: str, peer_user_id: str
-    ) -> ContactExtras: ...
+    ) -> ConnectionExtras: ...
 
     async def shares_context(
         self, viewer_user_id: str, peer_user_id: str
@@ -75,12 +75,12 @@ class UsersService:
     def __init__(
         self,
         users: UsersRepository,
-        pings: PingsServiceProto,
+        connections: ConnectionServiceProto,
         presence_service: "PresenceServiceProto | None" = None,
         channels: "ChannelsRepository | None" = None,
     ):
         self.users = users
-        self.pings = pings
+        self.connections = connections
         self.presence_service = presence_service
         self.channels = channels
 
@@ -108,27 +108,31 @@ class UsersService:
             )
 
         if current_user_id != selected_user_id:
-            relationship = await self.pings.get_contact_state(
+            relationship = await self.connections.get_connection_state(
                 viewer_user_id=current_user_id,
                 peer_user_id=selected_user_id,
             )
-            shares_ctx = await self.pings.shares_context(
+            shares_ctx = await self.connections.shares_context(
                 viewer_user_id=current_user_id,
                 peer_user_id=selected_user_id,
             )
             if not isinstance(shares_ctx, bool):
                 shares_ctx = False
         else:
-            relationship = ContactState(
+            relationship = ConnectionState(
                 can_ping=False,
                 chat_allowed=False,
-                ping_status="none",
+                connection_status="none",
             )
             shares_ctx = True
 
-        extras: ContactExtras | None = None
-        if include and "contact_details" in include and relationship.ping_status == "accepted":
-            extras = await self.pings.get_contact_extras(
+        extras: ConnectionExtras | None = None
+        if (
+            include
+            and "contact_details" in include
+            and relationship.connection_status == "active"
+        ):
+            extras = await self.connections.get_connection_extras(
                 viewer_user_id=current_user_id,
                 peer_user_id=selected_user_id,
             )
@@ -415,9 +419,9 @@ class UsersService:
         self,
         user: UserDocument,
         *,
-        relationship: ContactState,
+        relationship: ConnectionState,
         include_private_profile: bool,
-        extras: ContactExtras | None = None,
+        extras: ConnectionExtras | None = None,
         shares_context: bool = False,
     ) -> SelectedUserProfileResponse:
         user = self._without_expired_status(user)

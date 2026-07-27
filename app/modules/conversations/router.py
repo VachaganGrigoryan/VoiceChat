@@ -47,6 +47,7 @@ from app.modules.conversations.schemas import (
     UpdateParticipantRoleRequest,
 )
 from app.modules.conversations.service import ConversationsService
+from app.modules.relationships.schemas import to_relationship_view
 from app.modules.messages.dependencies import get_messages_service
 from app.modules.messages.emit_helpers import emit_send_result
 from app.modules.messages.schemas import (
@@ -167,7 +168,7 @@ async def redeem_invite(
     user=Depends(require_verified_user),
     service: ConversationsService = Depends(get_conversations_service),
 ):
-    status, conversation, join_request = await service.redeem_invite(
+    status, conversation, membership = await service.redeem_invite(
         user_id=user.str_id, code=code
     )
     conversation_view = (
@@ -184,9 +185,7 @@ async def redeem_invite(
         data=RedeemInviteResponse(
             status=status,
             conversation=conversation_view,
-            join_request=(
-                to_join_request_view(join_request) if join_request is not None else None
-            ),
+            membership=to_relationship_view(membership),
         ),
     )
 
@@ -209,7 +208,8 @@ async def create_invite(
         conversation_id=conversation_id,
         expires_at=body.expires_at,
         max_uses=body.max_uses,
-        requires_approval=body.requires_approval,
+        approval_required=body.approval_required,
+        role_ids=body.role_ids,
     )
     return ok(request, data=to_invite_link_view(invite), status_code=201)
 
@@ -1497,16 +1497,18 @@ async def delete_conversation(
     service: ConversationsService = Depends(get_conversations_service),
     messages: MessagesService = Depends(get_messages_service),
 ):
-    peer_id = await service.get_dm_peer(
+    await service.get_dm_peer(
         user_id=user.str_id, conversation_id=conversation_id
     )
-    conv_id, count, ping_deleted = await messages.delete_chat(
+    conv_id, count = await messages.delete_chat(
         container_type="conversation",
-        container_id=conversation_id, user_id=user.str_id, peer_user_id=peer_id
+        container_id=conversation_id,
+        user_id=user.str_id,
     )
     return ok(
         request,
         data=DeleteChatResponse(
-            conversation_id=conv_id, cleared_count=count, ping_deleted=ping_deleted
+            conversation_id=conv_id,
+            cleared_count=count,
         ),
     )

@@ -9,7 +9,7 @@ from app.core.http import ok, SuccessResponse
 from app.core.errors.openapi import build_error_responses
 from app.core.security import get_current_user_id
 from app.modules.auth.repository import UsersRepository
-from app.modules.pings.dependencies import get_pings_service
+from app.modules.relationships.dependencies import get_connection_service
 from app.modules.realtime.presence import get_presence_backend
 from app.modules.realtime.schemas import PresenceStatusResponse
 
@@ -28,7 +28,7 @@ async def online_users(
     presence = get_presence_backend()
     user_ids = await presence.get_online_user_ids()
     users_repo = UsersRepository()
-    pings = get_pings_service()
+    connections = get_connection_service()
     users_by_id = await users_repo.find_by_ids(user_ids)
     visible_user_ids: list[str] = []
     for user_id in user_ids:
@@ -40,7 +40,7 @@ async def online_users(
         if target is None:
             continue
 
-        relationship = await pings.get_contact_state(
+        relationship = await connections.get_connection_state(
             viewer_user_id=current_user_id,
             peer_user_id=user_id,
         )
@@ -63,7 +63,7 @@ async def presence_status(
     requested = user_ids or []
     presence = get_presence_backend()
     users_repo = UsersRepository()
-    pings = get_pings_service()
+    connections = get_connection_service()
     users_by_id = await users_repo.find_by_ids(list(dict.fromkeys(requested)))
 
     data: dict[str, PresenceStatusResponse] = {}
@@ -72,7 +72,7 @@ async def presence_status(
         state = await presence.get_state(user_id)
         can_view_presence = current_user_id == user_id
         if target is not None and not can_view_presence:
-            relationship = await pings.get_contact_state(
+            relationship = await connections.get_connection_state(
                 viewer_user_id=current_user_id,
                 peer_user_id=user_id,
             )

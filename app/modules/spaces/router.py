@@ -25,6 +25,7 @@ from app.modules.spaces.schemas import (
     SpaceUserInviteRequest,
 )
 from app.modules.spaces.service import SpacesService
+from app.modules.relationships.schemas import to_relationship_view
 from app.modules.realtime import emit_space_invite
 
 router = APIRouter(
@@ -102,7 +103,8 @@ async def create_invite(
         space_id=space_id,
         expires_at=body.expires_at,
         max_uses=body.max_uses,
-        requires_approval=body.requires_approval,
+        approval_required=body.approval_required,
+        role_ids=body.role_ids,
     )
     return ok(request, data=invite, status_code=201)
 
@@ -176,7 +178,7 @@ async def redeem_invite(
     user=Depends(require_verified_user),
     service: SpacesService = Depends(get_spaces_service),
 ):
-    status, space, join_request = await service.redeem_invite(
+    status, space, membership = await service.redeem_invite(
         user_id=user.str_id,
         code=code,
     )
@@ -185,7 +187,7 @@ async def redeem_invite(
         data=RedeemSpaceInviteResponse(
             status=status,
             space=space,
-            join_request=join_request,
+            membership=to_relationship_view(membership),
         ),
     )
 

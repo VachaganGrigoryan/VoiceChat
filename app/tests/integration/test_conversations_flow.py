@@ -50,7 +50,7 @@ async def test_create_or_get_dm_is_idempotent(inprocess_client):
     assert first_data["peer_user"]["id"] == str(receiver["_id"])
     assert first_data["peer_user"]["username"] == receiver["username"]
     assert first_data["peer_user"]["chat_allowed"] is True
-    assert first_data["peer_user"]["ping_status"] == "accepted"
+    assert first_data["peer_user"]["connection_status"] == "active"
     assert {item["id"] for item in first_data["participant_users"]} == {
         str(sender["_id"]),
         str(receiver["_id"]),

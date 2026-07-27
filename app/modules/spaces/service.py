@@ -9,6 +9,7 @@ from app.db.models import (
     SpaceDocument,
     InviteLinkDocument,
     JoinRequestDocument,
+    RelationshipDocument,
 )
 from app.modules.authorization import AuthorizationService
 from app.modules.authorization.permissions import (
@@ -17,6 +18,8 @@ from app.modules.authorization.permissions import (
     RESOURCE_MANAGE,
 )
 from app.modules.authorization.roles import ROLE_ADMIN, ROLE_MEMBER
+from app.modules.relationships.repository import RelationshipsRepository
+from app.modules.relationships.service import RelationshipService
 from app.modules.spaces.repository import SpacesRepository
 from app.modules.spaces.schemas import (
     SpaceView,
@@ -33,10 +36,12 @@ class SpacesService:
         repo: SpacesRepository,
         notifications_service: Any | None = None,
         authorization: AuthorizationService | None = None,
+        relationships: RelationshipsRepository | None = None,
     ) -> None:
         self.repo = repo
         self.notifications_service = notifications_service
         self.authorization = authorization or AuthorizationService()
+        self.relationships = relationships or RelationshipsRepository()
 
     async def create_space(
         self,
@@ -166,7 +171,8 @@ class SpacesService:
         space_id: str,
         expires_at: datetime | None = None,
         max_uses: int | None = None,
-        requires_approval: bool = False,
+        approval_required: bool = False,
+        role_ids: list[str] | None = None,
     ) -> SpaceInviteLinkView:
         await self._require_can(
             space_id=space_id, user_id=actor_user_id, permission=MEMBER_INVITE
@@ -177,7 +183,8 @@ class SpacesService:
             code=secrets.token_urlsafe(12),
             expires_at=expires_at,
             max_uses=max_uses,
-            requires_approval=requires_approval,
+            approval_required=approval_required,
+            role_ids=role_ids or [],
         )
         return self._to_invite_view(invite)
 
@@ -215,16 +222,18 @@ class SpacesService:
             code=secrets.token_urlsafe(12),
             expires_at=None,
             max_uses=1,
-            requires_approval=False,
+            approval_required=False,
+            role_ids=[],
             invitee_id=user_id,
         )
 
         if self.notifications_service is not None:
             await self.notifications_service.create_notification(
                 user_id=user_id,
-                kind="space_invite",
-                source_type="space",
-                source_id=space_id,
+                kind="membership_invite",
+                actor_user_id=actor_user_id,
+                resource_type="space",
+                resource_id=space_id,
                 data={
                     "space_id": space_id,
                     "space_name": space.name,
@@ -261,7 +270,7 @@ class SpacesService:
 
     async def redeem_invite(
         self, *, user_id: str, code: str
-    ) -> tuple[Literal["joined", "pending"], SpaceView | None, SpaceJoinRequestView | None]:
+    ) -> tuple[Literal["joined", "pending"], SpaceView | None, RelationshipDocument]:
         invite = await self.repo.get_invite_by_code(code)
         if invite is None:
             raise AppError(
@@ -285,22 +294,16 @@ class SpacesService:
                 status_code=404,
             )
 
-        # Check existing membership
-        existing = await self.repo.get_membership(space_id=space.str_id, user_id=user_id)
-        if existing is not None:
-            return "joined", self._to_view(space), None
-
-        if invite.requires_approval:
-            pending = await self.repo.get_pending_join_request(
-                space_id=space.str_id, user_id=user_id
-            )
-            if pending is None:
-                pending = await self.repo.create_join_request(
-                    space_id=space.str_id,
-                    user_id=user_id,
-                    invite_code=code,
-                )
-            return "pending", None, self._to_join_request_view(pending)
+        existing = await self.relationships.find_edge(
+            kind="membership",
+            user_id=user_id,
+            target_type="space",
+            target_id=space.str_id,
+        )
+        if existing is not None and existing.status == "active":
+            return "joined", self._to_view(space), existing
+        if existing is not None and existing.status == "pending":
+            return "pending", None, existing
 
         consumed = await self.repo.consume_invite_use(code=code)
         if consumed is None:
@@ -310,13 +313,38 @@ class SpacesService:
                 status_code=410,
             )
 
+        if invite.approval_required:
+            pending = await RelationshipService(repo=self.relationships).request(
+                kind="membership",
+                user_id=user_id,
+                target_type="space",
+                target_id=space.str_id,
+                status="pending",
+                role_ids=[str(role_id) for role_id in invite.role_ids],
+            )
+            return "pending", None, pending
+
         await self.repo.ensure_membership(
             space_id=space.str_id,
             user_id=user_id,
             role=ROLE_MEMBER,
         )
-
-        return "joined", self._to_view(space), None
+        membership = await self.relationships.find_edge(
+            kind="membership",
+            user_id=user_id,
+            target_type="space",
+            target_id=space.str_id,
+        )
+        if membership is None:  # pragma: no cover - membership write just succeeded
+            raise AppError(
+                code="MEMBERSHIP_NOT_FOUND",
+                message="Membership was not created",
+                status_code=500,
+            )
+        if invite.role_ids:
+            membership.role_ids = list(invite.role_ids)
+            await membership.save()
+        return "joined", self._to_view(space), membership
 
     async def list_join_requests(
         self, *, actor_user_id: str, space_id: str
@@ -610,8 +638,9 @@ class SpacesService:
             created_by=str(invite.created_by),
             expires_at=invite.expires_at,
             max_uses=invite.max_uses,
-            use_count=invite.use_count,
-            requires_approval=invite.requires_approval,
+            uses=invite.uses,
+            approval_required=invite.approval_required,
+            role_ids=[str(role_id) for role_id in invite.role_ids],
             revoked=invite.revoked,
             invitee_id=getattr(invite, "invitee_id", None),
         )

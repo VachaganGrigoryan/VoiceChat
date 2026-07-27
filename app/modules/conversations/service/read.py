@@ -200,7 +200,7 @@ class ReadConversationsMixin(BaseConversationsService):
             else {}
         )
         presence_by_id = await self._presence_by_id(participant_ids)
-        contact_state_by_peer = await self._contact_state_by_peer(
+        connection_state_by_peer = await self._connection_state_by_peer(
             user_id=user_id,
             peer_ids=[
                 peer_id
@@ -218,7 +218,7 @@ class ReadConversationsMixin(BaseConversationsService):
                     user_id=str(participant_id),
                     user=users_by_id.get(str(participant_id)),
                     presence_state=presence_by_id.get(str(participant_id), "offline"),
-                    contact_state=contact_state_by_peer.get(str(participant_id)),
+                    connection_state=connection_state_by_peer.get(str(participant_id)),
                 )
                 for participant_id in conversation.participant_ids
             ]
@@ -232,7 +232,7 @@ class ReadConversationsMixin(BaseConversationsService):
                     user_id=peer_id,
                     user=users_by_id.get(peer_id),
                     presence_state=presence_by_id.get(peer_id, "offline"),
-                    contact_state=contact_state_by_peer.get(peer_id),
+                    connection_state=connection_state_by_peer.get(peer_id),
                 )
                 if peer_id is not None
                 else None
@@ -268,15 +268,15 @@ class ReadConversationsMixin(BaseConversationsService):
         )
         return dict(zip(user_ids, statuses))
 
-    async def _contact_state_by_peer(
+    async def _connection_state_by_peer(
         self, *, user_id: str, peer_ids: list[str]
     ) -> dict[str, Any]:
-        if not peer_ids or self.pings_service is None:
+        if not peer_ids or self.connection_service is None:
             return {}
         unique_peer_ids = list(dict.fromkeys(peer_ids))
         states = await asyncio.gather(
             *(
-                self.pings_service.get_contact_state(
+                self.connection_service.get_connection_state(
                     viewer_user_id=user_id, peer_user_id=peer_id
                 )
                 for peer_id in unique_peer_ids
@@ -290,11 +290,14 @@ class ReadConversationsMixin(BaseConversationsService):
         user_id: str,
         user: Any | None,
         presence_state: PresenceState,
-        contact_state: Any | None = None,
+        connection_state: Any | None = None,
     ) -> ConversationUserSummary:
         has_presence_access = (
-            contact_state is None
-            or (getattr(contact_state, "chat_allowed", False) and not getattr(contact_state, "blocks_me", False))
+            connection_state is None
+            or (
+                getattr(connection_state, "chat_allowed", False)
+                and not getattr(connection_state, "blocks_me", False)
+            )
         )
         exposed_presence_state: PresenceState = (
             presence_state if has_presence_access else "offline"
@@ -317,9 +320,13 @@ class ReadConversationsMixin(BaseConversationsService):
                 if exposed_presence_state in {"away", "offline"}
                 else None
             ),
-            can_ping=getattr(contact_state, "can_ping", None),
-            chat_allowed=getattr(contact_state, "chat_allowed", None),
-            ping_status=getattr(contact_state, "ping_status", None),
+            can_ping=getattr(connection_state, "can_ping", None),
+            chat_allowed=getattr(connection_state, "chat_allowed", None),
+            connection_status=getattr(
+                connection_state, "connection_status", None
+            ),
+            connection_direction=getattr(connection_state, "direction", None),
+            relationship_id=getattr(connection_state, "relationship_id", None),
             is_ghost=user is None,
         )
 

@@ -11,25 +11,25 @@ from app.modules.conversations.service import ConversationsService
 @pytest.fixture
 def service():
     repo = AsyncMock()
-    pings_service = AsyncMock()
+    connection_service = AsyncMock()
     users_repo = AsyncMock()
     presence_service = AsyncMock()
     
-    # These tests are about the ping gate, not authorization; a stub keeps the
+    # These tests are about the connection gate, not authorization; a stub keeps the
     # `AuthorizationService.can` step from short-circuiting them.
     svc = ConversationsService(
         repo=repo,
-        pings_service=pings_service,
+        connection_service=connection_service,
         users_repo=users_repo,
         presence_service=presence_service,
         authorization=AsyncMock(),
     )
-    return svc, repo, pings_service
+    return svc, repo, connection_service
 
 
 @pytest.mark.asyncio
-async def test_create_group_conversation_bypasses_ping_with_space_id(service):
-    svc, repo, pings_service = service
+async def test_create_group_conversation_bypasses_connection_gate_with_space_id(service):
+    svc, repo, connection_service = service
     
     # Mock space membership lookup (a relationship, kind=membership)
     with patch(
@@ -54,17 +54,17 @@ async def test_create_group_conversation_bypasses_ping_with_space_id(service):
         )
         
         # _ensure_can_message should NOT have been called
-        pings_service.ensure_can_message.assert_not_called()
+        connection_service.ensure_can_message.assert_not_called()
         repo.create_group.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_create_group_conversation_enforces_ping_without_space_id(service):
-    svc, repo, pings_service = service
+async def test_create_group_conversation_enforces_connection_without_space_id(service):
+    svc, repo, connection_service = service
     
-    # Mock ensure_can_message to raise error (simulating no accepted ping)
-    pings_service.ensure_can_message.side_effect = AppError(
-        code="PING_REQUIRED", message="Ping required", status_code=403
+    # Mock ensure_can_message to raise error (simulating no active connection)
+    connection_service.ensure_can_message.side_effect = AppError(
+        code="CONNECTION_REQUIRED", message="Connection required", status_code=403
     )
     
     with pytest.raises(AppError) as exc_info:
@@ -75,15 +75,15 @@ async def test_create_group_conversation_enforces_ping_without_space_id(service)
             space_id=None,
         )
     
-    assert exc_info.value.code == "PING_REQUIRED"
-    pings_service.ensure_can_message.assert_called_once_with(
+    assert exc_info.value.code == "CONNECTION_REQUIRED"
+    connection_service.ensure_can_message.assert_called_once_with(
         sender_id="user1", receiver_id="user2"
     )
 
 
 @pytest.mark.asyncio
-async def test_add_group_members_bypasses_ping_for_space_members(service):
-    svc, repo, pings_service = service
+async def test_add_group_members_bypasses_connection_for_space_members(service):
+    svc, repo, connection_service = service
     
     # Mock require_actor_role
     svc._require_actor_role = AsyncMock()
@@ -98,7 +98,10 @@ async def test_add_group_members_bypasses_ping_for_space_members(service):
     with patch(
         "app.modules.spaces.repository.find_active_space_membership",
         new_callable=AsyncMock,
-    ) as mock_find_member:
+    ) as mock_find_member, patch(
+        "app.db.models.AuditLogDocument.insert",
+        new_callable=AsyncMock,
+    ):
         # User is in space
         mock_find_member.return_value = MagicMock()
         
@@ -109,7 +112,7 @@ async def test_add_group_members_bypasses_ping_for_space_members(service):
         )
         
         # ensure_can_message should be bypassed
-        pings_service.ensure_can_message.assert_not_called()
+        connection_service.ensure_can_message.assert_not_called()
         repo.ensure_participant.assert_called_once_with(
             conversation_id="conv123",
             user_id="user2",
@@ -118,8 +121,8 @@ async def test_add_group_members_bypasses_ping_for_space_members(service):
 
 
 @pytest.mark.asyncio
-async def test_add_group_members_enforces_ping_for_non_space_members(service):
-    svc, repo, pings_service = service
+async def test_add_group_members_enforces_connection_for_non_space_members(service):
+    svc, repo, connection_service = service
     
     svc._require_actor_role = AsyncMock()
     
@@ -129,8 +132,8 @@ async def test_add_group_members_enforces_ping_for_non_space_members(service):
     conversation.type = "group"
     repo.get_for_participant.return_value = conversation
     
-    pings_service.ensure_can_message.side_effect = AppError(
-        code="PING_REQUIRED", message="Ping required", status_code=403
+    connection_service.ensure_can_message.side_effect = AppError(
+        code="CONNECTION_REQUIRED", message="Connection required", status_code=403
     )
     
     with patch(
@@ -147,7 +150,7 @@ async def test_add_group_members_enforces_ping_for_non_space_members(service):
                 participant_ids=["user2"],
             )
         
-        assert exc_info.value.code == "PING_REQUIRED"
-        pings_service.ensure_can_message.assert_called_once_with(
+        assert exc_info.value.code == "CONNECTION_REQUIRED"
+        connection_service.ensure_can_message.assert_called_once_with(
             sender_id="owner1", receiver_id="user2"
         )

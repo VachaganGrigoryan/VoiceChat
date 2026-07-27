@@ -20,7 +20,7 @@ from app.modules.feeds.dependencies import get_feeds_service
 from app.modules.feeds.schemas import FeedPostView
 from app.modules.feeds.service import FeedService
 from app.modules.messages.schemas import MessageDoc
-from app.modules.pings.dependencies import get_pings_service
+from app.modules.relationships.dependencies import get_connection_service
 from app.modules.realtime.presence.factory import get_presence_backend
 from app.modules.channels.repository import ChannelsRepository
 from app.modules.users.schemas import (
@@ -45,7 +45,7 @@ router = APIRouter(
 def get_users_service() -> UsersService:
     return UsersService(
         UsersRepository(),
-        get_pings_service(),
+        get_connection_service(),
         get_presence_backend(),
         ChannelsRepository(),
     )

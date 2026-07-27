@@ -154,17 +154,9 @@ class DeleteMessagesMixin:
         container_type: MessageContainerType,
         container_id: str,
         user_id: str,
-        peer_user_id: str | None = None,
-    ) -> tuple[str, int, bool]:
-        cleared_id, count = await self._clear_container_for_user(
+    ) -> tuple[str, int]:
+        return await self._clear_container_for_user(
             container_type=container_type,
             container_id=container_id,
             user_id=user_id,
         )
-        ping_deleted = False
-        if self.pings_service is not None and peer_user_id is not None:
-            ping_deleted = await self.pings_service.delete_ping_for_pair(
-                user_id=user_id,
-                peer_user_id=peer_user_id,
-            )
-        return cleared_id, count, ping_deleted

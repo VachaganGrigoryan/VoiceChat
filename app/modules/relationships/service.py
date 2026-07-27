@@ -108,6 +108,7 @@ class RelationshipService:
                 reopened = await self.repo.reopen(
                     relationship_id=existing.str_id,
                     user_id=user_id,
+                    target_id=target_id,
                     initiated_by=initiated_by,
                     initiation=initiation,
                     status=status,

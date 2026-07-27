@@ -8,10 +8,13 @@ from app.db.models import (
     InviteLinkDocument,
     JoinRequestDocument,
     ParticipantDocument,
+    RelationshipDocument,
 )
 from app.modules.authorization.permissions import MEMBER_APPROVE, MEMBER_INVITE
 from app.modules.authorization.roles import ROLE_MEMBER
 from app.modules.conversations.service.base import BaseConversationsService
+from app.modules.relationships.repository import RelationshipsRepository
+from app.modules.relationships.service import RelationshipService
 
 
 class InvitesServiceMixin(BaseConversationsService):
@@ -51,7 +54,8 @@ class InvitesServiceMixin(BaseConversationsService):
         conversation_id: str,
         expires_at=None,
         max_uses: int | None = None,
-        requires_approval: bool = False,
+        approval_required: bool = False,
+        role_ids: list[str] | None = None,
     ) -> InviteLinkDocument:
         conversation = await self._require_invite_manager(
             actor_user_id=actor_user_id, conversation_id=conversation_id
@@ -62,7 +66,8 @@ class InvitesServiceMixin(BaseConversationsService):
             code=secrets.token_urlsafe(12),
             expires_at=expires_at,
             max_uses=max_uses,
-            requires_approval=requires_approval,
+            approval_required=approval_required,
+            role_ids=role_ids or [],
         )
 
     async def list_invites(
@@ -92,11 +97,11 @@ class InvitesServiceMixin(BaseConversationsService):
 
     async def redeem_invite(
         self, *, user_id: str, code: str
-    ) -> tuple[str, ConversationDocument | None, JoinRequestDocument | None]:
+    ) -> tuple[str, ConversationDocument | None, RelationshipDocument]:
         """Redeem an invite code.
 
-        Returns ``(status, conversation, join_request)`` where status is
-        ``"joined"`` (participant added) or ``"pending"`` (approval required).
+        Returns ``(status, conversation, membership)``. The membership is active
+        for open invites and pending when approval is required.
         """
         invite = await self.repo.get_invite_by_code(code)
         if invite is None or invite.target_type != "conversation":
@@ -112,25 +117,17 @@ class InvitesServiceMixin(BaseConversationsService):
             )
 
         # Already a member: idempotent success without consuming a use.
-        existing = await self.repo.get_participant(
-            conversation_id=conversation.str_id, user_id=user_id
+        relationships = RelationshipsRepository()
+        existing = await relationships.find_edge(
+            kind="membership",
+            user_id=user_id,
+            target_type="conversation",
+            target_id=conversation.str_id,
         )
-        if existing is not None and str(user_id) in {
-            str(pid) for pid in conversation.participant_ids
-        }:
-            return "joined", conversation, None
-
-        if invite.requires_approval:
-            pending = await self.repo.get_pending_join_request(
-                conversation_id=conversation.str_id, user_id=user_id
-            )
-            if pending is None:
-                pending = await self.repo.create_join_request(
-                    conversation_id=conversation.str_id,
-                    user_id=user_id,
-                    invite_code=code,
-                )
-            return "pending", None, pending
+        if existing is not None and existing.status == "active":
+            return "joined", conversation, existing
+        if existing is not None and existing.status == "pending":
+            return "pending", None, existing
 
         consumed = await self.repo.consume_invite_use(code=code)
         if consumed is None:
@@ -139,13 +136,40 @@ class InvitesServiceMixin(BaseConversationsService):
                 message="Invite link is revoked, expired, or fully used",
                 status_code=410,
             )
+
+        if invite.approval_required:
+            pending = await RelationshipService(repo=relationships).request(
+                kind="membership",
+                user_id=user_id,
+                target_type="conversation",
+                target_id=conversation.str_id,
+                status="pending",
+                role_ids=[str(role_id) for role_id in invite.role_ids],
+            )
+            return "pending", None, pending
+
         await self._add_member(
             conversation_id=conversation.str_id,
             user_id=user_id,
             invited_by=str(invite.created_by),
         )
+        membership = await relationships.find_edge(
+            kind="membership",
+            user_id=user_id,
+            target_type="conversation",
+            target_id=conversation.str_id,
+        )
+        if membership is None:  # pragma: no cover - membership write just succeeded
+            raise AppError(
+                code="MEMBERSHIP_NOT_FOUND",
+                message="Membership was not created",
+                status_code=500,
+            )
+        if invite.role_ids:
+            membership.role_ids = list(invite.role_ids)
+            await membership.save()
         refreshed = await self.repo.get_by_id(conversation.str_id)
-        return "joined", refreshed, None
+        return "joined", refreshed, membership
 
     async def list_join_requests(
         self, *, actor_user_id: str, conversation_id: str

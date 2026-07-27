@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.db.mongo import get_db
 from app.tests.integration.test_realtime_socket import (
     _create_verified_user_and_tokens,
     _grant_chat_permission,
@@ -45,7 +46,7 @@ async def test_create_and_redeem_invite_joins_directly(inprocess_client):
     )
     assert invite.status_code == 201, invite.text
     code = invite.json()["data"]["code"]
-    assert invite.json()["data"]["use_count"] == 0
+    assert invite.json()["data"]["uses"] == 0
 
     redeem = await inprocess_client.post(
         f"/conversations/invites/{code}/redeem",
@@ -54,6 +55,10 @@ async def test_create_and_redeem_invite_joins_directly(inprocess_client):
     assert redeem.status_code == 200, redeem.text
     data = redeem.json()["data"]
     assert data["status"] == "joined"
+    assert data["membership"]["kind"] == "membership"
+    assert data["membership"]["status"] == "active"
+    assert data["membership"]["target_type"] == "conversation"
+    assert data["membership"]["target_id"] == conversation_id
     assert data["conversation"]["id"] == conversation_id
     assert str(joiner["_id"]) in data["conversation"]["participant_ids"]
     # owner + seed peer + joiner
@@ -67,14 +72,14 @@ async def test_create_and_redeem_invite_joins_directly(inprocess_client):
 
 
 @pytest.mark.asyncio
-async def test_invite_requires_approval_creates_join_request(inprocess_client):
+async def test_invite_requires_approval_creates_pending_membership(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("inv-o2@test.com")
     joiner, joiner_tokens = await _create_verified_user_and_tokens("inv-j2@test.com")
     conversation_id = await _make_group(inprocess_client, owner, owner_tokens)
 
     invite = await inprocess_client.post(
         f"/conversations/{conversation_id}/invites",
-        json={"requires_approval": True},
+        json={"approval_required": True},
         headers=_auth(owner_tokens["access_token"]),
     )
     code = invite.json()["data"]["code"]
@@ -84,9 +89,15 @@ async def test_invite_requires_approval_creates_join_request(inprocess_client):
         headers=_auth(joiner_tokens["access_token"]),
     )
     assert redeem.status_code == 200, redeem.text
-    assert redeem.json()["data"]["status"] == "pending"
-    assert redeem.json()["data"]["conversation"] is None
-    request_id = redeem.json()["data"]["join_request"]["id"]
+    data = redeem.json()["data"]
+    assert data["status"] == "pending"
+    assert data["conversation"] is None
+    assert data["membership"]["kind"] == "membership"
+    assert data["membership"]["status"] == "pending"
+    assert data["membership"]["target_type"] == "conversation"
+    assert data["membership"]["target_id"] == conversation_id
+    request_id = data["membership"]["id"]
+    assert "join_requests" not in await get_db().list_collection_names()
 
     # Owner sees the pending request.
     listing = await inprocess_client.get(
@@ -118,7 +129,7 @@ async def test_reject_join_request(inprocess_client):
 
     invite = await inprocess_client.post(
         f"/conversations/{conversation_id}/invites",
-        json={"requires_approval": True},
+        json={"approval_required": True},
         headers=_auth(owner_tokens["access_token"]),
     )
     code = invite.json()["data"]["code"]
@@ -126,7 +137,7 @@ async def test_reject_join_request(inprocess_client):
         f"/conversations/invites/{code}/redeem",
         headers=_auth(joiner_tokens["access_token"]),
     )
-    request_id = redeem.json()["data"]["join_request"]["id"]
+    request_id = redeem.json()["data"]["membership"]["id"]
 
     reject = await inprocess_client.post(
         f"/conversations/{conversation_id}/join-requests/{request_id}/reject",

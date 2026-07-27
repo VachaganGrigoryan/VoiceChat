@@ -4,6 +4,9 @@ from datetime import datetime
 from typing import Any, Literal
 from pydantic import BaseModel, Field
 
+from app.db.object_id import StrId
+from app.modules.relationships.schemas import RelationshipView
+
 class SpaceCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
     slug: str = Field(..., min_length=1, max_length=80, pattern=r"^[a-z0-9](?:[a-z0-9-]{1,78}[a-z0-9])$")
@@ -47,7 +50,8 @@ class SpaceMemberView(BaseModel):
 class CreateSpaceInviteRequest(BaseModel):
     expires_at: datetime | None = None
     max_uses: int | None = Field(default=None, ge=1)
-    requires_approval: bool = False
+    approval_required: bool = False
+    role_ids: list[str] = Field(default_factory=list)
 
 class SpaceInviteLinkView(BaseModel):
     id: str
@@ -57,8 +61,9 @@ class SpaceInviteLinkView(BaseModel):
     created_by: str
     expires_at: datetime | None
     max_uses: int | None
-    use_count: int
-    requires_approval: bool
+    uses: int
+    approval_required: bool
+    role_ids: list[StrId] = Field(default_factory=list)
     revoked: bool
     invitee_id: str | None = None
 
@@ -78,7 +83,7 @@ class SpaceJoinRequestView(BaseModel):
 class RedeemSpaceInviteResponse(BaseModel):
     status: Literal["joined", "pending"]
     space: SpaceView | None = None
-    join_request: SpaceJoinRequestView | None = None
+    membership: RelationshipView
 
 class SpaceUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=80)

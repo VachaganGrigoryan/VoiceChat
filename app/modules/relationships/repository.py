@@ -6,6 +6,7 @@ from typing import Any
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
+from app.core.pagination.cursor import decode_cursor, encode_cursor
 from app.core.errors import AppError
 from app.db.models import RelationshipDocument
 from app.db.models.relationship import (
@@ -112,6 +113,61 @@ class RelationshipsRepository(BaseRepository[RelationshipDocument]):
         ).to_list()
         return {doc.pair_id: doc for doc in docs if doc.pair_id}
 
+    async def list_connections_page(
+        self,
+        *,
+        user_id: str,
+        status: RelationshipStatus,
+        direction: str | None,
+        limit: int,
+        cursor: str | None,
+    ) -> tuple[list[RelationshipDocument], str | None]:
+        query: dict[str, Any] = {
+            "kind": "connection",
+            "status": status,
+        }
+        if direction == "incoming":
+            query["target_id"] = str(user_id)
+        elif direction == "outgoing":
+            query["user_id"] = str(user_id)
+        else:
+            query["$or"] = [
+                {"user_id": str(user_id)},
+                {"target_id": str(user_id)},
+            ]
+
+        if cursor:
+            payload = decode_cursor(cursor, required_fields={"updated_at", "id"})
+            updated_at = payload["updated_at"]
+            object_id = _oid(payload["id"])
+            cursor_query = {
+                "$or": [
+                    {"updated_at": {"$lt": updated_at}},
+                    {"updated_at": updated_at, "_id": {"$lt": object_id}},
+                ]
+            }
+            if "$or" in query:
+                participant_query = query.pop("$or")
+                query["$and"] = [
+                    {"$or": participant_query},
+                    cursor_query,
+                ]
+            else:
+                query.update(cursor_query)
+
+        docs = (
+            await RelationshipDocument.find(query)
+            .sort("-updated_at", "-_id")
+            .limit(limit + 1)
+            .to_list()
+        )
+        next_cursor = None
+        if len(docs) > limit:
+            last = docs[limit - 1]
+            next_cursor = encode_cursor(updated_at=last.updated_at, id=last.str_id)
+            docs = docs[:limit]
+        return docs, next_cursor
+
     async def list_for_user(
         self,
         *,
@@ -202,6 +258,7 @@ class RelationshipsRepository(BaseRepository[RelationshipDocument]):
         *,
         relationship_id: str,
         user_id: str,
+        target_id: str,
         initiated_by: str,
         initiation: RelationshipInitiation,
         status: RelationshipStatus,
@@ -219,6 +276,7 @@ class RelationshipsRepository(BaseRepository[RelationshipDocument]):
             {
                 "$set": {
                     "user_id": str(user_id),
+                    "target_id": str(target_id),
                     "status": status,
                     "initiation": initiation,
                     "initiated_by": str(initiated_by),

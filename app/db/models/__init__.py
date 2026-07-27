@@ -40,7 +40,6 @@ from app.db.models.message_receipt import MessageReceiptDocument
 from app.db.models.notification import NotificationDocument
 from app.db.models.participant import ParticipantDocument
 from app.db.models.passkey import PasskeyChallengeDocument, PasskeyDocument
-from app.db.models.ping import PingDocument
 from app.db.models.poll import (
     PollDocument,
     PollOptionDocument,
@@ -75,7 +74,6 @@ DOCUMENT_MODELS: list[type[Document]] = [
     UserDocument,
     PasskeyDocument,
     PasskeyChallengeDocument,
-    PingDocument,
     RelationshipDocument,
     RoleDocument,
     CallDocument,
@@ -83,13 +81,10 @@ DOCUMENT_MODELS: list[type[Document]] = [
     MessageDocument,
     MessageReceiptDocument,
     ConversationDocument,
-    ParticipantDocument,
     DeviceDocument,
     DevicePreKeyDocument,
     SpaceDocument,
-    SpaceMemberDocument,
     InviteLinkDocument,
-    JoinRequestDocument,
     BlockDocument,
     PushTokenDocument,
     SavedMessageDocument,
@@ -132,7 +127,6 @@ __all__ = [
     "ParticipantDocument",
     "PasskeyChallengeDocument",
     "PasskeyDocument",
-    "PingDocument",
     "PlaintextContentDocument",
     "PollDocument",
     "PollOptionDocument",

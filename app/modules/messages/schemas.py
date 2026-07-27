@@ -294,4 +294,3 @@ class ClearChatResponse(BaseModel):
 class DeleteChatResponse(BaseModel):
     conversation_id: str
     cleared_count: int
-    ping_deleted: bool

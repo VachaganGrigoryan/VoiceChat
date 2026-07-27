@@ -29,7 +29,7 @@ async def test_contacts_include_existing_dm_conversation(inprocess_client):
     conversation_id = conversation_res.json()["data"]["id"]
 
     contacts_res = await inprocess_client.get(
-        "/pings/contacts",
+        "/connections",
         headers={"Authorization": f"Bearer {user_tokens['access_token']}"},
     )
     assert contacts_res.status_code == 200, contacts_res.text
@@ -50,11 +50,10 @@ async def test_blocked_users_are_excluded_from_discovery_search(inprocess_client
     )
 
     block_res = await inprocess_client.post(
-        "/pings/block",
+        f"/blocks/{viewer['_id']}",
         headers={"Authorization": f"Bearer {target_tokens['access_token']}"},
-        json={"peer_user_id": str(viewer["_id"])},
     )
-    assert block_res.status_code == 200, block_res.text
+    assert block_res.status_code == 201, block_res.text
 
     search_res = await inprocess_client.get(
         "/discovery/users/search",
@@ -84,11 +83,10 @@ async def test_block_prevents_direct_message_send(inprocess_client):
     conversation_id = conversation_res.json()["data"]["id"]
 
     block_res = await inprocess_client.post(
-        "/pings/block",
+        f"/blocks/{sender['_id']}",
         headers={"Authorization": f"Bearer {target_tokens['access_token']}"},
-        json={"peer_user_id": str(sender["_id"])},
     )
-    assert block_res.status_code == 200, block_res.text
+    assert block_res.status_code == 201, block_res.text
 
     message_res = await inprocess_client.post(
         f"/conversations/{conversation_id}/messages/text",

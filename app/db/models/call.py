@@ -13,6 +13,7 @@ from app.db.object_id import StrId
 
 
 class CallDocument(BaseDocument):
+    conversation_id: StrId
     caller_user_id: StrId
     callee_user_id: StrId
     participant_user_ids: list[StrId] = Field(min_length=2, max_length=2)
@@ -46,6 +47,10 @@ class CallDocument(BaseDocument):
     class Settings:
         name = COL_CALLS
         indexes = [
+            IndexModel(
+                [("conversation_id", ASCENDING), ("created_at", DESCENDING)],
+                name="ix_calls_conversation_created_at_desc",
+            ),
             IndexModel(
                 [("participant_user_ids", ASCENDING)],
                 unique=True,

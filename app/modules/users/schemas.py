@@ -6,8 +6,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.db.object_id import StrId
-from app.modules.pings.schemas import (
-    ContactState,
+from app.modules.relationships.schemas import (
+    ConnectionState,
     SharedConversationSummary,
     SharedSpaceSummary,
 )
@@ -61,7 +61,7 @@ class SelectedUserProfileResponse(BaseModel):
     presence_state: PresenceState = "offline"
     last_seen_at: datetime | None = None
     profile_visibility: Literal["full", "limited"] = "full"
-    relationship: ContactState
+    relationship: ConnectionState
     # Contact extras, populated only when requested via `include=contact_details`
     # and the viewer has an accepted contact relationship with this user.
     connection_timestamp: datetime | None = None

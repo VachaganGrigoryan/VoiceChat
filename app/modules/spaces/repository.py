@@ -153,7 +153,8 @@ class SpacesRepository(BaseRepository[SpaceDocument]):
         code: str,
         expires_at: datetime | None,
         max_uses: int | None,
-        requires_approval: bool,
+        approval_required: bool,
+        role_ids: list[str],
         invitee_id: str | None = None,
     ) -> InviteLinkDocument:
         now = datetime.now(UTC)
@@ -162,9 +163,10 @@ class SpacesRepository(BaseRepository[SpaceDocument]):
             target_id=str(target_id),
             code=code,
             created_by=str(created_by),
+            role_ids=role_ids,
             expires_at=expires_at,
             max_uses=max_uses,
-            requires_approval=requires_approval,
+            approval_required=approval_required,
             invitee_id=invitee_id,
             created_at=now,
             updated_at=now,
@@ -205,12 +207,12 @@ class SpacesRepository(BaseRepository[SpaceDocument]):
                     {
                         "$or": [
                             {"max_uses": None},
-                            {"$expr": {"$lt": ["$use_count", "$max_uses"]}},
+                            {"$expr": {"$lt": ["$uses", "$max_uses"]}},
                         ]
                     },
                 ],
             },
-            {"$inc": {"use_count": 1}, "$set": {"updated_at": now}},
+            {"$inc": {"uses": 1}, "$set": {"updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
         return InviteLinkDocument.model_validate(raw) if raw is not None else None

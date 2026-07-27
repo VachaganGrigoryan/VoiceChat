@@ -8,10 +8,12 @@ from app.modules.conversations.repository import ConversationsRepository
 from app.modules.realtime.presence import PresenceState
 
 
-class PingsPermissionProto(Protocol):
+class ConnectionPermissionProto(Protocol):
     async def ensure_can_message(self, *, sender_id: str, receiver_id: str) -> None: ...
 
-    async def get_contact_state(self, *, viewer_user_id: str, peer_user_id: str) -> Any: ...
+    async def get_connection_state(
+        self, *, viewer_user_id: str, peer_user_id: str
+    ) -> Any: ...
 
 
 class UsersRepositoryProto(Protocol):
@@ -28,13 +30,13 @@ class BaseConversationsService:
     def __init__(
         self,
         repo: ConversationsRepository,
-        pings_service: PingsPermissionProto | None = None,
+        connection_service: ConnectionPermissionProto | None = None,
         users_repo: UsersRepositoryProto | None = None,
         presence_service: PresenceServiceProto | None = None,
         authorization: AuthorizationService | None = None,
     ) -> None:
         self.repo = repo
-        self.pings_service = pings_service
+        self.connection_service = connection_service
         self.users_repo = users_repo
         self.presence_service = presence_service
         # One decision point for every conversation authorization question (§56).
@@ -49,9 +51,9 @@ class BaseConversationsService:
             )
 
     async def _ensure_can_message(self, *, sender_id: str, receiver_id: str) -> None:
-        if self.pings_service is None:
+        if self.connection_service is None:
             return
-        await self.pings_service.ensure_can_message(
+        await self.connection_service.ensure_can_message(
             sender_id=str(sender_id), receiver_id=str(receiver_id)
         )
 

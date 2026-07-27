@@ -37,7 +37,8 @@ def _assert_test_database() -> None:
 
 
 @pytest_asyncio.fixture(scope="function", autouse=True)
-async def app_lifecycle():
+async def app_lifecycle(clean_db):
+    del clean_db
     _assert_test_database()
     await connect_mongo()
     await init_database()
@@ -65,7 +66,6 @@ async def clean_rate_limits():
 
 TEST_COLLECTIONS = [
     "users",
-    "pings",
     "calls",
     "messages",
     "message_receipts",
@@ -75,24 +75,33 @@ TEST_COLLECTIONS = [
     "passkey_challenges",
     "discovery_tokens",
     "conversations",
-    "conversation_participants",
     "channels",
     "devices",
     "device_prekeys",
     "spaces",
-    "space_members",
     "invite_links",
-    "join_requests",
     "relationships",
+    "roles",
     "blocks",
     "push_tokens",
     "saved_messages",
     "notifications",
     "bots",
+    "polls",
     "webhooks",
     "reports",
     "audit_logs",
     "slash_commands",
+]
+
+LEGACY_TEST_COLLECTIONS = [
+    "conversation_participants",
+    "join_requests",
+    "pings",
+    "space_members",
+    "sticker_packs",
+    "stickers",
+    "upload_sessions",
 ]
 
 
@@ -102,6 +111,8 @@ async def clean_db():
     client: AsyncMongoClient = AsyncMongoClient(settings.mongo_uri)
     db = client[settings.mongo_db]
 
+    for name in LEGACY_TEST_COLLECTIONS:
+        await db.drop_collection(name)
     for name in TEST_COLLECTIONS:
         await db[name].delete_many({})
 
@@ -109,6 +120,8 @@ async def clean_db():
 
     for name in TEST_COLLECTIONS:
         await db[name].delete_many({})
+    for name in LEGACY_TEST_COLLECTIONS:
+        await db.drop_collection(name)
 
     await client.close()
 

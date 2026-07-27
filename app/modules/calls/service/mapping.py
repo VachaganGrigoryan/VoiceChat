@@ -39,6 +39,7 @@ class MappingCallsMixin:
             participant_states = self._normalize_participant_states(doc)
             return CallDoc(
                 id=str(doc.id) if doc.id else "",
+                conversation_id=doc.conversation_id,
                 caller_user_id=doc.caller_user_id,
                 callee_user_id=doc.callee_user_id,
                 participant_user_ids=list(doc.participant_user_ids),
@@ -60,6 +61,7 @@ class MappingCallsMixin:
 
         return CallDoc(
             id=str(doc["_id"]),
+            conversation_id=doc["conversation_id"],
             caller_user_id=doc["caller_user_id"],
             callee_user_id=doc["callee_user_id"],
             participant_user_ids=list(doc["participant_user_ids"]),

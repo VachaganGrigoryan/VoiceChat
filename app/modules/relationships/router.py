@@ -9,6 +9,7 @@ from starlette.requests import Request
 from app.core.deps import get_sio
 from app.core.errors.openapi import build_error_responses
 from app.core.http import SuccessResponse, ok
+from app.core.http import PaginationMeta, PaginatedResponse, ok_paginated
 from app.core.security import get_current_user_id
 from app.db.models import RelationshipDocument
 from app.modules.relationships.connections import ConnectionService
@@ -19,7 +20,12 @@ from app.modules.relationships.dependencies import (
 )
 from app.modules.relationships.follows import FollowService
 from app.modules.relationships.memberships import MembershipService
-from app.modules.relationships.schemas import RelationshipView, to_relationship_view
+from app.modules.relationships.schemas import (
+    ConnectionDirection,
+    ConnectionListItem,
+    RelationshipView,
+    to_relationship_view,
+)
 from app.modules.realtime import (
     emit_relationship_activated,
     emit_relationship_requested,
@@ -130,30 +136,61 @@ async def revoke_connection(
     return ok(request, data=to_relationship_view(doc))
 
 
-@connections_router.get("", response_model=SuccessResponse[list[RelationshipView]])
+@connections_router.get(
+    "", response_model=PaginatedResponse[list[ConnectionListItem]]
+)
 async def list_connections(
     request: Request,
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=100),
+    cursor: str | None = Query(default=None),
     current_user_id: str = Depends(get_current_user_id),
     service: ConnectionService = Depends(get_connection_service),
 ):
-    docs = await service.list_connections(user_id=current_user_id, limit=limit)
-    return ok(request, data=[to_relationship_view(doc) for doc in docs])
+    items, next_cursor = await service.list_connection_items(
+        user_id=current_user_id,
+        status="active",
+        direction=None,
+        limit=limit,
+        cursor=cursor,
+    )
+    return ok_paginated(
+        request,
+        data=items,
+        meta=PaginationMeta(
+            cursor=cursor,
+            next_cursor=next_cursor,
+            limit=limit,
+        ),
+    )
 
 
 @connections_router.get(
-    "/pending", response_model=SuccessResponse[list[RelationshipView]]
+    "/pending", response_model=PaginatedResponse[list[ConnectionListItem]]
 )
 async def list_pending_connections(
     request: Request,
-    limit: int = Query(50, ge=1, le=100),
+    direction: ConnectionDirection | None = Query(default=None),
+    limit: int = Query(20, ge=1, le=100),
+    cursor: str | None = Query(default=None),
     current_user_id: str = Depends(get_current_user_id),
     service: ConnectionService = Depends(get_connection_service),
 ):
-    docs = await service.list_connections(
-        user_id=current_user_id, status="pending", limit=limit
+    items, next_cursor = await service.list_connection_items(
+        user_id=current_user_id,
+        status="pending",
+        direction=direction,
+        limit=limit,
+        cursor=cursor,
     )
-    return ok(request, data=[to_relationship_view(doc) for doc in docs])
+    return ok_paginated(
+        request,
+        data=items,
+        meta=PaginationMeta(
+            cursor=cursor,
+            next_cursor=next_cursor,
+            limit=limit,
+        ),
+    )
 
 
 # --- Follows (§81) -----------------------------------------------------------

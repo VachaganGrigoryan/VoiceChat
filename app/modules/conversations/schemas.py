@@ -6,7 +6,11 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 from app.db.object_id import StrId
-from app.modules.pings.schemas import PingStatusView
+from app.modules.relationships.schemas import (
+    ConnectionDirection,
+    ConnectionStatusView,
+    RelationshipView,
+)
 from app.modules.realtime.presence.base import PresenceState
 
 ReplyMode = Literal["quote", "thread"]
@@ -53,7 +57,9 @@ class ConversationUserSummary(BaseModel):
     last_seen_at: datetime | None = None
     can_ping: bool | None = None
     chat_allowed: bool | None = None
-    ping_status: PingStatusView | None = None
+    connection_status: ConnectionStatusView | None = None
+    connection_direction: ConnectionDirection | None = None
+    relationship_id: StrId | None = None
     is_ghost: bool = False
 
 
@@ -212,7 +218,8 @@ class UpdateParticipantPermissionsRequest(BaseModel):
 class CreateInviteRequest(BaseModel):
     expires_at: datetime | None = None
     max_uses: int | None = Field(default=None, ge=1, le=100000)
-    requires_approval: bool = False
+    approval_required: bool = False
+    role_ids: list[str] = Field(default_factory=list)
 
 
 class InviteLinkView(BaseModel):
@@ -222,8 +229,9 @@ class InviteLinkView(BaseModel):
     created_by: StrId
     expires_at: datetime | None = None
     max_uses: int | None = None
-    use_count: int = 0
-    requires_approval: bool = False
+    uses: int = 0
+    approval_required: bool = False
+    role_ids: list[StrId] = Field(default_factory=list)
     revoked: bool = False
     created_at: datetime
     updated_at: datetime
@@ -242,7 +250,7 @@ class JoinRequestView(BaseModel):
 class RedeemInviteResponse(BaseModel):
     status: Literal["joined", "pending"]
     conversation: ConversationView | None = None
-    join_request: JoinRequestView | None = None
+    membership: RelationshipView
 
 
 class ConversationSendTextRequest(BaseModel):

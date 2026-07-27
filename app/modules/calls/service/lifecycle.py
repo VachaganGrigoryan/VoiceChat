@@ -38,9 +38,19 @@ class LifecycleCallsMixin:
                 code="USER_NOT_FOUND", message="User not found", status_code=404
             )
 
-        await self.pings_service.ensure_can_message(
+        await self.connection_service.ensure_can_message(
             sender_id=caller_user_id,
             receiver_id=callee_user_id,
+        )
+        if self.conversations_service is None:
+            raise AppError(
+                code="CALL_CONVERSATION_UNAVAILABLE",
+                message="Call conversation is unavailable",
+                status_code=503,
+            )
+        conversation = await self.conversations_service.ensure_dm_conversation(
+            user_id=caller_user_id,
+            peer_user_id=callee_user_id,
         )
 
         expires_at = datetime.now(UTC) + timedelta(
@@ -48,6 +58,7 @@ class LifecycleCallsMixin:
         )
         return self._as_call_document(
             await self.repo.create_call(
+                conversation_id=conversation.str_id,
                 caller_user_id=caller_user_id,
                 callee_user_id=callee_user_id,
                 call_type=call_type,

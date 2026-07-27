@@ -43,12 +43,6 @@ class ReleasedScheduledMessage:
     participant_ids: list[str]
 
 
-class PingsServiceProto(Protocol):
-    async def delete_ping_for_pair(
-        self, *, user_id: str, peer_user_id: str
-    ) -> bool: ...
-
-
 class ConversationsServiceProto(Protocol):
     async def materialize_conversation_message(
         self,
@@ -86,13 +80,11 @@ class BaseMessagesService:
     def __init__(
         self,
         repo: MessagesRepository,
-        pings_service: PingsServiceProto | None = None,
         conversations_service: ConversationsServiceProto | None = None,
         channels_repo: ChannelCounterProto | None = None,
         authorization: AuthorizationService | None = None,
     ):
         self.repo = repo
-        self.pings_service = pings_service
         self.conversations_service = conversations_service
         self.channels_repo = channels_repo
         # A message inherits authorization from its container (§91): every

@@ -125,47 +125,6 @@ async def emit_presence_update(
     )
 
 
-async def emit_ping_received(sio: socketio.AsyncServer, *, to_user_id: str, payload: dict) -> None:
-    await sio.emit("ping_received", payload, room=user_room(to_user_id))
-
-
-async def emit_ping_accepted(sio: socketio.AsyncServer, *, to_user_id: str, payload: dict) -> None:
-    await sio.emit("ping_accepted", payload, room=user_room(to_user_id))
-
-
-async def emit_ping_declined(sio: socketio.AsyncServer, *, to_user_id: str, payload: dict) -> None:
-    await sio.emit("ping_declined", payload, room=user_room(to_user_id))
-
-
-async def emit_ping_cancelled(sio: socketio.AsyncServer, *, to_user_id: str, payload: dict) -> None:
-    await sio.emit("ping_cancelled", payload, room=user_room(to_user_id))
-
-
-async def emit_user_blocked(sio: socketio.AsyncServer, *, user_a: str, user_b: str) -> None:
-    await sio.emit("user_blocked", {"peer_user_id": user_b}, room=user_room(user_a))
-    await sio.emit("user_blocked", {"peer_user_id": user_a}, room=user_room(user_b))
-
-
-async def emit_chat_permission_updated(
-    sio: socketio.AsyncServer,
-    *,
-    user_a: str,
-    user_b: str,
-    allowed: bool = True,
-) -> None:
-    payload = {
-        "peer_user_id": user_b,
-        "allowed": allowed,
-    }
-    await sio.emit("chat_permission_updated", payload, room=user_room(user_a))
-
-    payload_reverse = {
-        "peer_user_id": user_a,
-        "allowed": allowed,
-    }
-    await sio.emit("chat_permission_updated", payload_reverse, room=user_room(user_b))
-
-
 async def emit_space_invite(sio: socketio.AsyncServer, *, to_user_id: str, payload: dict) -> None:
     await sio.emit("space:invite", payload, room=user_room(to_user_id))
 
@@ -205,3 +164,15 @@ async def emit_relationship_revoked(
     await emit_relationship_event(
         sio, event="relationship.revoked", to_user_ids=to_user_ids, payload=payload
     )
+
+
+async def emit_block_created(
+    sio: socketio.AsyncServer, *, to_user_id: str, payload: dict[str, Any]
+) -> None:
+    await emit_to_user(sio, to_user_id, "block.created", payload)
+
+
+async def emit_block_removed(
+    sio: socketio.AsyncServer, *, to_user_id: str, payload: dict[str, Any]
+) -> None:
+    await emit_to_user(sio, to_user_id, "block.removed", payload)

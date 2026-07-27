@@ -13,7 +13,7 @@ from app.modules.messages.repository.mappers import to_message_doc
 from app.modules.messages.schemas import MessageDoc
 
 
-class PingsServiceProto(Protocol):
+class ConnectionServiceProto(Protocol):
     async def ensure_can_message(self, *, sender_id: str, receiver_id: str) -> None: ...
 
 
@@ -74,7 +74,7 @@ class BaseCallsService:
         *,
         repo: CallsRepository,
         users_repo: UsersRepositoryProto,
-        pings_service: PingsServiceProto,
+        connection_service: ConnectionServiceProto,
         presence_service: PresenceServiceProto | None = None,
         webrtc_service: WebRTCServiceProto | None = None,
         messages_repo: MessagesRepositoryProto | None = None,
@@ -82,7 +82,7 @@ class BaseCallsService:
     ) -> None:
         self.repo = repo
         self.users_repo = users_repo
-        self.pings_service = pings_service
+        self.connection_service = connection_service
         self.presence_service = presence_service
         self.webrtc_service = webrtc_service
         self.messages_repo = messages_repo
@@ -156,17 +156,9 @@ class BaseCallsService:
         if self.messages_repo is None:
             return None
 
-        conversation_id = None
-        if self.conversations_service is not None:
-            conversation = await self.conversations_service.ensure_dm_conversation(
-                user_id=str(call_doc.caller_user_id),
-                peer_user_id=str(call_doc.callee_user_id),
-            )
-            conversation_id = conversation.str_id
-
         history_message_doc = await self.messages_repo.create_call_message(
             call_doc=call_doc,
-            conversation_id=conversation_id,
+            conversation_id=str(call_doc.conversation_id),
         )
         if not isinstance(history_message_doc, MessageDocument):
             history_message_doc = MessageDocument.model_validate(history_message_doc)

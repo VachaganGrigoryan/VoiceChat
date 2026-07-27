@@ -4,11 +4,6 @@ from app.modules.relationships.connections import ConnectionService
 from app.modules.relationships.follows import FollowService
 from app.modules.relationships.memberships import MembershipService
 from app.modules.relationships.repository import RelationshipsRepository, pair_id_for
-from app.modules.relationships.router import (
-    connections_router,
-    follows_router,
-    memberships_router,
-)
 from app.modules.relationships.service import RelationshipService
 
 __all__ = [
@@ -17,8 +12,5 @@ __all__ = [
     "MembershipService",
     "RelationshipService",
     "RelationshipsRepository",
-    "connections_router",
-    "follows_router",
-    "memberships_router",
     "pair_id_for",
 ]

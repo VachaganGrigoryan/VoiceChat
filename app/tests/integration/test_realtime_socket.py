@@ -11,7 +11,7 @@ from bson import ObjectId
 
 from app.core.security import create_access_token
 from app.db.mongo import get_db
-from app.modules.pings.repository import pair_id_for
+from app.modules.relationships.service import RelationshipService
 
 TEST_SERVER_URL = os.getenv("TEST_SERVER_URL", "http://api_test:8000")
 
@@ -45,18 +45,12 @@ async def _create_verified_user_and_tokens(email: str) -> tuple[dict, dict]:
 
 
 async def _grant_chat_permission(user_a_id: str, user_b_id: str) -> None:
-    db = get_db()
-    now = datetime.now(UTC)
-    await db["pings"].insert_one(
-        {
-            "pair_id": pair_id_for(user_a_id, user_b_id),
-            "from_user_id": user_a_id,
-            "to_user_id": user_b_id,
-            "status": "accepted",
-            "created_at": now,
-            "updated_at": now,
-            "responded_at": now,
-        }
+    await RelationshipService().request(
+        kind="connection",
+        user_id=user_a_id,
+        target_type="user",
+        target_id=user_b_id,
+        status="active",
     )
 
 

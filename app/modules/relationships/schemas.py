@@ -45,6 +45,56 @@ class RelationshipView(BaseModel):
     updated_at: datetime
 
 
+ConnectionDirection = Literal["incoming", "outgoing"]
+ConnectionStatusView = Literal[
+    "none", "pending", "active", "declined", "revoked", "blocked"
+]
+
+
+class PeerUserSummary(BaseModel):
+    id: StrId
+    username: str
+    display_name: str | None = None
+    avatar: dict | None = None
+    is_online: bool = False
+
+
+class ConnectionListItem(BaseModel):
+    relationship: RelationshipView
+    peer: PeerUserSummary
+    direction: ConnectionDirection
+    conversation_id: StrId | None = None
+
+
+class ConnectionState(BaseModel):
+    can_ping: bool
+    chat_allowed: bool
+    connection_status: ConnectionStatusView
+    direction: ConnectionDirection | None = None
+    relationship_id: StrId | None = None
+    blocked_by_me: bool = False
+    blocks_me: bool = False
+
+
+class SharedConversationSummary(BaseModel):
+    id: StrId
+    type: str
+    title: str | None = None
+
+
+class SharedSpaceSummary(BaseModel):
+    id: StrId
+    name: str
+    slug: str
+
+
+class ConnectionExtras(BaseModel):
+    connection_timestamp: datetime | None = None
+    conversation_id: StrId | None = None
+    shared_conversations: list[SharedConversationSummary] = Field(default_factory=list)
+    shared_spaces: list[SharedSpaceSummary] = Field(default_factory=list)
+
+
 def to_relationship_view(doc: RelationshipDocument) -> RelationshipView:
     return RelationshipView(
         id=doc.str_id,

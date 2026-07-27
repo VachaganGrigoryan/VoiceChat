@@ -370,6 +370,57 @@ async def test_connecting_does_not_create_a_follow():
 
 
 @pytest.mark.asyncio
+async def test_connection_request_validates_target_and_creates_notification():
+    repo = AsyncMock()
+    repo.find_connection.return_value = None
+    repo.create.return_value = make_relationship()
+    users_repo = AsyncMock()
+    users_repo.find_by_id.return_value = {"_id": USER_B}
+    notifications = AsyncMock()
+    service = ConnectionService(
+        repo=repo,
+        engine=RelationshipService(repo=repo),
+        users_repo=users_repo,
+        notifications_service=notifications,
+    )
+    service.is_blocked = AsyncMock(return_value=False)
+
+    await service.request(from_user_id=USER_A, to_user_id=USER_B)
+
+    users_repo.find_by_id.assert_awaited_once_with(USER_B)
+    notifications.create_notification.assert_awaited_once_with(
+        user_id=USER_B,
+        kind="connection_request",
+        actor_user_id=USER_A,
+        resource_type="user",
+        resource_id=USER_A,
+        data={"peer_user_id": USER_A},
+    )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_pending_connection_does_not_duplicate_notification():
+    pending = make_relationship()
+    repo = AsyncMock()
+    repo.find_connection.return_value = pending
+    users_repo = AsyncMock()
+    users_repo.find_by_id.return_value = {"_id": USER_B}
+    notifications = AsyncMock()
+    service = ConnectionService(
+        repo=repo,
+        engine=RelationshipService(repo=repo),
+        users_repo=users_repo,
+        notifications_service=notifications,
+    )
+    service.is_blocked = AsyncMock(return_value=False)
+
+    result = await service.request(from_user_id=USER_A, to_user_id=USER_B)
+
+    assert result is pending
+    notifications.create_notification.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_only_the_target_may_accept_a_connection():
     repo = AsyncMock()
     repo.find_by_id.return_value = make_relationship(status="pending")
@@ -379,6 +430,72 @@ async def test_only_the_target_may_accept_a_connection():
         await service.accept(user_id=USER_A, relationship_id=REL_ID)
 
     assert exc.value.code == "CONNECTION_FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_accepting_connection_notifies_requester():
+    pending = make_relationship(status="pending")
+    active = make_relationship(
+        status="active",
+        approved_by=USER_B,
+        activated_at=datetime.now(UTC),
+    )
+    repo = AsyncMock()
+    repo.find_by_id.return_value = pending
+    repo.set_status.return_value = active
+    notifications = AsyncMock()
+    service = ConnectionService(
+        repo=repo,
+        engine=RelationshipService(repo=repo),
+        notifications_service=notifications,
+    )
+
+    result = await service.accept(user_id=USER_B, relationship_id=REL_ID)
+
+    assert result.status == "active"
+    notifications.create_notification.assert_awaited_once_with(
+        user_id=USER_A,
+        kind="connection_accepted",
+        actor_user_id=USER_B,
+        resource_type="user",
+        resource_id=USER_B,
+        data={"peer_user_id": USER_B},
+    )
+
+
+@pytest.mark.asyncio
+async def test_connection_state_uses_relationship_status_and_direction():
+    repo = AsyncMock()
+    repo.find_connection.return_value = make_relationship(status="pending")
+    service = ConnectionService(repo=repo, engine=RelationshipService(repo=repo))
+    service._get_block_state = AsyncMock(return_value=(False, False))
+
+    incoming = await service.get_connection_state(
+        viewer_user_id=USER_B,
+        peer_user_id=USER_A,
+    )
+
+    assert incoming.connection_status == "pending"
+    assert incoming.direction == "incoming"
+    assert incoming.chat_allowed is False
+    assert incoming.can_ping is False
+
+
+@pytest.mark.asyncio
+async def test_block_state_overrides_active_connection():
+    repo = AsyncMock()
+    repo.find_connection.return_value = make_relationship(status="active")
+    service = ConnectionService(repo=repo, engine=RelationshipService(repo=repo))
+    service._get_block_state = AsyncMock(return_value=(True, False))
+
+    state = await service.get_connection_state(
+        viewer_user_id=USER_A,
+        peer_user_id=USER_B,
+    )
+
+    assert state.connection_status == "blocked"
+    assert state.blocked_by_me is True
+    assert state.chat_allowed is False
 
 
 @pytest.mark.asyncio

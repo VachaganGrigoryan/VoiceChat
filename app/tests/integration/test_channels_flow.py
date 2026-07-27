@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from app.db.models import UserDocument
+from app.db.models import MessageReceiptDocument, RelationshipDocument, UserDocument
 from app.modules.auth.repository import UsersRepository
 from app.modules.channels.repository import ChannelsRepository
 from app.modules.channels.service import ChannelService
 from app.modules.messages.dependencies import get_messages_service
 from app.modules.messages.schemas import MediaAttachmentInput, SendRichContentRequest
+from app.modules.relationships.service import RelationshipService
 from app.tests.integration.test_realtime_socket import (
     _create_verified_user_and_tokens,
 )
@@ -61,6 +62,14 @@ async def test_channel_policy_posts_comments_and_counters(inprocess_client):
     )
     assert public_read.status_code == 200, public_read.text
 
+    follow = await RelationshipService().request(
+        kind="follow",
+        user_id=str(_stranger["_id"]),
+        target_type="channel",
+        target_id=channel_id,
+        status="active",
+    )
+
     denied = await inprocess_client.post(
         f"/channels/{channel_id}/messages",
         json={"text": "not allowed"},
@@ -78,6 +87,21 @@ async def test_channel_policy_posts_comments_and_counters(inprocess_client):
     assert post_data["container_type"] == "channel"
     assert post_data["container_id"] == channel_id
     assert post_data["thread_root_id"] is None
+    assert (
+        await MessageReceiptDocument.find(
+            {"message_id": post_data["id"]}
+        ).count()
+        == 0
+    )
+
+    marked_read = await inprocess_client.post(
+        f"/channels/{channel_id}/messages/{post_data['id']}/read",
+        headers=_auth(stranger_tokens["access_token"]),
+    )
+    assert marked_read.status_code == 200, marked_read.text
+    refreshed_follow = await RelationshipDocument.get(follow.id)
+    assert refreshed_follow is not None
+    assert refreshed_follow.state.last_read_message_id == post_data["id"]
 
     comment = await inprocess_client.post(
         f"/channels/{channel_id}/messages",

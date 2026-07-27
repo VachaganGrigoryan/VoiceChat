@@ -41,7 +41,8 @@ class InvitesRepositoryMixin:
         code: str,
         expires_at: datetime | None,
         max_uses: int | None,
-        requires_approval: bool,
+        approval_required: bool,
+        role_ids: list[str],
     ) -> InviteLinkDocument:
         now = datetime.now(UTC)
         invite = InviteLinkDocument(
@@ -49,9 +50,10 @@ class InvitesRepositoryMixin:
             target_id=str(target_id),
             code=code,
             created_by=str(created_by),
+            role_ids=role_ids,
             expires_at=expires_at,
             max_uses=max_uses,
-            requires_approval=requires_approval,
+            approval_required=approval_required,
             created_at=now,
             updated_at=now,
         )
@@ -80,7 +82,7 @@ class InvitesRepositoryMixin:
         return result.modified_count > 0
 
     async def consume_invite_use(self, *, code: str) -> InviteLinkDocument | None:
-        """Atomically increment ``use_count`` if the link is still redeemable.
+        """Atomically increment ``uses`` if the link is still redeemable.
 
         Returns the updated link, or ``None`` when it is revoked, expired, or has
         reached ``max_uses`` (race-safe via a single conditional find-and-modify).
@@ -95,12 +97,12 @@ class InvitesRepositoryMixin:
                     {
                         "$or": [
                             {"max_uses": None},
-                            {"$expr": {"$lt": ["$use_count", "$max_uses"]}},
+                            {"$expr": {"$lt": ["$uses", "$max_uses"]}},
                         ]
                     },
                 ],
             },
-            {"$inc": {"use_count": 1}, "$set": {"updated_at": now}},
+            {"$inc": {"uses": 1}, "$set": {"updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
         return InviteLinkDocument.model_validate(raw) if raw is not None else None

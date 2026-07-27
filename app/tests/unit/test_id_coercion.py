@@ -4,9 +4,14 @@ from datetime import UTC, datetime
 
 from beanie import PydanticObjectId
 
-from app.db.models import CallDocument, UserDocument, VerificationCodeDocument
+from app.db.models import (
+    CallDocument,
+    RelationshipDocument,
+    UserDocument,
+    VerificationCodeDocument,
+)
 from app.modules.calls.schemas import CallDoc
-from app.modules.pings.schemas import PingResponse
+from app.modules.relationships.schemas import to_relationship_view
 from app.modules.users.schemas import UserProfileResponse
 from app.modules.users.service import _doc_value
 
@@ -32,8 +37,13 @@ def test_verification_user_id_coerces_objectid_to_str() -> None:
 
 
 def test_call_foreign_ids_coerce_to_str() -> None:
-    a, b = PydanticObjectId(), PydanticObjectId()
+    conversation_id, a, b = (
+        PydanticObjectId(),
+        PydanticObjectId(),
+        PydanticObjectId(),
+    )
     doc = CallDocument(
+        conversation_id=conversation_id,
         caller_user_id=a,
         callee_user_id=b,
         participant_user_ids=[a, b],
@@ -71,8 +81,9 @@ def test_str_id_property_stringifies_and_handles_unsaved() -> None:
 def test_api_response_models_coerce_objectids_to_str() -> None:
     user_id = PydanticObjectId()
     peer_id = PydanticObjectId()
-    ping_id = PydanticObjectId()
+    relationship_id = PydanticObjectId()
     call_id = PydanticObjectId()
+    conversation_id = PydanticObjectId()
 
     profile = UserProfileResponse(
         id=user_id,
@@ -84,16 +95,26 @@ def test_api_response_models_coerce_objectids_to_str() -> None:
         is_private=False,
         default_discovery_enabled=True,
     )
-    ping = PingResponse(
-        id=ping_id,
-        from_user_id=user_id,
-        to_user_id=peer_id,
-        status="pending",
-        created_at=_now(),
-        updated_at=_now(),
+    relationship_doc = RelationshipDocument.model_validate(
+        {
+            "_id": relationship_id,
+            "kind": "connection",
+            "user_id": user_id,
+            "target_type": "user",
+            "target_id": peer_id,
+            "status": "pending",
+            "initiation": "request",
+            "initiated_by": user_id,
+            "pair_id": f"{user_id}_{peer_id}",
+            "requested_at": _now(),
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
     )
+    relationship = to_relationship_view(relationship_doc)
     call = CallDoc(
         id=call_id,
+        conversation_id=conversation_id,
         caller_user_id=user_id,
         callee_user_id=peer_id,
         participant_user_ids=[user_id, peer_id],
@@ -105,9 +126,9 @@ def test_api_response_models_coerce_objectids_to_str() -> None:
     )
 
     assert profile.id == str(user_id)
-    assert ping.id == str(ping_id)
-    assert ping.from_user_id == str(user_id)
-    assert ping.to_user_id == str(peer_id)
+    assert relationship.id == str(relationship_id)
+    assert relationship.user_id == str(user_id)
+    assert relationship.target_id == str(peer_id)
     assert call.id == str(call_id)
     assert call.participant_user_ids == [str(user_id), str(peer_id)]
 

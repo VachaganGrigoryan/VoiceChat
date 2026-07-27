@@ -73,7 +73,7 @@ async def test_space_invite_and_redeem_flow(inprocess_client):
     # 1. Non-manager cannot create invite
     resp_fail = await inprocess_client.post(
         f"/spaces/{space_id}/invites",
-        json={"requires_approval": False},
+        json={"approval_required": False},
         headers=_auth(user_tokens["access_token"]),
     )
     assert resp_fail.status_code == 403
@@ -81,7 +81,7 @@ async def test_space_invite_and_redeem_flow(inprocess_client):
     # 2. Create invite (direct join)
     resp_invite = await inprocess_client.post(
         f"/spaces/{space_id}/invites",
-        json={"requires_approval": False},
+        json={"approval_required": False},
         headers=_auth(owner_tokens["access_token"]),
     )
     assert resp_invite.status_code == 201
@@ -100,7 +100,7 @@ async def test_space_invite_and_redeem_flow(inprocess_client):
     # 4. Create approval-gated invite
     resp_invite_gate = await inprocess_client.post(
         f"/spaces/{space_id}/invites",
-        json={"requires_approval": True},
+        json={"approval_required": True},
         headers=_auth(owner_tokens["access_token"]),
     )
     code_gate = resp_invite_gate.json()["data"]["code"]
@@ -114,7 +114,8 @@ async def test_space_invite_and_redeem_flow(inprocess_client):
     assert resp_redeem_gate.status_code == 200
     redeem_gate_data = resp_redeem_gate.json()["data"]
     assert redeem_gate_data["status"] == "pending"
-    req_id = redeem_gate_data["join_request"]["id"]
+    assert redeem_gate_data["membership"]["status"] == "pending"
+    req_id = redeem_gate_data["membership"]["id"]
 
     # Approve join request
     resp_approve = await inprocess_client.post(
@@ -188,7 +189,7 @@ async def test_space_scoped_conversations_and_global_scope(inprocess_client):
     # Create direct invite
     resp_invite = await inprocess_client.post(
         f"/spaces/{space_id}/invites",
-        json={"requires_approval": False},
+        json={"approval_required": False},
         headers=_auth(owner_tokens["access_token"]),
     )
     code = resp_invite.json()["data"]["code"]
@@ -286,8 +287,13 @@ async def test_direct_space_invite_and_redeem_flow(inprocess_client):
 
     # Verify notification was created
     from app.db.models import NotificationDocument
-    notification = await NotificationDocument.find_one({"user_id": str(user["_id"]), "kind": "space_invite"})
+    notification = await NotificationDocument.find_one(
+        {"user_id": str(user["_id"]), "kind": "membership_invite"}
+    )
     assert notification is not None
+    assert notification.actor_user_id == str(owner["_id"])
+    assert notification.resource_type == "space"
+    assert notification.resource_id == space_id
     assert notification.data["space_id"] == space_id
     assert notification.data["code"] == code
 
