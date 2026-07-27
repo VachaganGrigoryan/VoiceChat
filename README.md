@@ -1,6 +1,6 @@
 # VoiceChat Backend
 
-FastAPI and Socket.IO backend for direct messaging, presence, ping-based chat permissions, discovery flows, and
+FastAPI and Socket.IO backend for direct messaging, presence, connection-based chat permissions, discovery flows, and
 passkeys.
 
 ## Status
@@ -13,7 +13,8 @@ passkeys.
 - [Docs Index](./docs/index.md)
 - [Auth](./docs/auth.md)
 - [Users](./docs/users.md)
-- [Pings](./docs/pings.md)
+- [Connections](./docs/connections.md)
+- [Blocks](./docs/blocks.md)
 - [Messages](./docs/messages.md)
 - [Calls](./docs/calls.md)
 - [Realtime](./docs/realtime.md)
@@ -40,7 +41,7 @@ Core services:
 
 ## Messaging Notes
 
-- Sending messages requires an accepted ping.
+- Sending direct messages requires an active connection.
 - Typing events and compatibility socket send acknowledgements enforce the same permission rule.
 - Owner deletion hard-deletes the message and removes stored media when present.
 - Peer deletion hides the message only for that user.

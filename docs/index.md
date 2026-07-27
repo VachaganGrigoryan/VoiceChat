@@ -2,7 +2,8 @@
 
 - [Auth](./auth.md)
 - [Users](./users.md)
-- [Pings](./pings.md)
+- [Connections](./connections.md)
+- [Blocks](./blocks.md)
 - [Messages](./messages.md)
 - [Calls](./calls.md)
 - [WebRTC](./webrtc.md)
