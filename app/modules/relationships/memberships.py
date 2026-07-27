@@ -87,6 +87,23 @@ class MembershipService:
         # private ones are invite-only.
         return "open" if conversation.visibility == "public" else "invite_only"
 
+    async def _default_role_ids(
+        self, *, target_type: RelationshipTargetType, target_id: str
+    ) -> list[str] | None:
+        """The roles a new member gets when the caller names none.
+
+        Only spaces carry `default_role_ids`: a space role is what inherits down
+        to child channels and groups, so a member holding no role at all would
+        have an active membership that grants nothing (§53, §63). Conversation
+        and channel memberships keep their existing behavior.
+        """
+        if target_type != "space":
+            return None
+        space = await SpaceDocument.get(parse_object_id(target_id))
+        if space is None or not space.default_role_ids:
+            return None
+        return [str(role_id) for role_id in space.default_role_ids]
+
     async def request_join(
         self,
         *,
@@ -109,6 +126,10 @@ class MembershipService:
                 message="This resource is invite-only",
                 status_code=403,
             )
+        if role_ids is None:
+            role_ids = await self._default_role_ids(
+                target_type=target_type, target_id=target_id
+            )
         return await self.engine.request(
             kind="membership",
             user_id=user_id,
@@ -128,6 +149,10 @@ class MembershipService:
         role_ids: list[str] | None = None,
     ) -> RelationshipDocument:
         self._check_target(target_type)
+        if role_ids is None:
+            role_ids = await self._default_role_ids(
+                target_type=target_type, target_id=target_id
+            )
         return await self.engine.invite(
             kind="membership",
             user_id=user_id,
@@ -148,6 +173,10 @@ class MembershipService:
     ) -> RelationshipDocument:
         """Idempotently make ``user_id`` an active member (authority-driven)."""
         self._check_target(target_type)
+        if role_ids is None:
+            role_ids = await self._default_role_ids(
+                target_type=target_type, target_id=target_id
+            )
         return await self.repo.upsert_membership(
             user_id=user_id,
             target_type=target_type,

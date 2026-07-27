@@ -588,6 +588,7 @@ async def test_open_join_policy_activates_immediately(memberships):
         pair_id=None,
     )
     service.join_policy_for = AsyncMock(return_value="open")
+    service._default_role_ids = AsyncMock(return_value=None)
 
     await service.request_join(
         user_id=USER_A, target_type="space", target_id=SPACE_ID
@@ -604,6 +605,7 @@ async def test_approval_join_policy_stays_pending(memberships):
         kind="membership", target_type="space", target_id=SPACE_ID, pair_id=None
     )
     service.join_policy_for = AsyncMock(return_value="approval")
+    service._default_role_ids = AsyncMock(return_value=None)
 
     await service.request_join(
         user_id=USER_A, target_type="space", target_id=SPACE_ID
