@@ -18,7 +18,7 @@ from app.modules.channels.schemas import ChannelMessageCreateRequest
 from app.modules.channels.service import ChannelService
 from app.modules.feeds.dependencies import get_feeds_service
 from app.modules.feeds.schemas import FeedPostView
-from app.modules.feeds.service import FeedsService
+from app.modules.feeds.service import FeedService
 from app.modules.messages.schemas import MessageDoc
 from app.modules.pings.dependencies import get_pings_service
 from app.modules.realtime.presence.factory import get_presence_backend
@@ -171,7 +171,7 @@ async def list_profile_posts(
     limit: int = Query(default=20, ge=1, le=100),
     cursor: str | None = Query(default=None),
     current_user_id: str = Depends(get_current_user_id),
-    service: FeedsService = Depends(get_feeds_service),
+    service: FeedService = Depends(get_feeds_service),
 ):
     items, next_cursor = await service.list_profile_posts(
         viewer_id=current_user_id,

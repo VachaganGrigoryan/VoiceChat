@@ -3,11 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from beanie.operators import In
 from pymongo import DESCENDING, ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from app.core.errors import AppError
 from app.db.models import ChannelDocument
+from app.db.object_id import parse_object_id
 from app.db.repository import BaseRepository
 
 
@@ -33,6 +35,13 @@ class ChannelsRepository(BaseRepository[ChannelDocument]):
                 "kind": "profile",
             }
         )
+
+    async def list_by_ids(self, channel_ids: list[str]) -> list[ChannelDocument]:
+        if not channel_ids:
+            return []
+        unique_ids = list(dict.fromkeys(channel_ids))
+        object_ids = [parse_object_id(channel_id) for channel_id in unique_ids]
+        return await ChannelDocument.find(In(ChannelDocument.id, object_ids)).to_list()
 
     async def insert(self, channel: ChannelDocument) -> ChannelDocument:
         try:

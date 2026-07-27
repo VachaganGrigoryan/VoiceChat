@@ -7,11 +7,12 @@ this channel?") and this service answers it with the fixed resolution order.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 from app.core.errors import AppError
 from app.db.models import (
     BlockDocument,
+    ChannelDocument,
     RelationshipDocument,
     RoleDocument,
     UserDocument,
@@ -222,6 +223,87 @@ class AuthorizationService:
                 code="FORBIDDEN",
                 message=message or f"Not permitted: {action}",
                 status_code=403,
+            )
+
+    async def prime_channel_access(
+        self,
+        *,
+        user_id: str,
+        channels: Sequence[ChannelDocument],
+        active_follows: Sequence[RelationshipDocument],
+    ) -> None:
+        """Batch the relationship state used by repeated channel checks."""
+        if not channels:
+            return
+
+        user_id = str(user_id)
+        channel_ids = [channel.str_id for channel in channels]
+        space_ids = list(
+            dict.fromkeys(
+                str(channel.space_id) for channel in channels if channel.space_id
+            )
+        )
+        relationship_targets: list[dict[str, Any]] = [
+            {
+                "target_type": "channel",
+                "target_id": {"$in": channel_ids},
+            }
+        ]
+        if space_ids:
+            relationship_targets.append(
+                {
+                    "target_type": "space",
+                    "target_id": {"$in": space_ids},
+                }
+            )
+
+        memberships = await RelationshipDocument.find(
+            {
+                "kind": "membership",
+                "user_id": user_id,
+                "status": "active",
+                "$or": relationship_targets,
+            }
+        ).to_list()
+        memberships_by_target = {
+            (membership.target_type, str(membership.target_id)): membership
+            for membership in memberships
+        }
+
+        followed_channel_ids = {
+            str(follow.target_id)
+            for follow in active_follows
+            if follow.target_type == "channel" and follow.status == "active"
+        }
+        followed_user_ids = {
+            str(follow.target_id)
+            for follow in active_follows
+            if follow.target_type == "user" and follow.status == "active"
+        }
+
+        for channel in channels:
+            channel_id = channel.str_id
+            self.ownership.remember_resource(
+                resource_type="channel",
+                resource_id=channel_id,
+                resource=channel,
+            )
+            self._memberships[(user_id, "channel", channel_id)] = (
+                memberships_by_target.get(("channel", channel_id))
+            )
+            owner = channel.owner
+            follows_profile_owner = (
+                channel.kind == "profile"
+                and owner.type == "user"
+                and str(owner.id) in followed_user_ids
+            )
+            self._follows[(user_id, channel_id)] = (
+                channel_id in followed_channel_ids or follows_profile_owner
+            )
+
+        for space_id in space_ids:
+            self._memberships[(user_id, "space", space_id)] = memberships_by_target.get(
+                ("space", space_id)
             )
 
     # --- resolution helpers --------------------------------------------------

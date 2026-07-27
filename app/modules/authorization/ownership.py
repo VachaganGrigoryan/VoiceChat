@@ -36,6 +36,13 @@ class OwnershipResolver:
         self._resources: dict[tuple[str, str], Any | None] = {}
         self._owner_ids: dict[tuple[str, str], str | None] = {}
 
+    def remember_resource(
+        self, *, resource_type: ResourceType, resource_id: str, resource: Any
+    ) -> None:
+        key = (resource_type, str(resource_id))
+        self._resources[key] = resource
+        self._owner_ids.pop(key, None)
+
     async def load_resource(
         self, *, resource_type: ResourceType, resource_id: str
     ) -> Any | None:

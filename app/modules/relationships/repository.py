@@ -135,6 +135,17 @@ class RelationshipsRepository(BaseRepository[RelationshipDocument]):
             .to_list()
         )
 
+    async def list_active_follows_for_user(
+        self, *, user_id: str
+    ) -> list[RelationshipDocument]:
+        return await RelationshipDocument.find(
+            {
+                "kind": "follow",
+                "user_id": str(user_id),
+                "status": "active",
+            }
+        ).to_list()
+
     async def list_for_target(
         self,
         *,

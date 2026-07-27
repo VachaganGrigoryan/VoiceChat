@@ -142,6 +142,22 @@ class ReadMessagesMixin:
             next_cursor,
         )
 
+    async def get_feed_for_containers(
+        self,
+        *,
+        container_type: MessageContainerType,
+        container_ids: list[str],
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> tuple[list[MessageDoc], str | None]:
+        docs, next_cursor = await self.repo.list_feed_for_containers(
+            container_type=container_type,
+            container_ids=container_ids,
+            limit=limit,
+            cursor=cursor,
+        )
+        return [to_message_doc(doc) for doc in docs], next_cursor
+
     async def get_thread(
         self,
         *,

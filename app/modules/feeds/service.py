@@ -9,10 +9,11 @@ from app.modules.channels.repository import ChannelsRepository
 from app.modules.feeds.schemas import FeedAuthor, FeedPostView
 from app.modules.messages.schemas import MessageDoc
 from app.modules.messages.service import MessagesService
+from app.modules.relationships.repository import RelationshipsRepository
 from app.modules.users.avatar import build_user_avatar_payload
 
 
-class FeedsService:
+class FeedService:
     """Read-only channel and profile-feed projections over unified messages."""
 
     def __init__(
@@ -20,11 +21,13 @@ class FeedsService:
         *,
         channels_repo: ChannelsRepository,
         messages_service: MessagesService,
+        relationships_repo: RelationshipsRepository,
         users_repo: UsersRepository,
         authorization: AuthorizationService | None = None,
     ) -> None:
         self.channels_repo = channels_repo
         self.messages = messages_service
+        self.relationships_repo = relationships_repo
         self.users_repo = users_repo
         self.authorization = authorization or AuthorizationService()
 
@@ -84,6 +87,52 @@ class FeedsService:
             user_id=viewer_id,
         )
         return await self._to_feed_posts(docs)
+
+    async def home(
+        self,
+        *,
+        user_id: str,
+        limit: int,
+        cursor: str | None,
+    ) -> tuple[list[FeedPostView], str | None]:
+        follows = await self.relationships_repo.list_active_follows_for_user(
+            user_id=user_id
+        )
+        followed_user_ids = [
+            str(follow.target_id) for follow in follows if follow.target_type == "user"
+        ]
+        users = await self.users_repo.find_by_ids(followed_user_ids)
+
+        candidate_channel_ids = [
+            str(follow.target_id)
+            for follow in follows
+            if follow.target_type == "channel"
+        ]
+        candidate_channel_ids.extend(
+            user.main_channel_id
+            for user in users.values()
+            if user.main_channel_id is not None
+        )
+        candidate_channel_ids = list(dict.fromkeys(candidate_channel_ids))
+        channels = await self.channels_repo.list_by_ids(candidate_channel_ids)
+
+        await self.authorization.prime_channel_access(
+            user_id=user_id,
+            channels=channels,
+            active_follows=follows,
+        )
+        visible_channel_ids = [
+            channel.str_id
+            for channel in channels
+            if await self._can_view_channel(viewer_id=user_id, channel=channel)
+        ]
+        docs, next_cursor = await self.messages.get_feed_for_containers(
+            container_type="channel",
+            container_ids=visible_channel_ids,
+            limit=limit,
+            cursor=cursor,
+        )
+        return await self._to_feed_posts(docs), next_cursor
 
     async def list_user_feed(
         self, *, viewer_id: str, owner_id: str, limit: int, cursor: str | None
