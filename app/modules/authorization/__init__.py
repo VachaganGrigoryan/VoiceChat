@@ -11,12 +11,15 @@ from __future__ import annotations
 from app.modules.authorization.ownership import OwnershipResolver
 from app.modules.authorization.permissions import PERMISSIONS
 from app.modules.authorization.repository import RolesRepository
-from app.modules.authorization.router import roles_router
+from app.modules.authorization.capabilities import CapabilitiesService
+from app.modules.authorization.router import capabilities_router, roles_router
 from app.modules.authorization.roles import RoleService
 from app.modules.authorization.service import AuthorizationService, ResourceType
 
 __all__ = [
     "AuthorizationService",
+    "CapabilitiesService",
+    "capabilities_router",
     "OwnershipResolver",
     "PERMISSIONS",
     "ResourceType",

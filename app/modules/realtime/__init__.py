@@ -1,4 +1,6 @@
 from app.modules.realtime.emits import (
+    channel_room,
+    emit_to_channel,
     emit_to_user,
     emit_message_to_receiver,
     emit_message_to_participants,
@@ -13,6 +15,7 @@ from app.modules.realtime.emits import (
     emit_space_invite,
     emit_relationship_event,
     emit_relationship_requested,
+    emit_capabilities_invalidated,
     emit_relationship_activated,
     emit_relationship_revoked,
     emit_block_created,
@@ -20,6 +23,8 @@ from app.modules.realtime.emits import (
 )
 
 __all__ = [
+    "channel_room",
+    "emit_to_channel",
     "emit_to_user",
     "emit_message_to_receiver",
     "emit_message_to_participants",
@@ -34,6 +39,7 @@ __all__ = [
     "emit_space_invite",
     "emit_relationship_event",
     "emit_relationship_requested",
+    "emit_capabilities_invalidated",
     "emit_relationship_activated",
     "emit_relationship_revoked",
     "emit_block_created",

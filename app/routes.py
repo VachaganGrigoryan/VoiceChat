@@ -11,6 +11,7 @@ from app.modules.feeds.router import router as feeds_router
 from app.modules.devices.router import router as devices_router
 from app.modules.realtime.router import router as realtime_router
 from app.modules.passkeys.router import router as passkeys_router
+from app.modules.directory import directory_router
 from app.modules.discovery.router import router as discovery_router
 from app.modules.calls.router import router as calls_router
 from app.modules.webrtc.router import router as webrtc_router
@@ -24,9 +25,13 @@ from app.modules.relationships.router import (
     follows_router,
     memberships_router,
 )
-from app.modules.authorization import roles_router
+from app.modules.authorization import capabilities_router, roles_router
 from app.modules.extensibility.router import extensibility_router
 from app.modules.channels.router import router as channels_router
+from app.modules.messages.router import (
+    conversation_messages_router,
+    router as messages_router,
+)
 
 
 def register_routers(app: FastAPI) -> None:
@@ -38,7 +43,10 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(users_router)
     app.include_router(blocks_router)
     app.include_router(discovery_router)
+    app.include_router(directory_router)
     app.include_router(conversations_router)
+    app.include_router(conversation_messages_router)
+    app.include_router(messages_router)
     app.include_router(channels_router)
     app.include_router(feeds_router)
     app.include_router(devices_router)
@@ -50,6 +58,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(polls_router)
     app.include_router(spaces_router)
     app.include_router(roles_router)
+    app.include_router(capabilities_router)
     app.include_router(connections_router)
     app.include_router(follows_router)
     app.include_router(memberships_router)

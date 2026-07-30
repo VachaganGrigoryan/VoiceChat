@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from app.core.errors import AppError
+from app.modules.authorization.permissions import MESSAGE_READ
+from app.modules.authorization.service import AuthorizationService
 from app.modules.auth.repository import UsersRepository
 from app.modules.calls.ws import (
     handle_call_socket_connect,
@@ -13,6 +15,7 @@ from app.modules.messages.dependencies import get_messages_service
 from app.modules.calls.ws import register_events as register_call_events
 from app.modules.realtime.auth import authenticate_socket, get_socket_user_id
 from app.modules.realtime.emits import (
+    channel_room,
     emit_message_status_to_user,
     emit_presence_update,
 )
@@ -106,6 +109,53 @@ def register_events(sio) -> None:
     @sio.event
     async def ping(sid, data):
         return {"pong": True}
+
+    @sio.event
+    async def join_channel(sid, data):
+        """Subscribe this socket to a channel's realtime room.
+
+        A client calls this when it opens a channel's timeline and
+        `leave_channel` when it navigates away. Every channel message, edit,
+        delete, reaction, and thread event broadcasts once to this room --
+        no membership/follower lookup, no fan-out ceiling.
+        """
+        user_id = await get_socket_user_id(sio, sid)
+        if not user_id:
+            return
+
+        channel_id = (data or {}).get("channel_id")
+        if not channel_id:
+            await sio.emit(
+                "error",
+                {"code": "INVALID_PAYLOAD", "message": "channel_id is required"},
+                to=sid,
+            )
+            return
+
+        allowed = await AuthorizationService().can(
+            user_id, MESSAGE_READ, "channel", channel_id
+        )
+        if not allowed:
+            await sio.emit(
+                "error",
+                {"code": "FORBIDDEN", "message": "Not allowed to read this channel"},
+                to=sid,
+            )
+            return
+
+        await sio.enter_room(sid, channel_room(channel_id))
+
+    @sio.event
+    async def leave_channel(sid, data):
+        user_id = await get_socket_user_id(sio, sid)
+        if not user_id:
+            return
+
+        channel_id = (data or {}).get("channel_id")
+        if not channel_id:
+            return
+
+        await sio.leave_room(sid, channel_room(channel_id))
 
     @sio.event
     async def typing_start(sid, data):

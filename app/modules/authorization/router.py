@@ -7,9 +7,13 @@ anything through an active membership (§50).
 
 from __future__ import annotations
 
+from typing import Annotated
+
+import socketio
 from fastapi import APIRouter, Depends
 from starlette.requests import Request
 
+from app.core.deps import get_sio
 from app.core.errors import AppError
 from app.core.errors.openapi import build_error_responses
 from app.core.http import SuccessResponse, ok
@@ -18,20 +22,31 @@ from app.db.models.role import RoleScopeType
 from app.modules.authorization.permissions import ROLE_MANAGE, ROLE_VIEW
 from app.modules.authorization.repository import RolesRepository
 from app.modules.authorization.roles import RoleService
+from app.modules.authorization.capabilities import (
+    CapabilitiesService,
+    affected_viewer_ids,
+)
 from app.modules.authorization.schemas import (
     AssignRolesRequest,
+    CapabilitiesRequest,
+    CapabilitiesResponse,
     CreateRoleRequest,
+    ResourceCapabilitiesView,
     RoleView,
     UpdateRoleRequest,
+    to_capabilities_view,
     to_role_view,
 )
 from app.modules.authorization.service import AuthorizationService
 from app.modules.relationships.repository import RelationshipsRepository
+from app.modules.realtime import emit_capabilities_invalidated
 from app.modules.relationships.schemas import RelationshipView, to_relationship_view
 
 _RESPONSES = build_error_responses(400, 401, 403, 404, 409, 422, 500)
 
 roles_router = APIRouter(tags=["roles"], responses=_RESPONSES)
+
+capabilities_router = APIRouter(tags=["capabilities"], responses=_RESPONSES)
 
 # URL segment -> the scope it addresses. The same four handlers are mounted once
 # per segment (§89), so only these three prefixes exist as routes.
@@ -62,6 +77,23 @@ async def _require_role_in_scope(
         )
 
 
+async def _invalidate_resource(
+    sio: socketio.AsyncServer, *, scope: RoleScopeType, resource_id: str
+) -> None:
+    """A role definition changed, so every member's permissions may have.
+
+    Bounded to active members: a stranger holds no cached entry to invalidate.
+    """
+    await emit_capabilities_invalidated(
+        sio,
+        to_user_ids=await affected_viewer_ids(
+            resource_type=scope, resource_id=resource_id
+        ),
+        resource_type=scope,
+        resource_id=resource_id,
+    )
+
+
 def _mount(segment: str, scope: RoleScopeType) -> None:
     """Bind the role endpoints for one resource scope.
 
@@ -84,6 +116,7 @@ def _mount(segment: str, scope: RoleScopeType) -> None:
         request: Request,
         resource_id: str,
         body: CreateRoleRequest,
+        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
         current_user_id: str = Depends(get_current_user_id),
         service: RoleService = Depends(get_role_service),
         authorization: AuthorizationService = Depends(get_authorization_service),
@@ -97,6 +130,7 @@ def _mount(segment: str, scope: RoleScopeType) -> None:
             priority=body.priority,
             created_by=current_user_id,
         )
+        await _invalidate_resource(sio, scope=scope, resource_id=resource_id)
         return ok(request, data=to_role_view(role), status_code=201)
 
     async def update_role(
@@ -104,6 +138,7 @@ def _mount(segment: str, scope: RoleScopeType) -> None:
         resource_id: str,
         role_id: str,
         body: UpdateRoleRequest,
+        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
         current_user_id: str = Depends(get_current_user_id),
         service: RoleService = Depends(get_role_service),
         authorization: AuthorizationService = Depends(get_authorization_service),
@@ -118,11 +153,13 @@ def _mount(segment: str, scope: RoleScopeType) -> None:
             permissions=body.permissions,
             priority=body.priority,
         )
+        await _invalidate_resource(sio, scope=scope, resource_id=resource_id)
         return ok(request, data=to_role_view(role))
 
     async def delete_role(
         resource_id: str,
         role_id: str,
+        sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
         current_user_id: str = Depends(get_current_user_id),
         service: RoleService = Depends(get_role_service),
         authorization: AuthorizationService = Depends(get_authorization_service),
@@ -132,6 +169,7 @@ def _mount(segment: str, scope: RoleScopeType) -> None:
             service, role_id=role_id, scope=scope, resource_id=resource_id
         )
         await service.delete_role(role_id)
+        await _invalidate_resource(sio, scope=scope, resource_id=resource_id)
 
     collection = f"/{segment}/{{resource_id}}/roles"
     roles_router.add_api_route(
@@ -177,6 +215,7 @@ async def assign_roles(
     request: Request,
     relationship_id: str,
     body: AssignRolesRequest,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
     current_user_id: str = Depends(get_current_user_id),
     service: RoleService = Depends(get_role_service),
     authorization: AuthorizationService = Depends(get_authorization_service),
@@ -212,7 +251,84 @@ async def assign_roles(
         {"$set": {"role_ids": [str(role_id) for role_id in body.role_ids]}},
     )
     assert updated is not None
+    # The subject's permissions just changed; without this they would keep
+    # rendering the old affordances until their cache went stale.
+    await emit_capabilities_invalidated(
+        sio,
+        to_user_ids=[str(updated.user_id)],
+        resource_type=scope,
+        resource_id=resource_id,
+    )
     return ok(request, data=to_relationship_view(updated))
 
 
-__all__ = ["RolesRepository", "roles_router"]
+def get_capabilities_service() -> CapabilitiesService:
+    return CapabilitiesService()
+
+
+@capabilities_router.post(
+    "/viewer/capabilities",
+    response_model=SuccessResponse[CapabilitiesResponse],
+)
+async def resolve_viewer_capabilities(
+    request: Request,
+    body: CapabilitiesRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    service: CapabilitiesService = Depends(get_capabilities_service),
+):
+    """What the caller may do across a batch of resources.
+
+    POST rather than GET because a fifty-reference body does not belong in a
+    query string, and the answer is per-viewer, so nothing downstream could
+    cache it anyway. The batch limit is enforced by the request schema, which
+    returns 422 above it.
+    """
+    results = await service.resolve(
+        user_id=current_user_id,
+        resources=[(ref.type, ref.id) for ref in body.resources],
+        actions=body.actions,
+    )
+    return ok(
+        request,
+        data=CapabilitiesResponse(
+            capabilities=[to_capabilities_view(result) for result in results]
+        ),
+    )
+
+
+def _register_resource_capabilities() -> None:
+    """One `GET .../capabilities` per scope, for cold deep links.
+
+    Same service as the batch endpoint — a deep link that resolves its own
+    permissions must not be able to get a different answer than the inbox did.
+    """
+
+    for segment, scope in _SCOPES.items():
+
+        def make_handler(scope: RoleScopeType = scope):
+            async def handler(
+                request: Request,
+                resource_id: str,
+                current_user_id: str = Depends(get_current_user_id),
+                service: CapabilitiesService = Depends(get_capabilities_service),
+            ):
+                results = await service.resolve(
+                    user_id=current_user_id, resources=[(scope, resource_id)]
+                )
+                return ok(request, data=to_capabilities_view(results[0]))
+
+            return handler
+
+        capabilities_router.add_api_route(
+            f"/{segment}/{{resource_id}}/capabilities",
+            make_handler(),
+            methods=["GET"],
+            response_model=SuccessResponse[ResourceCapabilitiesView],
+            name=f"get_{scope}_capabilities",
+        )
+
+
+_register_resource_capabilities()
+
+
+__all__ = ["RolesRepository", "capabilities_router", "roles_router"]

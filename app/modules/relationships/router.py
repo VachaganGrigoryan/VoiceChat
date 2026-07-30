@@ -30,6 +30,7 @@ from app.modules.relationships.schemas import (
     to_relationship_view,
 )
 from app.modules.realtime import (
+    emit_capabilities_invalidated,
     emit_relationship_activated,
     emit_relationship_requested,
     emit_relationship_revoked,
@@ -68,6 +69,20 @@ async def _emit_lifecycle(
         await emit_relationship_revoked(sio, to_user_ids=audience, payload=payload)
     else:
         await emit_relationship_requested(sio, to_user_ids=audience, payload=payload)
+
+    # A membership transition changes what the subject may do in that resource,
+    # so any capabilities they have cached for it are now wrong.
+    if doc.kind == "membership" and doc.target_type in {
+        "space",
+        "channel",
+        "conversation",
+    }:
+        await emit_capabilities_invalidated(
+            sio,
+            to_user_ids=[str(doc.user_id)],
+            resource_type=doc.target_type,
+            resource_id=str(doc.target_id),
+        )
 
 
 # --- Connections (§80) -------------------------------------------------------
