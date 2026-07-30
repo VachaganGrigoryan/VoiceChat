@@ -139,13 +139,48 @@ class SpacesService:
         viewer_role = membership.role if membership is not None else None
         return self._to_view(space, viewer_role=viewer_role)
 
+    async def ensure_default_vogi_space(self, user_id: str | None = None) -> SpaceDocument:
+        """Find or create the default Vogi system space, ensuring user_id is a member if provided."""
+        vogi_space = await self.repo.get_by_slug("vogi")
+        if vogi_space is None:
+            now = datetime.now(UTC)
+            vogi_space = SpaceDocument(
+                name="Vogi",
+                slug="vogi",
+                owner_user_id=user_id or "system",
+                created_by=user_id or "system",
+                visibility="public",
+                join_policy="open",
+                settings={"kind": "community", "is_default": True},
+                created_at=now,
+                updated_at=now,
+            )
+            await vogi_space.insert()
+            seeded = await self.repo.seed_roles(space_id=vogi_space.str_id)
+            member_role = seeded.get(ROLE_MEMBER)
+            if member_role is not None:
+                vogi_space.default_role_ids = [member_role.str_id]
+                await vogi_space.save()
+
+        if user_id:
+            m = await self.repo.get_membership(space_id=vogi_space.str_id, user_id=user_id)
+            if m is None:
+                await self.repo.ensure_membership(
+                    space_id=vogi_space.str_id,
+                    user_id=user_id,
+                    role=ROLE_MEMBER,
+                )
+        return vogi_space
+
     async def list_for_user(self, *, user_id: str) -> list[SpaceView]:
+        await self.ensure_default_vogi_space(user_id=user_id)
         memberships = await self.repo.list_memberships_for_user(user_id=user_id)
         spaces: list[SpaceView] = []
         for member in memberships:
             space = await self.repo.get_by_id(str(member.space_id))
             if space is not None:
                 spaces.append(self._to_view(space, viewer_role=member.role))
+        spaces.sort(key=lambda s: 0 if (s.slug == "vogi" or s.is_default) else 1)
         return spaces
 
     async def check_membership(self, *, space_id: str, user_id: str) -> bool:
@@ -475,6 +510,7 @@ class SpacesService:
         return self._to_join_request_view(pending)
 
     def _to_view(self, space: SpaceDocument, viewer_role: str | None = None) -> SpaceView:
+        is_default = space.slug == "vogi" or bool(space.settings and space.settings.get("is_default"))
         return SpaceView(
             id=space.str_id,
             name=space.name,
@@ -489,6 +525,7 @@ class SpacesService:
             created_at=space.created_at,
             updated_at=space.updated_at,
             viewer_role=viewer_role,
+            is_default=is_default,
         )
 
     async def _require_space_member(self, *, space_id: str, user_id: str) -> None:

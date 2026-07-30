@@ -20,6 +20,8 @@ class ConversationsReadMixin:
         folder: str | None = None,
         conversation_types: Sequence[str] | None = None,
         space_id: str | None = None,
+        shared_space_dm_peer_ids: Sequence[str] | None = None,
+        include_all_global_dms: bool = False,
     ) -> tuple[list[ConversationDocument], str | None]:
         """List a user's conversations, pinned first then most-recent activity.
 
@@ -33,11 +35,6 @@ class ConversationsReadMixin:
         """
         pipeline: list[dict[str, Any]] = [
             {"$match": {"participant_ids": str(user_id)}},
-            {
-                "$match": {
-                    "space_id": str(space_id) if space_id is not None else None
-                }
-            },
             {
                 "$addFields": {
                     "_activity_at": {"$ifNull": ["$last_message_at", "$updated_at"]},
@@ -89,8 +86,54 @@ class ConversationsReadMixin:
         if conversation_types is not None:
             pipeline.insert(
                 1,
-                {"$match": {"type": {"$in": [str(kind) for kind in conversation_types]}}},
+                {
+                    "$match": {
+                        "type": {"$in": [str(kind) for kind in conversation_types]}
+                    }
+                },
             )
+
+        if space_id is None:
+            pipeline.insert(1, {"$match": {"space_id": None}})
+        else:
+            space_group_match: dict[str, Any] = {
+                "type": "group",
+                "space_id": str(space_id),
+            }
+            if include_all_global_dms:
+                pipeline.insert(
+                    1,
+                    {
+                        "$match": {
+                            "$or": [
+                                space_group_match,
+                                {"type": "dm", "space_id": None},
+                            ]
+                        }
+                    },
+                )
+            else:
+                shared_peer_ids = [
+                    str(peer_id) for peer_id in (shared_space_dm_peer_ids or [])
+                ]
+                if shared_peer_ids:
+                    pipeline.insert(
+                        1,
+                        {
+                            "$match": {
+                                "$or": [
+                                    space_group_match,
+                                    {
+                                        "type": "dm",
+                                        "space_id": None,
+                                        "participant_ids": {"$in": shared_peer_ids},
+                                    },
+                                ]
+                            }
+                        },
+                    )
+                else:
+                    pipeline.insert(1, {"$match": space_group_match})
 
         if folder is not None:
             pipeline.append({"$match": {"_folder": folder}})

@@ -54,8 +54,12 @@ async def test_spaces_crud_and_slug_uniqueness(inprocess_client):
     )
     assert resp_list.status_code == 200
     spaces = resp_list.json()["data"]
-    assert len(spaces) == 1
-    assert spaces[0]["slug"] == "my-workspace"
+    # `/spaces/me` materializes the default Vogi space on first read and sorts
+    # it first, so an owner of one space sees two.
+    assert len(spaces) == 2
+    assert spaces[0]["slug"] == "vogi"
+    assert spaces[0]["is_default"] is True
+    assert [space["slug"] for space in spaces[1:]] == ["my-workspace"]
 
 @pytest.mark.asyncio
 async def test_space_invite_and_redeem_flow(inprocess_client):
@@ -160,9 +164,11 @@ async def test_ping_to_org_direct_join_request(inprocess_client):
 async def test_space_scoped_conversations_and_global_scope(inprocess_client):
     owner, owner_tokens = await _create_verified_user_and_tokens("space-owner4@test.com")
     user, user_tokens = await _create_verified_user_and_tokens("space-user4@test.com")
+    outsider, _ = await _create_verified_user_and_tokens("space-outsider-dm@test.com")
 
     # Grant chat permission between them to allow conversation creation
     await _grant_chat_permission(str(owner["_id"]), str(user["_id"]))
+    await _grant_chat_permission(str(owner["_id"]), str(outsider["_id"]))
 
     # Create space
     resp_space = await inprocess_client.post(
@@ -213,6 +219,22 @@ async def test_space_scoped_conversations_and_global_scope(inprocess_client):
     conv_data = resp_conv.json()["data"]
     assert conv_data["space_id"] == space_id
 
+    resp_member_dm = await inprocess_client.post(
+        "/conversations",
+        json={"peer_user_id": str(user["_id"])},
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert resp_member_dm.status_code == 200
+    member_dm_id = resp_member_dm.json()["data"]["id"]
+
+    resp_outsider_dm = await inprocess_client.post(
+        "/conversations",
+        json={"peer_user_id": str(outsider["_id"])},
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert resp_outsider_dm.status_code == 200
+    outsider_dm_id = resp_outsider_dm.json()["data"]["id"]
+
     # 3. List conversations scoped to this space
     resp_list = await inprocess_client.get(
         f"/conversations?space_id={space_id}",
@@ -220,8 +242,11 @@ async def test_space_scoped_conversations_and_global_scope(inprocess_client):
     )
     assert resp_list.status_code == 200
     convs = resp_list.json()["data"]
-    assert len(convs) == 1
-    assert convs[0]["space_id"] == space_id
+    scoped_ids = {conv["id"] for conv in convs}
+    assert conv_data["id"] in scoped_ids
+    assert member_dm_id in scoped_ids
+    assert outsider_dm_id not in scoped_ids
+    assert all(conv["space_id"] == space_id or conv["type"] == "dm" for conv in convs)
 
     # 4. Non-space member trying to list space conversations is rejected
     non_member, non_member_tokens = await _create_verified_user_and_tokens("non-member@test.com")
@@ -242,7 +267,17 @@ async def test_space_scoped_conversations_and_global_scope(inprocess_client):
         headers=_auth(owner_tokens["access_token"]),
     )
     assert resp_global.status_code == 201
+    global_group_id = resp_global.json()["data"]["id"]
     assert resp_global.json()["data"]["space_id"] is None
+
+    resp_scoped_after_global = await inprocess_client.get(
+        f"/conversations?space_id={space_id}",
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert resp_scoped_after_global.status_code == 200
+    assert global_group_id not in {
+        conv["id"] for conv in resp_scoped_after_global.json()["data"]
+    }
 
     # List global conversations (should show global channel only)
     resp_global_list = await inprocess_client.get(
@@ -252,8 +287,35 @@ async def test_space_scoped_conversations_and_global_scope(inprocess_client):
     assert resp_global_list.status_code == 200
     global_convs = resp_global_list.json()["data"]
     # Should only return conversations where space_id is null (our global group)
-    assert any(c["id"] == resp_global.json()["data"]["id"] for c in global_convs)
+    assert any(c["id"] == global_group_id for c in global_convs)
     assert all(c["space_id"] is None for c in global_convs)
+
+
+@pytest.mark.asyncio
+async def test_vogi_space_group_creation_materializes_default_membership(inprocess_client):
+    owner, owner_tokens = await _create_verified_user_and_tokens("vogi-owner@test.com")
+    peer, _ = await _create_verified_user_and_tokens("vogi-peer@test.com")
+
+    resp_spaces = await inprocess_client.get(
+        "/spaces/me",
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert resp_spaces.status_code == 200
+    vogi_space = next(
+        space for space in resp_spaces.json()["data"] if space["slug"] == "vogi"
+    )
+
+    resp_group = await inprocess_client.post(
+        "/conversations/groups",
+        json={
+            "title": "Vogi group",
+            "participant_ids": [str(peer["_id"])],
+            "space_id": vogi_space["id"],
+        },
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert resp_group.status_code == 201, resp_group.text
+    assert resp_group.json()["data"]["space_id"] == vogi_space["id"]
 
 
 @pytest.mark.asyncio

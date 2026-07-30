@@ -32,6 +32,7 @@ class SpaceView(BaseModel):
     # Name of the role the viewer holds in this space, or None. The owner is
     # identified by `owner_user_id`, not by a role.
     viewer_role: str | None = None
+    is_default: bool = False
 
 class SpaceMemberUserSummary(BaseModel):
     id: str

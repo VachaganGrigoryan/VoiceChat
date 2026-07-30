@@ -58,7 +58,24 @@ class CreateConversationsMixin(BaseConversationsService):
             )
 
         if space_id is not None:
-            from app.modules.spaces.repository import find_active_space_membership
+            from app.modules.spaces.repository import (
+                SpacesRepository,
+                find_active_space_membership,
+            )
+
+            spaces_repo = SpacesRepository()
+            space = await spaces_repo.get_by_id(str(space_id))
+            is_vogi_space = bool(
+                space is not None
+                and (space.slug == "vogi" or space.settings.get("is_default"))
+            )
+            if is_vogi_space:
+                for participant_id in [str(user_id), *member_ids]:
+                    await spaces_repo.ensure_membership(
+                        space_id=str(space_id),
+                        user_id=participant_id,
+                        role=ROLE_MEMBER,
+                    )
             # Verify creator is a member
             creator_member = await find_active_space_membership(
                 space_id=str(space_id), user_id=str(user_id)

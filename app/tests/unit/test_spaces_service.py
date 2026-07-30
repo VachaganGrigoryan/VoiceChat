@@ -422,6 +422,7 @@ async def test_get_space_success(service):
 @pytest.mark.asyncio
 async def test_list_spaces_success(service):
     svc, repo, _ = service
+    svc.ensure_default_vogi_space = AsyncMock()
     
     space = MagicMock()
     space.str_id = "space123"
@@ -449,3 +450,17 @@ async def test_list_spaces_success(service):
     assert res[0].viewer_role == "member"
     repo.list_memberships_for_user.assert_called_once_with(user_id="user123")
     repo.get_by_id.assert_called_once_with("space123")
+
+
+@pytest.mark.asyncio
+async def test_ensure_default_vogi_space(service):
+    svc, repo, _ = service
+    vogi_space = MagicMock()
+    vogi_space.str_id = "vogi_123"
+    vogi_space.slug = "vogi"
+    repo.get_by_slug.return_value = vogi_space
+    repo.get_membership.return_value = MagicMock()
+
+    res = await svc.ensure_default_vogi_space(user_id="user123")
+    assert res.str_id == "vogi_123"
+    repo.get_by_slug.assert_called_once_with("vogi")

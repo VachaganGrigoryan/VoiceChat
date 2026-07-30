@@ -5,8 +5,9 @@ from collections.abc import Sequence
 from typing import Any
 
 from app.core.errors import AppError
+from app.db.models import ConversationDocument, RelationshipDocument
 from app.modules.authorization.permissions import MESSAGE_CREATE, POLL_MANAGE
-from app.db.models import ConversationDocument
+from app.modules.authorization.roles import ROLE_MEMBER
 from app.modules.conversations.repository.mappers import to_conversation_view
 from app.modules.conversations.schemas import ConversationUserSummary, ConversationView
 from app.modules.conversations.service.base import BaseConversationsService
@@ -26,17 +27,49 @@ class ReadConversationsMixin(BaseConversationsService):
         conversation_types: Sequence[str] | None = ("dm", "group"),
         space_id: str | None = None,
     ) -> tuple[list[ConversationDocument], str | None]:
+        shared_space_dm_peer_ids: list[str] | None = None
+        include_all_global_dms = False
         if space_id is not None:
-            from app.modules.spaces.repository import find_active_space_membership
+            from app.modules.spaces.repository import (
+                SpacesRepository,
+                find_active_space_membership,
+            )
+
+            spaces_repo = SpacesRepository()
+            space = await spaces_repo.get_by_id(str(space_id))
+            is_vogi_space = bool(
+                space is not None
+                and (space.slug == "vogi" or space.settings.get("is_default"))
+            )
             member = await find_active_space_membership(
                 space_id=str(space_id), user_id=str(user_id)
             )
             if member is None:
-                raise AppError(
-                    code="SPACE_FORBIDDEN",
-                    message="Not a member of this space",
-                    status_code=403,
-                )
+                if is_vogi_space:
+                    await spaces_repo.ensure_membership(
+                        space_id=str(space_id), user_id=str(user_id), role=ROLE_MEMBER
+                    )
+                else:
+                    raise AppError(
+                        code="SPACE_FORBIDDEN",
+                        message="Not a member of this space",
+                        status_code=403,
+                    )
+            if is_vogi_space:
+                include_all_global_dms = True
+            else:
+                memberships = await RelationshipDocument.find(
+                    {
+                        "kind": "membership",
+                        "target_type": "space",
+                        "target_id": str(space_id),
+                        "status": "active",
+                        "user_id": {"$ne": str(user_id)},
+                    }
+                ).to_list()
+                shared_space_dm_peer_ids = [
+                    str(membership.user_id) for membership in memberships
+                ]
 
         return await self.repo.list_for_user(
             user_id=user_id,
@@ -46,6 +79,8 @@ class ReadConversationsMixin(BaseConversationsService):
             folder=folder,
             conversation_types=conversation_types,
             space_id=space_id,
+            shared_space_dm_peer_ids=shared_space_dm_peer_ids,
+            include_all_global_dms=include_all_global_dms,
         )
 
     async def get_conversation_view(

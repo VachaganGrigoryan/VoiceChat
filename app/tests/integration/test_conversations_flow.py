@@ -293,7 +293,7 @@ async def test_edit_keeps_content_envelope_in_sync(inprocess_client):
     message_id = send.json()["data"]["id"]
 
     edit = await inprocess_client.patch(
-        f"/conversations/{conversation_id}/messages/{message_id}",
+        f"/messages/{message_id}",
         json={"text": "edited"},
         headers=_auth(sender_tokens["access_token"]),
     )
