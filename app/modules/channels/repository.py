@@ -8,7 +8,7 @@ from pymongo import DESCENDING, ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from app.core.errors import AppError
-from app.db.models import ChannelDocument
+from app.db.models import ChannelDocument, MessageDocument
 from app.db.object_id import parse_object_id
 from app.db.repository import BaseRepository
 
@@ -42,6 +42,24 @@ class ChannelsRepository(BaseRepository[ChannelDocument]):
         unique_ids = list(dict.fromkeys(channel_ids))
         object_ids = [parse_object_id(channel_id) for channel_id in unique_ids]
         return await ChannelDocument.find(In(ChannelDocument.id, object_ids)).to_list()
+
+    async def count_messages_after(
+        self, *, channel_id: str, after: datetime, user_id: str
+    ) -> int:
+        """Live messages posted in a channel after a timestamp.
+
+        Backs the unread badge. Scheduled messages and ones the caller has hidden
+        are excluded so the count matches what they would actually see.
+        """
+        return await MessageDocument.find(
+            {
+                "container_type": "channel",
+                "container_id": str(channel_id),
+                "created_at": {"$gt": after},
+                "state": "sent",
+                "hidden_for_user_ids": {"$ne": str(user_id)},
+            }
+        ).count()
 
     async def insert(self, channel: ChannelDocument) -> ChannelDocument:
         try:

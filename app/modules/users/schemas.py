@@ -94,19 +94,3 @@ class SetMainChannelRequest(BaseModel):
     channel_id: str | None = None
 
 
-class UserChannelView(BaseModel):
-    """Slim projection of a user's public channel for profile tabs."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: StrId
-    title: str | None = None
-    slug: str | None = None
-    description: str | None = None
-    visibility: Literal["private", "members", "public"]
-    posting_policy: Literal["owner", "moderators", "members", "everyone"]
-    read_policy: Literal["members", "contacts", "public"] = "members"
-    member_count: int = 0
-    last_message_at: datetime | None = None
-    created_at: datetime
-    is_main: bool = False

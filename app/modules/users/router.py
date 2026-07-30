@@ -1,25 +1,24 @@
 from __future__ import annotations
 
+from typing import Annotated
+
+import socketio
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from starlette.requests import Request
 
+from app.core.deps import get_sio
 from app.core.errors.openapi import build_error_responses
-from app.core.http import (
-    PaginatedResponse,
-    PaginationMeta,
-    SuccessResponse,
-    ok,
-    ok_paginated,
-)
+from app.modules.channels.schemas import ChannelSummary
+from app.core.http import SuccessResponse, ok
 from app.core.security import get_current_user_id
 from app.modules.auth.repository import UsersRepository
 from app.modules.channels.dependencies import get_channel_service
+from app.modules.channels.emit import fan_out_channel_message
 from app.modules.channels.schemas import ChannelMessageCreateRequest
 from app.modules.channels.service import ChannelService
-from app.modules.feeds.dependencies import get_feeds_service
-from app.modules.feeds.schemas import FeedPostView
-from app.modules.feeds.service import FeedService
 from app.modules.messages.schemas import MessageDoc
+from app.modules.notifications.dependencies import get_notifications_service
+from app.modules.notifications.service import NotificationsService
 from app.modules.relationships.dependencies import get_connection_service
 from app.modules.realtime.presence.factory import get_presence_backend
 from app.modules.channels.repository import ChannelsRepository
@@ -29,7 +28,6 @@ from app.modules.users.schemas import (
     UpdateProfileRequest,
     UpdateStatusRequest,
     UpdateUsernameRequest,
-    UserChannelView,
     UserProfileResponse,
 )
 from app.modules.users.service import UsersService
@@ -149,8 +147,10 @@ async def delete_my_avatar(
 async def create_my_profile_post(
     request: Request,
     body: ChannelMessageCreateRequest,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
     current_user_id: str = Depends(get_current_user_id),
     service: ChannelService = Depends(get_channel_service),
+    notifications: NotificationsService = Depends(get_notifications_service),
 ):
     result = await service.create_profile_message(
         user_id=current_user_id,
@@ -158,37 +158,17 @@ async def create_my_profile_post(
         reply_mode=body.reply_mode,
         reply_to_message_id=body.reply_to_message_id,
     )
-    return ok(request, data=result, status_code=201)
-
-
-@router.get(
-    "/{username}/posts",
-    response_model=PaginatedResponse[list[FeedPostView]],
-)
-async def list_profile_posts(
-    request: Request,
-    username: str,
-    limit: int = Query(default=20, ge=1, le=100),
-    cursor: str | None = Query(default=None),
-    current_user_id: str = Depends(get_current_user_id),
-    service: FeedService = Depends(get_feeds_service),
-):
-    items, next_cursor = await service.list_profile_posts(
-        viewer_id=current_user_id,
-        username=username,
-        limit=limit,
-        cursor=cursor,
+    await fan_out_channel_message(
+        sio,
+        result=result,
+        notifications=notifications,
     )
-    return ok_paginated(
-        request,
-        data=items,
-        meta=PaginationMeta(cursor=cursor, next_cursor=next_cursor, limit=limit),
-    )
+    return ok(request, data=result.message, status_code=201)
 
 
 @router.get(
     "/{user_id}/channels",
-    response_model=SuccessResponse[list[UserChannelView]],
+    response_model=SuccessResponse[list[ChannelSummary]],
 )
 async def list_user_channels(
     request: Request,

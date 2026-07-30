@@ -213,7 +213,7 @@ async def test_profile_alias_renders_posts_media_and_comments(inprocess_client):
     assert comment.status_code == 201, comment.text
 
     feed = await inprocess_client.get(
-        f"/users/{user.username}/posts",
+        f"/feeds/users/{user.username}",
         headers=_auth(owner_tokens["access_token"]),
     )
     assert feed.status_code == 200, feed.text

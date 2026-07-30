@@ -11,13 +11,13 @@ from app.db.models import ChannelDocument, UserDocument
 from app.modules.auth.repository import UsersRepository
 from app.modules.auth.username import is_valid_username, normalize_username
 from app.modules.channels.repository import ChannelsRepository
+from app.modules.channels.schemas import ChannelSummary
 from app.modules.channels.service import ChannelService
 from app.modules.users.avatar import build_user_avatar_payload
 from app.modules.users.schemas import (
     SelectedUserProfileResponse,
     UpdateProfileRequest,
     UpdateStatusRequest,
-    UserChannelView,
     UserProfileResponse,
 )
 from app.modules.relationships.schemas import ConnectionExtras, ConnectionState
@@ -335,7 +335,7 @@ class UsersService:
         user_id: str,
         limit: int = MAX_PROFILE_CHANNELS,
         offset: int = 0,
-    ) -> list[UserChannelView]:
+    ) -> list[ChannelSummary]:
         """Public channels owned by ``user_id``, main channel first.
 
         Shared by the owner's ``/me`` page and visitors on ``/profile/:id``.
@@ -366,25 +366,18 @@ class UsersService:
 
     def _to_channel_view(
         self, channel: ChannelDocument, *, main_channel_id: str | None
-    ) -> UserChannelView:
-        channel_id = _doc_value(channel, "id", "")
-        return UserChannelView(
-            id=channel_id,
-            title=_doc_value(channel, "name"),
-            slug=_doc_value(channel, "slug"),
-            description=_doc_value(channel, "description"),
-            visibility=_doc_value(channel, "visibility"),
-            posting_policy=_doc_value(channel, "posting_policy"),
-            read_policy=(
-                "public"
-                if _doc_value(channel, "visibility") == "public"
-                else "members"
-            ),
-            member_count=_doc_value(channel, "follower_count", 0),
-            last_message_at=_doc_value(channel, "last_activity_at"),
-            created_at=_doc_value(channel, "created_at"),
+    ) -> ChannelSummary:
+        """One canonical channel shape, shared with every other listing.
+
+        The retired projection renamed four fields and carried a `read_policy`
+        that only ever mirrored `visibility`, so a client had two incompatible
+        shapes for one entity and no correct way to map between them.
+        """
+        channel_id = str(_doc_value(channel, "id", ""))
+        return ChannelService.to_summary(
+            channel,
             is_main=main_channel_id is not None
-            and str(channel_id) == str(main_channel_id),
+            and channel_id == str(main_channel_id),
         )
 
     def _to_profile_response(self, user: UserDocument) -> UserProfileResponse:
