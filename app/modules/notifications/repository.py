@@ -14,6 +14,7 @@ from app.db.models import (
     UserDocument,
 )
 from app.db.models.notification import NotificationKind, NotificationResourceType
+from app.db.object_id import parse_object_id
 from app.db.repository import BaseRepository
 from app.modules.relationships.compat import to_participant
 from app.modules.notifications.schemas import NotificationLevel, PushPlatform
@@ -80,6 +81,45 @@ class NotificationsRepository(BaseRepository[NotificationDocument]):
             .limit(limit)
             .to_list()
         )
+
+    async def mark_notification_read(
+        self, *, notification_id: str, user_id: str, read_at: datetime
+    ) -> NotificationDocument | None:
+        """Mark one notification read, scoped to its owner.
+
+        The `user_id` is part of the filter rather than a separate check, so a
+        notification belonging to someone else simply does not match.
+        `$exists`/`None` guard keeps a repeat call from moving the timestamp.
+        """
+        return await self.find_one_and_update(
+            {
+                "_id": parse_object_id(notification_id),
+                "user_id": str(user_id),
+                "read_at": None,
+            },
+            {"$set": {"read_at": read_at}},
+        )
+
+    async def find_notification(
+        self, *, notification_id: str, user_id: str
+    ) -> NotificationDocument | None:
+        return await NotificationDocument.find_one(
+            {"_id": parse_object_id(notification_id), "user_id": str(user_id)}
+        )
+
+    async def mark_all_notifications_read(
+        self, *, user_id: str, read_at: datetime
+    ) -> int:
+        result = await self.raw.update_many(
+            {"user_id": str(user_id), "read_at": None},
+            {"$set": {"read_at": read_at}},
+        )
+        return int(result.modified_count)
+
+    async def count_unread_notifications(self, *, user_id: str) -> int:
+        return await NotificationDocument.find(
+            {"user_id": str(user_id), "read_at": None}
+        ).count()
 
     async def update_participant_settings(
         self,

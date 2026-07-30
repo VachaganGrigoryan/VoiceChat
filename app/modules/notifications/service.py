@@ -144,6 +144,39 @@ class NotificationsService:
         notifications = await self.repo.list_notifications(user_id=user_id, limit=limit)
         return [self._to_notification_view(notification) for notification in notifications]
 
+    async def mark_read(self, *, user_id: str, notification_id: str) -> NotificationView:
+        """Mark one notification read.
+
+        Idempotent: a second call leaves the original `read_at` in place rather
+        than moving it, so "when did I see this" stays answerable.
+        """
+        updated = await self.repo.mark_notification_read(
+            notification_id=notification_id,
+            user_id=user_id,
+            read_at=datetime.now(UTC),
+        )
+        if updated is None:
+            # Either already read, or not the caller's to mark.
+            existing = await self.repo.find_notification(
+                notification_id=notification_id, user_id=user_id
+            )
+            if existing is None:
+                raise AppError(
+                    code="NOTIFICATION_NOT_FOUND",
+                    message="Notification not found",
+                    status_code=404,
+                )
+            return self._to_notification_view(existing)
+        return self._to_notification_view(updated)
+
+    async def mark_all_read(self, *, user_id: str) -> int:
+        return await self.repo.mark_all_notifications_read(
+            user_id=user_id, read_at=datetime.now(UTC)
+        )
+
+    async def unread_count(self, *, user_id: str) -> int:
+        return await self.repo.count_unread_notifications(user_id=user_id)
+
     async def update_conversation_settings(
         self,
         *,

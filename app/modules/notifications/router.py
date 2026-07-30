@@ -41,6 +41,40 @@ async def list_notifications(
     return ok(request, data=notifications)
 
 
+@router.get("/unread-count", response_model=SuccessResponse[dict[str, int]])
+async def unread_count(
+    request: Request,
+    user=Depends(require_verified_user),
+    service: NotificationsService = Depends(get_notifications_service),
+):
+    """The badge value, without paging the notification list to compute it."""
+    return ok(request, data={"count": await service.unread_count(user_id=user.str_id)})
+
+
+@router.post("/read-all", response_model=SuccessResponse[dict[str, int]])
+async def mark_all_read(
+    request: Request,
+    user=Depends(require_verified_user),
+    service: NotificationsService = Depends(get_notifications_service),
+):
+    updated = await service.mark_all_read(user_id=user.str_id)
+    return ok(request, data={"updated": updated})
+
+
+@router.post("/{notification_id}/read", response_model=SuccessResponse[NotificationView])
+async def mark_read(
+    request: Request,
+    notification_id: str,
+    user=Depends(require_verified_user),
+    service: NotificationsService = Depends(get_notifications_service),
+):
+    """Idempotent; a notification that is not the caller's is a 404."""
+    notification = await service.mark_read(
+        user_id=user.str_id, notification_id=notification_id
+    )
+    return ok(request, data=notification)
+
+
 @router.patch(
     "/preferences",
     response_model=SuccessResponse[UserProfileResponse],
