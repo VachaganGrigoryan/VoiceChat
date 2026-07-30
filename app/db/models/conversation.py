@@ -100,4 +100,17 @@ class ConversationDocument(TimestampedDocument):
                 [("space_id", ASCENDING)],
                 name="ix_conversations_space_id",
             ),
+            # Group directory browse. The leading three fields are the listing
+            # invariant itself: only space-scoped, space-public groups are
+            # discoverable, so a spaceless group never enters the index scan.
+            IndexModel(
+                [
+                    ("type", ASCENDING),
+                    ("space_id", ASCENDING),
+                    ("space_visibility", ASCENDING),
+                    ("created_at", DESCENDING),
+                    ("_id", DESCENDING),
+                ],
+                name="ix_conversations_directory_groups",
+            ),
         ]

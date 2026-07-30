@@ -71,29 +71,6 @@ async def list_channel_feed(
 
 
 @router.get(
-    "/channels/{channel_id}/posts",
-    response_model=PaginatedResponse[list[FeedPostView]],
-    dependencies=[Depends(rate_limit("30/minute", scope="feed_channel_posts"))],
-)
-async def list_channel_posts(
-    request: Request,
-    channel_id: str,
-    limit: int = Query(20, ge=1, le=100),
-    cursor: Optional[str] = Query(None),
-    user=Depends(require_verified_user),
-    service: FeedService = Depends(get_feeds_service),
-):
-    items, next_cursor = await service.list_channel_posts(
-        viewer_id=user.str_id, channel_id=channel_id, limit=limit, cursor=cursor
-    )
-    return ok_paginated(
-        request,
-        data=items,
-        meta=PaginationMeta(cursor=cursor, next_cursor=next_cursor, limit=limit),
-    )
-
-
-@router.get(
     "/channels/{channel_id}/posts/{post_id}/comments",
     response_model=PaginatedResponse[list[FeedPostView]],
     dependencies=[Depends(rate_limit("30/minute", scope="feed_post_comments"))],

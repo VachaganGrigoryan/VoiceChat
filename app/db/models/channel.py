@@ -5,7 +5,7 @@ from typing import Any, Literal
 from typing_extensions import Self
 
 from pydantic import Field, model_validator
-from pymongo import ASCENDING, IndexModel
+from pymongo import ASCENDING, DESCENDING, IndexModel
 
 from app.db.collections import COL_CHANNELS
 from app.db.document import TimestampedDocument
@@ -78,5 +78,26 @@ class ChannelDocument(TimestampedDocument):
             IndexModel(
                 [("tags", ASCENDING)],
                 name="ix_channels_tags",
+            ),
+            # Directory browse. Without these the directory is a collection scan
+            # on its hottest path. `_id` trails the sort key because the cursor
+            # is a keyset on `(sort_value, _id)`, never an offset.
+            IndexModel(
+                [
+                    ("visibility", ASCENDING),
+                    ("kind", ASCENDING),
+                    ("follower_count", DESCENDING),
+                    ("_id", DESCENDING),
+                ],
+                name="ix_channels_directory_popular",
+            ),
+            IndexModel(
+                [
+                    ("visibility", ASCENDING),
+                    ("kind", ASCENDING),
+                    ("last_activity_at", DESCENDING),
+                    ("_id", DESCENDING),
+                ],
+                name="ix_channels_directory_recent",
             ),
         ]

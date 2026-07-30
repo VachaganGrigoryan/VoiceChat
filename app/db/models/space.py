@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import Field, model_validator
-from pymongo import ASCENDING, IndexModel
+from pymongo import ASCENDING, DESCENDING, IndexModel
 
 from app.db.collections import COL_SPACES
 from app.db.document import TimestampedDocument
@@ -52,4 +52,15 @@ class SpaceDocument(TimestampedDocument):
         indexes = [
             IndexModel([("slug", ASCENDING)], unique=True, name="ux_spaces_slug"),
             IndexModel([("owner_user_id", ASCENDING)], name="ix_spaces_owner_user_id"),
+            # Directory browse. Ordered by recency rather than membership size:
+            # spaces carry no denormalized member counter, so a popularity sort
+            # has nothing to index. See `DirectoryService.list_spaces`.
+            IndexModel(
+                [
+                    ("visibility", ASCENDING),
+                    ("created_at", DESCENDING),
+                    ("_id", DESCENDING),
+                ],
+                name="ix_spaces_directory",
+            ),
         ]
