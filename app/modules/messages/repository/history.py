@@ -136,16 +136,20 @@ class HistoryRepositoryMixin:
         user_id: str,
         query: str,
         limit: int,
-        skip: int,
-    ) -> tuple[list[MessageDocument], bool]:
+        cursor: str | None = None,
+    ) -> tuple[list[MessageDocument], str | None]:
         """Full-text search over message plaintext in accessible containers.
 
-        Returns the page plus a ``has_more`` flag. Deleted messages are absent
-        (hard-deleted), and messages hidden for the caller or still scheduled are
-        excluded from results.
+        Sorted by recency rather than Mongo's live-computed text relevance
+        score: a `$meta: textScore` is not a stored, comparable field, so it
+        cannot back a keyset cursor. Newest-first with an `_id` tie-break keeps
+        pagination stable under insertion, the same tradeoff the directory's
+        "relevance" sort already makes for the same reason. Deleted messages
+        are absent (hard-deleted), and messages hidden for the caller or still
+        scheduled are excluded from results.
         """
         if not container_ids:
-            return [], False
+            return [], None
 
         q: dict[str, Any] = {
             "$text": {"$search": query},
@@ -154,18 +158,31 @@ class HistoryRepositoryMixin:
             "hidden_for_user_ids": {"$ne": user_id},
             "state": {"$ne": "scheduled"},
         }
-        cur = (
-            self.col.find(q, {"score": {"$meta": "textScore"}})
-            .sort([("score", {"$meta": "textScore"})])
-            .skip(skip)
-            .limit(limit + 1)
-        )
+        if cursor:
+            cursor_data = decode_cursor(cursor, required_fields={"created_at", "message_id"})
+            q["$or"] = [
+                {"created_at": {"$lt": cursor_data["created_at"]}},
+                {
+                    "$and": [
+                        {"created_at": cursor_data["created_at"]},
+                        {"_id": {"$lt": _oid(str(cursor_data["message_id"]))}},
+                    ]
+                },
+            ]
+
+        cur = self.col.find(q).sort([("created_at", -1), ("_id", -1)]).limit(limit + 1)
         items = await cur.to_list(length=limit + 1)
-        has_more = len(items) > limit
-        return (
-            [MessageDocument.model_validate(item) for item in items[:limit]],
-            has_more,
-        )
+
+        next_cursor: str | None = None
+        if len(items) > limit:
+            last_visible = items[limit - 1]
+            next_cursor = encode_cursor(
+                created_at=last_visible["created_at"],
+                message_id=str(last_visible["_id"]),
+            )
+            items = items[:limit]
+
+        return [MessageDocument.model_validate(item) for item in items], next_cursor
 
     async def list_by_ids_in_container(
         self,

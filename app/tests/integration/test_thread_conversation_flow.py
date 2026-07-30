@@ -81,7 +81,7 @@ async def test_thread_items_share_the_root_container(inprocess_client):
         assert created.status_code == 201, created.text
 
     thread = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages/{message_id}/thread",
+        f"/messages/{message_id}/thread",
         headers=_auth(a_tokens["access_token"]),
     )
     assert thread.status_code == 200, thread.text
@@ -95,7 +95,7 @@ async def test_thread_items_share_the_root_container(inprocess_client):
     assert all(item["thread_root_id"] == message_id for item in items)
 
     summary = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages/{message_id}/thread-summary",
+        f"/messages/{message_id}/thread-summary",
         headers=_auth(a_tokens["access_token"]),
     )
     assert summary.status_code == 200, summary.text

@@ -270,11 +270,6 @@ class SetDraftRequest(BaseModel):
     text: str = Field(default="", max_length=4000)
 
 
-class MessageSearchResults(BaseModel):
-    items: list[MessageDoc] = Field(default_factory=list)
-    has_more: bool = False
-
-
 class AddReactionRequest(BaseModel):
     emoji: str = Field(min_length=1, max_length=32)
 

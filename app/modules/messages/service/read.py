@@ -21,8 +21,8 @@ class ReadMessagesMixin:
         user_id: str,
         query: str,
         limit: int = 20,
-        page: int = 1,
-    ) -> tuple[list[MessageDoc], bool]:
+        cursor: str | None = None,
+    ) -> tuple[list[MessageDoc], str | None]:
         normalized_query = (query or "").strip()
         if not normalized_query:
             raise AppError(
@@ -36,28 +36,22 @@ class ReadMessagesMixin:
                 message="limit must be between 1 and 100",
                 status_code=400,
             )
-        if page < 1:
-            raise AppError(
-                code="INVALID_PAGE",
-                message="page must be greater than or equal to 1",
-                status_code=400,
-            )
         if self.conversations_service is None:
-            return [], False
+            return [], None
         conversation_ids = (
             await self.conversations_service.accessible_conversation_ids(
                 user_id=user_id
             )
         )
-        docs, has_more = await self.repo.search_messages(
+        docs, next_cursor = await self.repo.search_messages(
             container_type="conversation",
             container_ids=conversation_ids,
             user_id=user_id,
             query=normalized_query,
             limit=limit,
-            skip=(page - 1) * limit,
+            cursor=cursor,
         )
-        return [to_message_doc(doc) for doc in docs], has_more
+        return [to_message_doc(doc) for doc in docs], next_cursor
 
     async def _to_message_docs_with_receipts(
         self,

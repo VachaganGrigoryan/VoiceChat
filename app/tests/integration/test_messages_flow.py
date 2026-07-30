@@ -13,16 +13,16 @@ def _auth(access_token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {access_token}"}
 
 
-def test_legacy_message_paths_are_absent_from_openapi() -> None:
+def test_legacy_nested_item_paths_are_absent_from_openapi() -> None:
     spec = create_app().openapi()
 
-    legacy_paths = [
+    nested_item_paths = [
         path
         for path in spec["paths"]
-        if path == "/messages" or path.startswith("/messages/")
+        if path.startswith("/conversations/") and "/messages/{" in path
     ]
 
-    assert legacy_paths == []
+    assert nested_item_paths == []
 
 
 @pytest.mark.asyncio
@@ -71,7 +71,7 @@ async def test_conversation_scoped_message_thread_and_reaction_flow(
     assert reply.status_code == 201, reply.text
 
     thread = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages/{root_message['id']}/thread",
+        f"/messages/{root_message['id']}/thread",
         headers=_auth(sender_tokens["access_token"]),
     )
     assert thread.status_code == 200, thread.text
@@ -81,9 +81,129 @@ async def test_conversation_scoped_message_thread_and_reaction_flow(
     ]
 
     reaction = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/{root_message['id']}/reactions",
+        f"/messages/{root_message['id']}/reactions",
         json={"emoji": "fire"},
         headers=_auth(receiver_tokens["access_token"]),
     )
     assert reaction.status_code == 200, reaction.text
     assert reaction.json()["data"]["reactions"][0]["emoji"] == "fire"
+
+
+@pytest.mark.asyncio
+async def test_non_participant_message_access_denied_with_403(inprocess_client):
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "msg-gate-sender@test.com"
+    )
+    receiver, _ = await _create_verified_user_and_tokens(
+        "msg-gate-receiver@test.com"
+    )
+    outsider, outsider_tokens = await _create_verified_user_and_tokens(
+        "msg-gate-outsider@test.com"
+    )
+    await _grant_chat_permission(str(sender["_id"]), str(receiver["_id"]))
+
+    conversation = await inprocess_client.post(
+        "/conversations",
+        json={"peer_user_id": str(receiver["_id"])},
+        headers=_auth(sender_tokens["access_token"]),
+    )
+    assert conversation.status_code == 200, conversation.text
+    conversation_id = conversation.json()["data"]["id"]
+
+    root = await inprocess_client.post(
+        f"/conversations/{conversation_id}/messages/text",
+        json={"text": "private message"},
+        headers=_auth(sender_tokens["access_token"]),
+    )
+    assert root.status_code == 201, root.text
+    msg_id = root.json()["data"]["id"]
+
+    # Non-participant gets 403 FORBIDDEN on flat item endpoints.
+    get_res = await inprocess_client.get(
+        f"/messages/{msg_id}",
+        headers=_auth(outsider_tokens["access_token"]),
+    )
+    assert get_res.status_code == 403, get_res.text
+    assert get_res.json()["error"]["code"] == "FORBIDDEN"
+
+    patch_res = await inprocess_client.patch(
+        f"/messages/{msg_id}",
+        json={"text": "hacked"},
+        headers=_auth(outsider_tokens["access_token"]),
+    )
+    assert patch_res.status_code == 403, patch_res.text
+
+    react_res = await inprocess_client.post(
+        f"/messages/{msg_id}/reactions",
+        json={"emoji": "thumbsup"},
+        headers=_auth(outsider_tokens["access_token"]),
+    )
+    assert react_res.status_code == 403, react_res.text
+
+
+@pytest.mark.asyncio
+async def test_channel_message_flat_route_operations_and_pin_rejection(inprocess_client):
+    owner, owner_tokens = await _create_verified_user_and_tokens("chan-flat-owner@test.com")
+
+    channel = await inprocess_client.post(
+        "/channels",
+        json={"name": "Announcements", "slug": "announcements"},
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert channel.status_code == 201, channel.text
+    channel_id = channel.json()["data"]["id"]
+
+    post = await inprocess_client.post(
+        f"/channels/{channel_id}/messages",
+        json={"text": "Channel Announcement"},
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert post.status_code == 201, post.text
+    msg_id = post.json()["data"]["id"]
+
+    # React to channel post via /messages/{message_id}/reactions
+    reaction = await inprocess_client.post(
+        f"/messages/{msg_id}/reactions",
+        json={"emoji": "rocket"},
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert reaction.status_code == 200, reaction.text
+
+    # Edit channel post via /messages/{message_id}
+    edited = await inprocess_client.patch(
+        f"/messages/{msg_id}",
+        json={"text": "Updated Announcement"},
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["data"]["content"]["plaintext"]["text"] == "Updated Announcement"
+
+    # Mark read via /messages/{message_id}/read
+    read_res = await inprocess_client.post(
+        f"/messages/{msg_id}/read",
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert read_res.status_code == 200, read_res.text
+
+    # Get thread via /messages/{message_id}/thread
+    thread_res = await inprocess_client.get(
+        f"/messages/{msg_id}/thread",
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert thread_res.status_code == 200, thread_res.text
+
+    # Asserting POST /messages/{message_id}/pin rejects channel message with 400 INVALID_CONTAINER
+    pin_res = await inprocess_client.post(
+        f"/messages/{msg_id}/pin",
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert pin_res.status_code == 400, pin_res.text
+    assert pin_res.json()["error"]["code"] == "INVALID_CONTAINER"
+
+    # Delete channel post via /messages/{message_id}
+    del_res = await inprocess_client.delete(
+        f"/messages/{msg_id}",
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert del_res.status_code == 200, del_res.text
+

@@ -68,28 +68,28 @@ async def test_pin_authorization_and_listing(inprocess_client):
 
     # A plain member holds no pin right.
     forbidden = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/{message['id']}/pin",
+        f"/messages/{message['id']}/pin",
         headers=_auth(member_tokens["access_token"]),
     )
     assert forbidden.status_code == 403, forbidden.text
 
     # The owner may pin.
     pinned = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/{message['id']}/pin",
+        f"/messages/{message['id']}/pin",
         headers=_auth(owner_tokens["access_token"]),
     )
     assert pinned.status_code == 200, pinned.text
     assert message["id"] in pinned.json()["data"]["pinned_message_ids"]
 
     listing = await inprocess_client.get(
-        f"/conversations/{conversation_id}/pinned-messages",
+        f"/conversations/{conversation_id}/messages/pinned",
         headers=_auth(member_tokens["access_token"]),
     )
     assert listing.status_code == 200, listing.text
     assert [item["id"] for item in listing.json()["data"]] == [message["id"]]
 
     unpinned = await inprocess_client.delete(
-        f"/conversations/{conversation_id}/messages/{message['id']}/pin",
+        f"/messages/{message['id']}/pin",
         headers=_auth(owner_tokens["access_token"]),
     )
     assert unpinned.status_code == 200, unpinned.text
@@ -106,21 +106,21 @@ async def test_dm_participants_can_pin_and_unpin_messages(inprocess_client):
     )
 
     pinned = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/{message['id']}/pin",
+        f"/messages/{message['id']}/pin",
         headers=_auth(receiver_tokens["access_token"]),
     )
     assert pinned.status_code == 200, pinned.text
     assert message["id"] in pinned.json()["data"]["pinned_message_ids"]
 
     listing = await inprocess_client.get(
-        f"/conversations/{conversation_id}/pinned-messages",
+        f"/conversations/{conversation_id}/messages/pinned",
         headers=_auth(sender_tokens["access_token"]),
     )
     assert listing.status_code == 200, listing.text
     assert [item["id"] for item in listing.json()["data"]] == [message["id"]]
 
     unpinned = await inprocess_client.delete(
-        f"/conversations/{conversation_id}/messages/{message['id']}/pin",
+        f"/messages/{message['id']}/pin",
         headers=_auth(receiver_tokens["access_token"]),
     )
     assert unpinned.status_code == 200, unpinned.text
@@ -147,7 +147,7 @@ async def test_forward_message_carries_origin_header(inprocess_client):
     )
 
     forwarded = await inprocess_client.post(
-        f"/conversations/{source_id}/messages/{message['id']}/forward",
+        f"/messages/{message['id']}/forward",
         json={"target_conversation_id": target_id},
         headers=_auth(sender_tokens["access_token"]),
     )
@@ -169,7 +169,7 @@ async def test_edit_history_retains_prior_versions(inprocess_client):
 
     for text in ("v2", "v3"):
         edited = await inprocess_client.patch(
-            f"/conversations/{conversation_id}/messages/{message['id']}",
+            f"/messages/{message['id']}",
             json={"text": text},
             headers=_auth(sender_tokens["access_token"]),
         )
@@ -360,7 +360,7 @@ async def test_message_search_respects_visibility(inprocess_client):
     assert found.status_code == 200, found.text
     assert any(
         item["content"]["plaintext"]["text"] == "quantum banana"
-        for item in found.json()["data"]["items"]
+        for item in found.json()["data"]
     )
 
     empty = await inprocess_client.get(
@@ -368,4 +368,41 @@ async def test_message_search_respects_visibility(inprocess_client):
         params={"q": "banana"},
         headers=_auth(stranger_tokens["access_token"]),
     )
-    assert empty.json()["data"]["items"] == []
+    assert empty.json()["data"] == []
+
+
+@pytest.mark.asyncio
+async def test_message_search_paginates_by_cursor_and_is_stable_across_an_insertion(
+    inprocess_client,
+):
+    sender, sender_tokens, receiver, receiver_tokens, conversation_id = await _dm(
+        "search-page-a@test.com", "search-page-b@test.com", inprocess_client
+    )
+    for index in range(4):
+        await _send_text(
+            inprocess_client, conversation_id, sender_tokens, f"mango-page-{index}"
+        )
+
+    first = await inprocess_client.get(
+        "/search/messages",
+        params={"q": "mango-page", "limit": 2},
+        headers=_auth(receiver_tokens["access_token"]),
+    )
+    assert first.status_code == 200, first.text
+    page_one = [item["id"] for item in first.json()["data"]]
+    cursor = first.json()["meta"]["next_cursor"]
+    assert cursor
+
+    # A new match arrives between the two page requests.
+    await _send_text(
+        inprocess_client, conversation_id, sender_tokens, "mango-page-new"
+    )
+
+    second = await inprocess_client.get(
+        "/search/messages",
+        params={"q": "mango-page", "limit": 2, "cursor": cursor},
+        headers=_auth(receiver_tokens["access_token"]),
+    )
+    assert second.status_code == 200, second.text
+    page_two = [item["id"] for item in second.json()["data"]]
+    assert not set(page_one) & set(page_two), (page_one, page_two)

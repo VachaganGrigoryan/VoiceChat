@@ -22,7 +22,7 @@ async def _create_verified_user_and_tokens(email: str) -> tuple[dict, dict]:
     user = {
         "_id": ObjectId(),
         "email": email.lower(),
-        "username": f"test_{uuid.uuid4().hex[::6]}",
+        "username": f"test_{uuid.uuid4().hex[:12]}",
         "display_name": None,
         "bio": None,
         "avatar": None,
@@ -89,4 +89,80 @@ async def test_socket_rejects_invalid_token():
     finally:
         if sio.connected:
             await asyncio.wait_for(sio.disconnect(), timeout=3)
+        await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_join_channel_room_delivers_message_and_rejects_non_readers(live_client):
+    """A socket that joins a channel's room gets its messages live, and a
+    viewer without read access is rejected rather than silently subscribed."""
+    try:
+        health = await live_client.get("/health/live")
+    except Exception:
+        pytest.skip("Live server is not running on http://api_test:8000")
+    assert health.status_code == 200
+
+    owner, owner_tokens = await _create_verified_user_and_tokens(
+        "join-room-owner@test.com"
+    )
+    outsider, outsider_tokens = await _create_verified_user_and_tokens(
+        "join-room-outsider@test.com"
+    )
+
+    created = await live_client.post(
+        "/channels",
+        headers={"Authorization": f"Bearer {owner_tokens['access_token']}"},
+        json={
+            "name": "Join Room",
+            "kind": "text",
+            "visibility": "private",
+            "posting_policy": "everyone",
+            "comment_policy": "everyone",
+            "slug": f"join-room-{uuid.uuid4().hex[:8]}",
+        },
+    )
+    assert created.status_code == 201, created.text
+    channel_id = created.json()["data"]["id"]
+
+    owner_sio = await _connect_socket(owner_tokens["access_token"])
+    outsider_sio = await _connect_socket(outsider_tokens["access_token"])
+
+    received: list[dict] = []
+    received_event = asyncio.Event()
+    outsider_errors: list[dict] = []
+    outsider_error_event = asyncio.Event()
+
+    @owner_sio.on("receive_message")
+    async def on_receive_message(data):
+        received.append(data)
+        received_event.set()
+
+    @outsider_sio.on("error")
+    async def on_error(data):
+        outsider_errors.append(data)
+        outsider_error_event.set()
+
+    try:
+        await owner_sio.emit("join_channel", {"channel_id": channel_id})
+        await outsider_sio.emit("join_channel", {"channel_id": channel_id})
+
+        await asyncio.wait_for(outsider_error_event.wait(), timeout=5)
+        assert outsider_errors[-1]["code"] == "FORBIDDEN"
+
+        sent = await live_client.post(
+            f"/channels/{channel_id}/messages",
+            headers={"Authorization": f"Bearer {owner_tokens['access_token']}"},
+            json={"text": "delivered over the channel room"},
+        )
+        assert sent.status_code == 201, sent.text
+
+        await asyncio.wait_for(received_event.wait(), timeout=5)
+        assert received[-1]["content"]["plaintext"]["text"] == (
+            "delivered over the channel room"
+        )
+    finally:
+        if owner_sio.connected:
+            await asyncio.wait_for(owner_sio.disconnect(), timeout=3)
+        if outsider_sio.connected:
+            await asyncio.wait_for(outsider_sio.disconnect(), timeout=3)
         await asyncio.sleep(0.1)
