@@ -211,6 +211,19 @@ class FeedService:
             comment_count=doc.thread_reply_count,
             has_thread=doc.is_thread_root,
             is_deleted=doc.is_deleted,
+            style=(plaintext.style if plaintext is not None else None),
+            # `attachments` above already folds `plaintext.media` in, so the
+            # envelope is projected field by field rather than wholesale — a
+            # `content` passthrough here would double-count that media.
+            sender_id=str(doc.sender_id),
+            content_type=(doc.content.type if doc.content is not None else None),
+            reply_mode=doc.reply_mode,
+            reply_to_message_id=doc.reply_to_message_id,
+            thread_root_id=doc.thread_root_id,
+            reply_preview=doc.reply_preview,
+            mention_user_ids=doc.mention_user_ids,
+            mention_scope=doc.mention_scope,
+            poll_ref=(plaintext.poll_ref if plaintext is not None else None),
             created_at=doc.created_at,
             edited_at=doc.edited_at,
         )
