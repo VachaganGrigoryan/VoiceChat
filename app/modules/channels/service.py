@@ -5,7 +5,7 @@ from typing import Any, Literal, Protocol
 
 from app.core.errors import AppError
 from app.db.models import ChannelDocument, UserDocument
-from app.db.models.embedded import OwnerRef
+from app.db.models.embedded import OwnerRef, TextStyleDocument
 from app.modules.authorization import AuthorizationService
 from app.modules.authorization.permissions import (
     MESSAGE_CREATE,
@@ -321,6 +321,7 @@ class ChannelService:
         text: str,
         reply_mode: ReplyMode | None = None,
         reply_to_message_id: str | None = None,
+        style: TextStyleDocument | None = None,
     ) -> SendMessageResult:
         """Returns the full send result so the caller can fan it out over realtime.
 
@@ -336,6 +337,7 @@ class ChannelService:
             text=text,
             reply_mode=reply_mode,
             reply_to_message_id=reply_to_message_id,
+            style=style,
         )
 
     async def upload_media(

@@ -6,6 +6,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 from app.db.object_id import StrId
+from app.modules.messages.schemas import MessageTextStyle
 from app.modules.relationships.schemas import (
     ConnectionDirection,
     ConnectionStatusView,
@@ -259,6 +260,7 @@ class ConversationSendTextRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
     reply_mode: Optional[ReplyMode] = None
     reply_to_message_id: Optional[str] = None
+    style: Optional[MessageTextStyle] = None
 
     @model_validator(mode="after")
     def validate_reply_fields(self) -> "ConversationSendTextRequest":

@@ -32,6 +32,7 @@ from app.db.models.embedded import (
     PlaintextContentDocument,
     PollRefDocument,
     ReplyPreviewDocument,
+    TextStyleDocument,
 )
 from app.db.models.invite_link import InviteLinkDocument
 from app.db.models.join_request import JoinRequestDocument
@@ -128,6 +129,7 @@ __all__ = [
     "PasskeyChallengeDocument",
     "PasskeyDocument",
     "PlaintextContentDocument",
+    "TextStyleDocument",
     "PollDocument",
     "PollOptionDocument",
     "PollRefDocument",

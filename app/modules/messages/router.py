@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 
 from app.core.rate_limit import rate_limit
 from app.core.deps import get_sio
+from app.db.models.embedded import TextStyleDocument
 from app.core.errors.openapi import build_error_responses
 from app.core.http import (
     PaginatedResponse,
@@ -125,6 +126,9 @@ async def send_text(
         text=body.text,
         reply_mode=body.reply_mode,
         reply_to_message_id=body.reply_to_message_id,
+        style=(
+            TextStyleDocument(**body.style.model_dump()) if body.style else None
+        ),
     )
     await emit_send_result(
         sio,

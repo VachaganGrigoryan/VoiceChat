@@ -58,6 +58,22 @@ class PollRefDocument(EmbeddedBase):
     question: str
 
 
+class TextStyleDocument(EmbeddedBase):
+    """How a short text body is presented.
+
+    Additive and optional: absent on every message written before it existed,
+    and absent on any message that does not ask for it. `background` is an
+    identifier, never CSS, so the set of backgrounds can grow without a schema
+    change and a client that does not recognise one renders the text plainly.
+
+    Carries no authorization or delivery meaning and is never consulted when
+    resolving what a viewer may do.
+    """
+
+    background: str | None = Field(default=None, max_length=40)
+    align: Literal["start", "center"] | None = None
+
+
 class PlaintextContentDocument(EmbeddedBase):
     """Cleartext message body, present when the envelope encryption mode is "none".
 
@@ -75,6 +91,7 @@ class PlaintextContentDocument(EmbeddedBase):
     location: dict[str, object] | None = None
     contact: dict[str, object] | None = None
     link_preview: dict[str, object] | None = None
+    style: TextStyleDocument | None = None
 
 
 class EncryptionEnvelopeDocument(EmbeddedBase):

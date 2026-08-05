@@ -7,6 +7,7 @@ from app.db.models import (
     MediaDocument,
     MessageContainerType,
     PlaintextContentDocument,
+    TextStyleDocument,
     PollRefDocument,
 )
 from app.infra.storage import get_storage
@@ -93,6 +94,7 @@ class CreateMessagesMixin:
         text: str,
         reply_mode: ReplyMode | None = None,
         reply_to_message_id: str | None = None,
+        style: TextStyleDocument | None = None,
     ) -> SendMessageResult:
         normalized_reply_mode, normalized_reply_to_message_id = (
             self._normalize_reply_fields(
@@ -100,12 +102,20 @@ class CreateMessagesMixin:
                 reply_to_message_id=reply_to_message_id,
             )
         )
+        normalized_text = self._normalize_text(text)
         return await self._create_message(
             container_type=container_type,
             container_id=container_id,
             sender_id=sender_id,
             message_type="text",
-            text=self._normalize_text(text),
+            text=normalized_text,
+            # A style with nothing set is the same as no style at all, so it is
+            # dropped rather than persisted as an empty object.
+            plaintext=(
+                PlaintextContentDocument(text=normalized_text, style=style)
+                if style is not None and (style.background or style.align)
+                else None
+            ),
             reply_mode=normalized_reply_mode,
             reply_to_message_id=normalized_reply_to_message_id,
         )

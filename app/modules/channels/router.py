@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from starlette.requests import Request
 
 from app.core.deps import get_sio
+from app.db.models.embedded import TextStyleDocument
 from app.modules.authorization.capabilities import affected_viewer_ids
 from app.modules.realtime import emit_capabilities_invalidated
 from app.core.errors.openapi import build_error_responses
@@ -188,6 +189,9 @@ async def create_channel_message(
         text=body.text,
         reply_mode=body.reply_mode,
         reply_to_message_id=body.reply_to_message_id,
+        style=(
+            TextStyleDocument(**body.style.model_dump()) if body.style else None
+        ),
     )
     await fan_out_channel_message(
         sio,

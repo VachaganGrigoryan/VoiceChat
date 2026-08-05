@@ -19,6 +19,7 @@ from app.modules.messages.schemas import (
     MessageDoc,
     MessageEdit,
     MessagePlaintext,
+    MessageTextStyle,
     MessageReceiptSummary,
     MessageReactionGroup,
     PollRef,
@@ -202,6 +203,11 @@ def _stored_content_view(content: MessageContentDocument) -> MessageContent:
             location=plaintext.location if plaintext is not None else None,
             contact=plaintext.contact if plaintext is not None else None,
             link_preview=plaintext.link_preview if plaintext is not None else None,
+            style=(
+                MessageTextStyle(**plaintext.style.model_dump())
+                if plaintext is not None and plaintext.style is not None
+                else None
+            ),
         ),
         attachments=_content_attachments(content),
     )

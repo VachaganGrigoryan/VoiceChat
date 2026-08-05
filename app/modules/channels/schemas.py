@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from app.modules.messages.schemas import ReplyMode
+from app.modules.messages.schemas import MessageTextStyle, ReplyMode
 
 ChannelKind = Literal["profile", "text", "announcement"]
 ChannelVisibility = Literal["public", "members", "private"]
@@ -109,6 +109,7 @@ class ChannelMessageCreateRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
     reply_mode: ReplyMode | None = None
     reply_to_message_id: str | None = None
+    style: MessageTextStyle | None = None
 
 
 class ChannelViewerStateView(BaseModel):

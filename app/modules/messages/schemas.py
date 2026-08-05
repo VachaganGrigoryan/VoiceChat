@@ -76,6 +76,13 @@ class PollRef(BaseModel):
     question: str
 
 
+class MessageTextStyle(BaseModel):
+    """Presentation for a short text body. Optional and additive."""
+
+    background: Optional[str] = Field(default=None, max_length=40)
+    align: Optional[Literal["start", "center"]] = None
+
+
 class MessagePlaintext(BaseModel):
     text: Optional[str] = None
     media: Optional[MediaMeta] = None
@@ -86,6 +93,7 @@ class MessagePlaintext(BaseModel):
     location: Optional[dict[str, object]] = None
     contact: Optional[dict[str, object]] = None
     link_preview: Optional[dict[str, object]] = None
+    style: Optional[MessageTextStyle] = None
 
 
 class MessageContent(BaseModel):
