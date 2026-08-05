@@ -35,12 +35,17 @@ from app.modules.conversations.service import ConversationsService
 from app.modules.spaces.service import SpacesService
 from app.modules.relationships.schemas import to_relationship_view
 from app.modules.realtime import emit_space_invite
+from app.modules.realtime.emits import (
+    emit_capabilities_invalidated,
+    emit_resource_deleted,
+)
 
 router = APIRouter(
     prefix="/spaces",
     tags=["spaces"],
     responses=build_error_responses(400, 401, 403, 404, 409, 422, 500),
 )
+
 
 @router.post(
     "",
@@ -66,6 +71,7 @@ async def create_space(
     )
     return ok(request, data=space, status_code=201)
 
+
 @router.get(
     "/me",
     response_model=SuccessResponse[list[SpaceView]],
@@ -78,6 +84,7 @@ async def list_my_spaces(
 ):
     spaces = await service.list_for_user(user_id=user.str_id)
     return ok(request, data=spaces)
+
 
 @router.get(
     "/{space_id}",
@@ -92,6 +99,7 @@ async def get_space(
 ):
     space = await service.get_space(space_id=space_id, user_id=user.str_id)
     return ok(request, data=space)
+
 
 @router.post(
     "/{space_id}/invites",
@@ -115,6 +123,7 @@ async def create_invite(
         role_ids=body.role_ids,
     )
     return ok(request, data=invite, status_code=201)
+
 
 @router.post(
     "/{space_id}/invites/user",
@@ -142,6 +151,7 @@ async def invite_user(
     )
     return ok(request, data=invite, status_code=201)
 
+
 @router.get(
     "/{space_id}/invites",
     response_model=SuccessResponse[list[SpaceInviteLinkView]],
@@ -155,6 +165,7 @@ async def list_invites(
 ):
     invites = await service.list_invites(actor_user_id=user.str_id, space_id=space_id)
     return ok(request, data=invites)
+
 
 @router.delete(
     "/{space_id}/invites/{invite_id}",
@@ -174,6 +185,7 @@ async def revoke_invite(
         invite_id=invite_id,
     )
     return ok(request, data=None, status_code=204)
+
 
 @router.post(
     "/invites/{code}/redeem",
@@ -199,6 +211,7 @@ async def redeem_invite(
         ),
     )
 
+
 @router.post(
     "/{space_id}/join",
     status_code=201,
@@ -214,6 +227,7 @@ async def request_join(
     pending = await service.request_join(user_id=user.str_id, space_id=space_id)
     return ok(request, data=pending, status_code=201)
 
+
 @router.get(
     "/{space_id}/join-requests",
     response_model=SuccessResponse[list[SpaceJoinRequestView]],
@@ -225,8 +239,11 @@ async def list_join_requests(
     user=Depends(require_verified_user),
     service: SpacesService = Depends(get_spaces_service),
 ):
-    requests = await service.list_join_requests(actor_user_id=user.str_id, space_id=space_id)
+    requests = await service.list_join_requests(
+        actor_user_id=user.str_id, space_id=space_id
+    )
     return ok(request, data=requests)
+
 
 @router.post(
     "/{space_id}/join-requests/{request_id}/approve",
@@ -247,6 +264,7 @@ async def approve_join_request(
     )
     return ok(request, data=updated)
 
+
 @router.post(
     "/{space_id}/join-requests/{request_id}/reject",
     response_model=SuccessResponse[SpaceJoinRequestView],
@@ -266,6 +284,7 @@ async def reject_join_request(
     )
     return ok(request, data=updated)
 
+
 @router.get(
     "/{space_id}/channels",
     response_model=SuccessResponse[list[SpaceChannelView]],
@@ -279,6 +298,7 @@ async def list_channels(
 ):
     channels = await service.list_channels(space_id=space_id, user_id=user.str_id)
     return ok(request, data=channels)
+
 
 @router.post(
     "/{space_id}/channels",
@@ -368,6 +388,7 @@ async def join_channel(
     )
     return ok(request, data=None, status_code=204)
 
+
 @router.get(
     "/{space_id}/members",
     response_model=SuccessResponse[list[SpaceMemberView]],
@@ -381,6 +402,36 @@ async def list_members(
 ):
     members = await service.list_members(space_id=space_id, user_id=user.str_id)
     return ok(request, data=members)
+
+
+@router.delete(
+    "/{space_id}",
+    status_code=204,
+    dependencies=[Depends(rate_limit("5/minute", scope="space_delete"))],
+)
+async def delete_space(
+    request: Request,
+    space_id: str,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    user=Depends(require_verified_user),
+    service: SpacesService = Depends(get_spaces_service),
+):
+    """Deletes a space and every channel and group it owns.
+
+    Rate-limited harder than the other space writes: it is the widest
+    destructive action in the system.
+    """
+    recipients = await service.delete_space(
+        actor_user_id=user.str_id, space_id=space_id
+    )
+    await emit_resource_deleted(
+        sio, to_user_ids=recipients, resource_type="space", resource_id=space_id
+    )
+    await emit_capabilities_invalidated(
+        sio, to_user_ids=recipients, resource_type="space", resource_id=space_id
+    )
+    return ok(request, data=None, status_code=204)
+
 
 @router.patch(
     "/{space_id}",

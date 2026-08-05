@@ -20,6 +20,7 @@ from app.modules.authorization.permissions import (
     GROUP_CREATE,
     MEMBER_APPROVE,
     MEMBER_INVITE,
+    RESOURCE_DELETE,
     RESOURCE_MANAGE,
     RESOURCE_VIEW,
 )
@@ -36,6 +37,11 @@ from app.modules.spaces.schemas import (
     SpaceChannelView,
     SpaceGroupView,
 )
+
+#: The reserved system space. It is created on demand, sorted first in
+#: listings, and cannot be deleted.
+DEFAULT_SPACE_SLUG = "vogi"
+
 
 class SpacesService:
     def __init__(
@@ -105,6 +111,7 @@ class SpacesService:
         )
 
         from app.db.models import AuditLogDocument
+
         log = AuditLogDocument(
             actor_id=created_by,
             action="create_space",
@@ -139,14 +146,16 @@ class SpacesService:
         viewer_role = membership.role if membership is not None else None
         return self._to_view(space, viewer_role=viewer_role)
 
-    async def ensure_default_vogi_space(self, user_id: str | None = None) -> SpaceDocument:
+    async def ensure_default_vogi_space(
+        self, user_id: str | None = None
+    ) -> SpaceDocument:
         """Find or create the default Vogi system space, ensuring user_id is a member if provided."""
-        vogi_space = await self.repo.get_by_slug("vogi")
+        vogi_space = await self.repo.get_by_slug(DEFAULT_SPACE_SLUG)
         if vogi_space is None:
             now = datetime.now(UTC)
             vogi_space = SpaceDocument(
                 name="Vogi",
-                slug="vogi",
+                slug=DEFAULT_SPACE_SLUG,
                 owner_user_id=user_id or "system",
                 created_by=user_id or "system",
                 visibility="public",
@@ -163,7 +172,9 @@ class SpacesService:
                 await vogi_space.save()
 
         if user_id:
-            m = await self.repo.get_membership(space_id=vogi_space.str_id, user_id=user_id)
+            m = await self.repo.get_membership(
+                space_id=vogi_space.str_id, user_id=user_id
+            )
             if m is None:
                 await self.repo.ensure_membership(
                     space_id=vogi_space.str_id,
@@ -180,7 +191,9 @@ class SpacesService:
             space = await self.repo.get_by_id(str(member.space_id))
             if space is not None:
                 spaces.append(self._to_view(space, viewer_role=member.role))
-        spaces.sort(key=lambda s: 0 if (s.slug == "vogi" or s.is_default) else 1)
+        spaces.sort(
+            key=lambda s: 0 if (s.slug == DEFAULT_SPACE_SLUG or s.is_default) else 1
+        )
         return spaces
 
     async def check_membership(self, *, space_id: str, user_id: str) -> bool:
@@ -328,7 +341,9 @@ class SpacesService:
                 status_code=404,
             )
 
-        if getattr(invite, "invitee_id", None) is not None and str(invite.invitee_id) != str(user_id):
+        if getattr(invite, "invitee_id", None) is not None and str(
+            invite.invitee_id
+        ) != str(user_id):
             raise AppError(
                 code="INVITE_FORBIDDEN",
                 message="This invite is not intended for you",
@@ -435,6 +450,7 @@ class SpacesService:
         )
 
         from app.db.models import AuditLogDocument
+
         log = AuditLogDocument(
             actor_id=actor_user_id,
             action="approve_join_request",
@@ -472,6 +488,7 @@ class SpacesService:
             )
 
         from app.db.models import AuditLogDocument
+
         log = AuditLogDocument(
             actor_id=actor_user_id,
             action="reject_join_request",
@@ -484,7 +501,9 @@ class SpacesService:
 
         return self._to_join_request_view(updated)
 
-    async def request_join(self, *, user_id: str, space_id: str) -> SpaceJoinRequestView:
+    async def request_join(
+        self, *, user_id: str, space_id: str
+    ) -> SpaceJoinRequestView:
         """Create a JoinRequest directly (ping-to-org)."""
         space = await self.repo.get_by_id(space_id)
         if space is None:
@@ -504,13 +523,21 @@ class SpacesService:
             )
 
         # Create or return existing pending join request
-        pending = await self.repo.get_pending_join_request(space_id=space_id, user_id=user_id)
+        pending = await self.repo.get_pending_join_request(
+            space_id=space_id, user_id=user_id
+        )
         if pending is None:
-            pending = await self.repo.create_join_request(space_id=space_id, user_id=user_id)
+            pending = await self.repo.create_join_request(
+                space_id=space_id, user_id=user_id
+            )
         return self._to_join_request_view(pending)
 
-    def _to_view(self, space: SpaceDocument, viewer_role: str | None = None) -> SpaceView:
-        is_default = space.slug == "vogi" or bool(space.settings and space.settings.get("is_default"))
+    def _to_view(
+        self, space: SpaceDocument, viewer_role: str | None = None
+    ) -> SpaceView:
+        is_default = space.slug == DEFAULT_SPACE_SLUG or bool(
+            space.settings and space.settings.get("is_default")
+        )
         return SpaceView(
             id=space.str_id,
             name=space.name,
@@ -630,9 +657,7 @@ class SpacesService:
             space_id=space.str_id,
         )
 
-    async def list_groups(
-        self, *, space_id: str, user_id: str
-    ) -> list[SpaceGroupView]:
+    async def list_groups(self, *, space_id: str, user_id: str) -> list[SpaceGroupView]:
         """Space-owned groups (§25).
 
         Unlike channels, participation is never implied by space membership, so
@@ -683,7 +708,9 @@ class SpacesService:
             created_at=conversation.created_at,
         )
 
-    async def join_channel(self, *, space_id: str, channel_id: str, user_id: str) -> None:
+    async def join_channel(
+        self, *, space_id: str, channel_id: str, user_id: str
+    ) -> None:
         """Join a space channel explicitly (§63).
 
         Only `open` channels are self-joinable; `private` ones require an invite
@@ -716,7 +743,9 @@ class SpacesService:
             initiated_by=str(user_id),
         )
 
-    async def list_members(self, *, space_id: str, user_id: str) -> list[SpaceMemberView]:
+    async def list_members(
+        self, *, space_id: str, user_id: str
+    ) -> list[SpaceMemberView]:
         is_member = await self.check_membership(space_id=space_id, user_id=user_id)
         if not is_member:
             raise AppError(
@@ -731,6 +760,7 @@ class SpacesService:
 
         user_ids = [str(m.user_id) for m in memberships]
         from app.modules.auth.repository import UsersRepository
+
         users_map = await UsersRepository().find_by_ids(user_ids)
 
         return [
@@ -742,13 +772,60 @@ class SpacesService:
                 joined_at=m.joined_at,
                 user=SpaceMemberUserSummary(
                     id=str(m.user_id),
-                    username=users_map[str(m.user_id)].username if str(m.user_id) in users_map else None,
-                    display_name=users_map[str(m.user_id)].display_name if str(m.user_id) in users_map else None,
-                    avatar=users_map[str(m.user_id)].avatar if str(m.user_id) in users_map else None,
-                )
+                    username=users_map[str(m.user_id)].username
+                    if str(m.user_id) in users_map
+                    else None,
+                    display_name=users_map[str(m.user_id)].display_name
+                    if str(m.user_id) in users_map
+                    else None,
+                    avatar=users_map[str(m.user_id)].avatar
+                    if str(m.user_id) in users_map
+                    else None,
+                ),
             )
             for m in memberships
         ]
+
+    async def delete_space(self, *, actor_user_id: str, space_id: str) -> list[str]:
+        """Hard-deletes a space and every channel and group it owns.
+
+        Cascading is not optional. A space-owned channel or group resolves its
+        owner through the space, so one left behind would resolve no owner and
+        could never be managed or deleted again.
+
+        Returns the audience to notify, snapshotted before the cascade because
+        it is read from the membership records being deleted.
+        """
+        space = await self._require_can(
+            space_id=space_id, user_id=actor_user_id, permission=RESOURCE_DELETE
+        )
+
+        if space.slug == DEFAULT_SPACE_SLUG:
+            raise AppError(
+                code="SPACE_UNDELETABLE",
+                message="The default space cannot be deleted",
+                status_code=409,
+            )
+
+        from app.modules.authorization.capabilities import affected_viewer_ids
+        from app.modules.resources import ResourceCascade
+
+        recipients = await affected_viewer_ids(
+            resource_type="space", resource_id=space.str_id
+        )
+        report = await ResourceCascade().delete_space_tree(space)
+
+        from app.db.models import AuditLogDocument
+
+        await AuditLogDocument(
+            actor_id=actor_user_id,
+            action="delete_space",
+            target_type="space",
+            target_id=space.str_id,
+            space_id=space.str_id,
+            data={"removed": report.removed},
+        ).insert()
+        return recipients
 
     async def update_space(
         self,
@@ -777,6 +854,7 @@ class SpacesService:
             )
 
         from app.db.models import AuditLogDocument
+
         log = AuditLogDocument(
             actor_id=actor_user_id,
             action="update_space",
@@ -791,7 +869,9 @@ class SpacesService:
         )
         await log.insert()
 
-        membership = await self.repo.get_membership(space_id=space_id, user_id=actor_user_id)
+        membership = await self.repo.get_membership(
+            space_id=space_id, user_id=actor_user_id
+        )
         viewer_role = membership.role if membership is not None else None
         return self._to_view(updated, viewer_role=viewer_role)
 
@@ -811,7 +891,9 @@ class SpacesService:
             invitee_id=getattr(invite, "invitee_id", None),
         )
 
-    def _to_join_request_view(self, request: JoinRequestDocument) -> SpaceJoinRequestView:
+    def _to_join_request_view(
+        self, request: JoinRequestDocument
+    ) -> SpaceJoinRequestView:
         return SpaceJoinRequestView(
             id=request.str_id,
             target_type="space",

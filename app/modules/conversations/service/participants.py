@@ -133,6 +133,7 @@ class ParticipantsServiceMixin(BaseConversationsService):
         )
         assert updated is not None
         return updated
+
     async def _get_group_for_participant(
         self, *, conversation_id: str, user_id: str
     ) -> ConversationDocument:
@@ -349,9 +350,7 @@ class ParticipantsServiceMixin(BaseConversationsService):
             conversation_ids=conversation_ids, user_id=user_id, updates=updates
         )
 
-    async def resurface_on_send(
-        self, *, user_id: str, conversation_id: str
-    ) -> None:
+    async def resurface_on_send(self, *, user_id: str, conversation_id: str) -> None:
         """Auto-unarchive the sender's view when they reply to an archived chat."""
         await self.repo.clear_archived_if_set(
             conversation_id=conversation_id, user_id=user_id
@@ -361,9 +360,7 @@ class ParticipantsServiceMixin(BaseConversationsService):
         """List the caller's folders with total and archived conversation counts."""
         return await self.repo.aggregate_folders(user_id=user_id)
 
-    async def rename_folder(
-        self, *, user_id: str, old_name: str, new_name: str
-    ) -> int:
+    async def rename_folder(self, *, user_id: str, old_name: str, new_name: str) -> int:
         """Rename a folder across all the caller's conversations."""
         return await self.repo.rename_folder(
             user_id=user_id, old_name=old_name, new_name=new_name
@@ -401,6 +398,7 @@ class ParticipantsServiceMixin(BaseConversationsService):
             skip_ping_check = False
             if space_id is not None:
                 from app.modules.spaces.repository import find_active_space_membership
+
                 p_member = await find_active_space_membership(
                     space_id=str(space_id), user_id=str(participant_id)
                 )
@@ -421,9 +419,10 @@ class ParticipantsServiceMixin(BaseConversationsService):
                 user_id=participant_id,
             )
             added.append(participant)
-        
+
         if added:
             from app.db.models import AuditLogDocument
+
             log = AuditLogDocument(
                 actor_id=actor_user_id,
                 action="add_members",
@@ -467,6 +466,7 @@ class ParticipantsServiceMixin(BaseConversationsService):
         )
 
         from app.db.models import AuditLogDocument
+
         log = AuditLogDocument(
             actor_id=actor_user_id,
             action="remove_member",
@@ -514,6 +514,7 @@ class ParticipantsServiceMixin(BaseConversationsService):
         assert updated is not None
 
         from app.db.models import AuditLogDocument
+
         log = AuditLogDocument(
             actor_id=actor_user_id,
             action="update_member_role",
@@ -563,6 +564,7 @@ class ParticipantsServiceMixin(BaseConversationsService):
         assert new_owner is not None and previous_owner is not None
 
         from app.db.models import AuditLogDocument
+
         log = AuditLogDocument(
             actor_id=actor_user_id,
             action="transfer_ownership",
@@ -600,6 +602,7 @@ class ParticipantsServiceMixin(BaseConversationsService):
         )
 
         from app.db.models import AuditLogDocument
+
         log = AuditLogDocument(
             actor_id=user_id,
             action="leave_group",
@@ -610,7 +613,7 @@ class ParticipantsServiceMixin(BaseConversationsService):
         )
         await log.insert()
 
-    async def delete_group(self, *, user_id: str, conversation_id: str) -> None:
+    async def delete_group(self, *, user_id: str, conversation_id: str) -> list[str]:
         conversation = await self._get_group_for_participant(
             conversation_id=conversation_id, user_id=user_id
         )
@@ -619,23 +622,23 @@ class ParticipantsServiceMixin(BaseConversationsService):
             conversation_id=conversation.str_id,
             permission=RESOURCE_DELETE,
         )
-        participants = await self.repo.list_participants(
-            conversation_id=conversation.str_id
-        )
-        for participant in participants:
-            await self.repo.delete_participant(
-                conversation_id=conversation.str_id,
-                user_id=str(participant.user_id),
-            )
-        await self.repo.delete_conversation(conversation_id=conversation.str_id)
+        # Snapshotted before the cascade: the audience is read from the
+        # membership records the cascade is about to delete.
+        recipients = [str(pid) for pid in conversation.participant_ids]
+
+        from app.modules.resources import ResourceCascade
+
+        report = await ResourceCascade().delete_conversation_tree(conversation)
 
         from app.db.models import AuditLogDocument
+
         log = AuditLogDocument(
             actor_id=user_id,
             action="delete_group",
             target_type="conversation",
             target_id=conversation.str_id,
             space_id=getattr(conversation, "space_id", None),
-            data={},
+            data={"removed": report.removed},
         )
         await log.insert()
+        return recipients

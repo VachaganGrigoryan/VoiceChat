@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Optional
 
 import socketio
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from starlette.requests import Request
 
 from app.core.deps import get_sio
+from app.modules.realtime.emits import (
+    emit_capabilities_invalidated,
+    emit_resource_deleted,
+)
 from app.core.errors.openapi import build_error_responses
 from app.core.http import (
     PaginatedResponse,
@@ -27,7 +31,6 @@ from app.modules.conversations.schemas import (
     AddGroupMembersRequest,
     BulkInboxStateRequest,
     BulkInboxStateResult,
-    ConversationSendTextRequest,
     ConversationView,
     CreateGroupRequest,
     CreateDmRequest,
@@ -585,10 +588,25 @@ async def leave_group(
 async def delete_group(
     request: Request,
     conversation_id: str,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
     user=Depends(require_verified_user),
     service: ConversationsService = Depends(get_conversations_service),
 ):
-    await service.delete_group(user_id=user.str_id, conversation_id=conversation_id)
+    recipients = await service.delete_group(
+        user_id=user.str_id, conversation_id=conversation_id
+    )
+    await emit_resource_deleted(
+        sio,
+        to_user_ids=recipients,
+        resource_type="conversation",
+        resource_id=conversation_id,
+    )
+    await emit_capabilities_invalidated(
+        sio,
+        to_user_ids=recipients,
+        resource_type="conversation",
+        resource_id=conversation_id,
+    )
     return ok(request, data=None, status_code=204)
 
 
@@ -744,9 +762,7 @@ async def delete_conversation(
     service: ConversationsService = Depends(get_conversations_service),
     messages: MessagesService = Depends(get_messages_service),
 ):
-    await service.get_dm_peer(
-        user_id=user.str_id, conversation_id=conversation_id
-    )
+    await service.get_dm_peer(user_id=user.str_id, conversation_id=conversation_id)
     conv_id, count = await messages.delete_chat(
         container_type="conversation",
         container_id=conversation_id,

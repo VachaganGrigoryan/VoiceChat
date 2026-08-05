@@ -10,6 +10,7 @@ from app.modules.authorization import AuthorizationService
 from app.modules.authorization.permissions import (
     MESSAGE_CREATE,
     MESSAGE_READ,
+    RESOURCE_DELETE,
     RESOURCE_MANAGE,
     RESOURCE_VIEW,
     THREAD_REPLY,
@@ -135,6 +136,7 @@ class ChannelService:
         owner_id = str(owner_id or created_by)
         if space_id is None:
             from app.db.models import SpaceDocument
+
             vogi_space = await SpaceDocument.find_one({"slug": "vogi"})
             if vogi_space is not None:
                 space_id = vogi_space.str_id
@@ -340,6 +342,41 @@ class ChannelService:
             style=style,
         )
 
+    async def delete_channel(self, *, channel_id: str, actor_user_id: str) -> list[str]:
+        """Hard-deletes a channel and everything that named it.
+
+        Returns the audience to notify, snapshotted before the cascade because
+        it is read from the membership and follow records being deleted.
+        """
+        channel = await self._get(channel_id)
+        await self.authorization.require(
+            actor_user_id,
+            RESOURCE_DELETE,
+            "channel",
+            channel.str_id,
+            message="Not allowed to delete this channel",
+        )
+
+        from app.modules.authorization.capabilities import affected_viewer_ids
+        from app.modules.resources import ResourceCascade
+
+        recipients = await affected_viewer_ids(
+            resource_type="channel", resource_id=channel.str_id
+        )
+        report = await ResourceCascade().delete_channel_tree(channel)
+
+        from app.db.models import AuditLogDocument
+
+        await AuditLogDocument(
+            actor_id=actor_user_id,
+            action="delete_channel",
+            target_type="channel",
+            target_id=channel.str_id,
+            space_id=channel.space_id,
+            data={"removed": report.removed},
+        ).insert()
+        return recipients
+
     async def upload_media(
         self,
         *,
@@ -412,7 +449,9 @@ class ChannelService:
             )
         return message
 
-    async def list_for_inbox(self, *, user_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    async def list_for_inbox(
+        self, *, user_id: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
         """Channels the caller belongs to, with their own state and unread count.
 
         This is the channel analogue of the conversation inbox: one row per
@@ -463,7 +502,9 @@ class ChannelService:
                 }
             )
 
-        rows.sort(key=lambda row: row["channel"].last_activity_at or _EPOCH, reverse=True)
+        rows.sort(
+            key=lambda row: row["channel"].last_activity_at or _EPOCH, reverse=True
+        )
         return rows
 
     async def _unread_count(
@@ -575,7 +616,9 @@ class ChannelService:
         allowed = {
             key: value
             for key, value in updates.items()
-            if key in _VIEWER_STATE_FIELDS and value is not None or key in _CLEARABLE_STATE
+            if key in _VIEWER_STATE_FIELDS
+            and value is not None
+            or key in _CLEARABLE_STATE
         }
         if not allowed:
             return self._state_view(edge)
@@ -584,7 +627,9 @@ class ChannelService:
         )
         return self._state_view(updated or edge)
 
-    async def mark_channel_read(self, *, channel_id: str, user_id: str) -> dict[str, Any]:
+    async def mark_channel_read(
+        self, *, channel_id: str, user_id: str
+    ) -> dict[str, Any]:
         """Mark the whole channel read up to its latest message."""
         channel = await self._get(channel_id)
         await self.authorization.require(

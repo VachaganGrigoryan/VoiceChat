@@ -17,11 +17,15 @@ def channel_room(channel_id: str) -> str:
     return f"channel:{channel_id}"
 
 
-async def emit_to_user(sio: socketio.AsyncServer, user_id: str, event: str, payload: dict[str, Any]) -> None:
+async def emit_to_user(
+    sio: socketio.AsyncServer, user_id: str, event: str, payload: dict[str, Any]
+) -> None:
     await sio.emit(event, jsonable_encoder(payload), room=user_room(user_id))
 
 
-async def emit_to_channel(sio: socketio.AsyncServer, channel_id: str, event: str, payload: dict[str, Any]) -> None:
+async def emit_to_channel(
+    sio: socketio.AsyncServer, channel_id: str, event: str, payload: dict[str, Any]
+) -> None:
     """Broadcast once to every socket subscribed to a channel.
 
     No membership/follower lookup and no fan-out ceiling: delivery scales with
@@ -31,7 +35,9 @@ async def emit_to_channel(sio: socketio.AsyncServer, channel_id: str, event: str
     await sio.emit(event, jsonable_encoder(payload), room=channel_room(channel_id))
 
 
-async def emit_message_to_receiver(sio: socketio.AsyncServer, receiver_id: str, payload: dict[str, Any]) -> None:
+async def emit_message_to_receiver(
+    sio: socketio.AsyncServer, receiver_id: str, payload: dict[str, Any]
+) -> None:
     await emit_to_user(sio, receiver_id, "receive_message", payload)
 
 
@@ -46,38 +52,40 @@ async def emit_message_to_participants(
     await emit_to_user(sio, receiver_id, "receive_message", payload)
 
 
-async def emit_message_status_to_user(sio: socketio.AsyncServer, user_id: str, payload: dict[str, Any]) -> None:
+async def emit_message_status_to_user(
+    sio: socketio.AsyncServer, user_id: str, payload: dict[str, Any]
+) -> None:
     await emit_to_user(sio, user_id, "message_status", payload)
 
 
 async def emit_message_edited(
-        sio: socketio.AsyncServer,
-        *,
-        sender_id: str,
-        receiver_id: str,
-        payload: dict[str, Any],
+    sio: socketio.AsyncServer,
+    *,
+    sender_id: str,
+    receiver_id: str,
+    payload: dict[str, Any],
 ) -> None:
     await emit_to_user(sio, sender_id, "message_edited", payload)
     await emit_to_user(sio, receiver_id, "message_edited", payload)
 
 
 async def emit_message_deleted(
-        sio: socketio.AsyncServer,
-        *,
-        sender_id: str,
-        receiver_id: str,
-        payload: dict[str, Any],
+    sio: socketio.AsyncServer,
+    *,
+    sender_id: str,
+    receiver_id: str,
+    payload: dict[str, Any],
 ) -> None:
     await emit_to_user(sio, sender_id, "message_deleted", payload)
     await emit_to_user(sio, receiver_id, "message_deleted", payload)
 
 
 async def emit_message_reacted(
-        sio: socketio.AsyncServer,
-        *,
-        sender_id: str,
-        receiver_id: str,
-        payload: dict[str, Any],
+    sio: socketio.AsyncServer,
+    *,
+    sender_id: str,
+    receiver_id: str,
+    payload: dict[str, Any],
 ) -> None:
     await emit_to_user(sio, sender_id, "message_reacted", payload)
     await emit_to_user(sio, receiver_id, "message_reacted", payload)
@@ -95,22 +103,22 @@ async def emit_poll_updated(
 
 
 async def emit_thread_reply_created(
-        sio: socketio.AsyncServer,
-        *,
-        sender_id: str,
-        receiver_id: str,
-        payload: dict[str, Any],
+    sio: socketio.AsyncServer,
+    *,
+    sender_id: str,
+    receiver_id: str,
+    payload: dict[str, Any],
 ) -> None:
     await emit_to_user(sio, sender_id, "thread_reply_created", payload)
     await emit_to_user(sio, receiver_id, "thread_reply_created", payload)
 
 
 async def emit_thread_summary_updated(
-        sio: socketio.AsyncServer,
-        *,
-        sender_id: str,
-        receiver_id: str,
-        payload: dict[str, Any],
+    sio: socketio.AsyncServer,
+    *,
+    sender_id: str,
+    receiver_id: str,
+    payload: dict[str, Any],
 ) -> None:
     await emit_to_user(sio, sender_id, "thread_summary_updated", payload)
     await emit_to_user(sio, receiver_id, "thread_summary_updated", payload)
@@ -139,7 +147,9 @@ async def emit_presence_update(
     )
 
 
-async def emit_space_invite(sio: socketio.AsyncServer, *, to_user_id: str, payload: dict) -> None:
+async def emit_space_invite(
+    sio: socketio.AsyncServer, *, to_user_id: str, payload: dict
+) -> None:
     await sio.emit("space:invite", payload, room=user_room(to_user_id))
 
 
@@ -178,6 +188,30 @@ async def emit_relationship_revoked(
     await emit_relationship_event(
         sio, event="relationship.revoked", to_user_ids=to_user_ids, payload=payload
     )
+
+
+async def emit_resource_deleted(
+    sio: socketio.AsyncServer,
+    *,
+    to_user_ids: list[str],
+    resource_type: str,
+    resource_id: str,
+) -> None:
+    """Tell everyone who was in a resource that it is gone.
+
+    Until now nothing announced a deletion at all — a client only learned a
+    group had vanished by refetching. The recipient list must be snapshotted
+    before the cascade runs, because it is derived from the membership records
+    the cascade deletes.
+
+    A channel additionally broadcasts into its own room, since channels fan out
+    by room rather than per user.
+    """
+    payload = {"resource": {"type": resource_type, "id": str(resource_id)}}
+    for user_id in dict.fromkeys(str(uid) for uid in to_user_ids if uid):
+        await sio.emit("resource.deleted", payload, room=user_room(user_id))
+    if resource_type == "channel":
+        await sio.emit("resource.deleted", payload, room=channel_room(str(resource_id)))
 
 
 async def emit_capabilities_invalidated(

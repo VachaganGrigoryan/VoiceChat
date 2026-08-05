@@ -10,6 +10,7 @@ from app.core.deps import get_sio
 from app.db.models.embedded import TextStyleDocument
 from app.modules.authorization.capabilities import affected_viewer_ids
 from app.modules.realtime import emit_capabilities_invalidated
+from app.modules.realtime.emits import emit_resource_deleted
 from app.core.errors.openapi import build_error_responses
 from app.core.http import (
     PaginatedResponse,
@@ -142,6 +143,33 @@ async def update_channel(
     return ok(request, data=channel)
 
 
+@router.delete(
+    "/{channel_id}",
+    status_code=204,
+    dependencies=[Depends(rate_limit("10/minute", scope="channel_delete"))],
+)
+async def delete_channel(
+    request: Request,
+    channel_id: str,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
+    user=Depends(require_verified_user),
+    service: ChannelService = Depends(get_channel_service),
+):
+    recipients = await service.delete_channel(
+        channel_id=channel_id, actor_user_id=user.str_id
+    )
+    await emit_resource_deleted(
+        sio, to_user_ids=recipients, resource_type="channel", resource_id=channel_id
+    )
+    await emit_capabilities_invalidated(
+        sio,
+        to_user_ids=recipients,
+        resource_type="channel",
+        resource_id=channel_id,
+    )
+    return ok(request, data=None, status_code=204)
+
+
 @router.get(
     "/{channel_id}/messages",
     response_model=PaginatedResponse[list[MessageDoc]],
@@ -189,9 +217,7 @@ async def create_channel_message(
         text=body.text,
         reply_mode=body.reply_mode,
         reply_to_message_id=body.reply_to_message_id,
-        style=(
-            TextStyleDocument(**body.style.model_dump()) if body.style else None
-        ),
+        style=(TextStyleDocument(**body.style.model_dump()) if body.style else None),
     )
     await fan_out_channel_message(
         sio,
