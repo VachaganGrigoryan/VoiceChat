@@ -29,6 +29,7 @@ from app.modules.authorization import capabilities_router, roles_router
 from app.modules.extensibility.router import extensibility_router
 from app.modules.channels.router import router as channels_router
 from app.modules.messages.router import (
+    container_messages_router,
     conversation_messages_router,
     router as messages_router,
 )
@@ -46,7 +47,13 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(directory_router)
     app.include_router(conversations_router)
     app.include_router(conversation_messages_router)
+    # Order is load-bearing: the item routes and the container-addressed
+    # collection routes share the `/messages` prefix and the same segment
+    # count, so `/messages/{message_id}/pin` must be matched before
+    # `/messages/{container_type}/{container_id}`. Registering the container
+    # family first would send every unpin into it and 422 on the container type.
     app.include_router(messages_router)
+    app.include_router(container_messages_router)
     app.include_router(channels_router)
     app.include_router(feeds_router)
     app.include_router(devices_router)
