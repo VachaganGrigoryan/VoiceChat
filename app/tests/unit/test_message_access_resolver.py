@@ -89,7 +89,6 @@ async def test_resolver_conversation_participant_success():
     assert ctx.container_type == "conversation"
     assert ctx.container_id == "conv_123"
     assert ctx.conversation == conversation
-    assert ctx.require_conversation_container() == conversation
 
 
 @pytest.mark.asyncio
@@ -115,9 +114,5 @@ async def test_resolver_channel_reader_success():
 
     assert ctx.container_type == "channel"
     assert ctx.container_id == "chan_789"
+    # No conversation to resolve, and no operation refused for want of one.
     assert ctx.conversation is None
-
-    with pytest.raises(AppError) as exc_info:
-        ctx.require_conversation_container()
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.code == "INVALID_CONTAINER"

@@ -192,13 +192,22 @@ async def test_channel_message_flat_route_operations_and_pin_rejection(inprocess
     )
     assert thread_res.status_code == 200, thread_res.text
 
-    # Asserting POST /messages/{message_id}/pin rejects channel message with 400 INVALID_CONTAINER
+    # Pin via /messages/{message_id}/pin — a channel tracks its pinned set too
     pin_res = await inprocess_client.post(
         f"/messages/{msg_id}/pin",
         headers=_auth(owner_tokens["access_token"]),
     )
-    assert pin_res.status_code == 400, pin_res.text
-    assert pin_res.json()["error"]["code"] == "INVALID_CONTAINER"
+    assert pin_res.status_code == 200, pin_res.text
+    pinned = pin_res.json()["data"]
+    assert pinned["container_type"] == "channel"
+    assert msg_id in pinned["pinned_message_ids"]
+
+    unpin_res = await inprocess_client.delete(
+        f"/messages/{msg_id}/pin",
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert unpin_res.status_code == 200, unpin_res.text
+    assert msg_id not in unpin_res.json()["data"]["pinned_message_ids"]
 
     # Delete channel post via /messages/{message_id}
     del_res = await inprocess_client.delete(

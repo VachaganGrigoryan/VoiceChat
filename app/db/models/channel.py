@@ -36,6 +36,9 @@ class ChannelDocument(TimestampedDocument):
     tags: list[str] = Field(default_factory=list)
     message_count: int = Field(default=0, ge=0)
     follower_count: int = Field(default=0, ge=0)
+    # Pinning was previously refused for channels only for want of somewhere to
+    # record it; a channel tracks its pinned set exactly as a conversation does.
+    pinned_message_ids: list[str] = Field(default_factory=list)
     last_message_id: str | None = None
     last_activity_at: datetime | None = None
     legacy_conversation_id: str | None = None

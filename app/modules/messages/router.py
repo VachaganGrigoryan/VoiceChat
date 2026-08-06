@@ -23,6 +23,8 @@ from app.modules.conversations.schemas import (
     ConversationView,
 )
 from app.modules.conversations.service import ConversationsService
+from app.modules.channels.dependencies import get_channel_service
+from app.modules.channels.service import ChannelService
 from app.modules.messages.dependencies import (
     MessageContext,
     get_messages_service,
@@ -40,6 +42,7 @@ from app.modules.messages.schemas import (
     EditMessageRequest,
     ForwardMessageRequest,
     MessageDoc,
+    PinnedMessagesView,
     ScheduleMessageRequest,
     SendRichContentRequest,
     ThreadSummary,
@@ -739,9 +742,39 @@ async def forward_message(
     return ok(request, data=result.message, status_code=201)
 
 
+async def _pinned_view(
+    sio: socketio.AsyncServer,
+    *,
+    ctx: MessageContext,
+    pinned_message_ids: list[str],
+    rel_service: RelationshipService,
+) -> PinnedMessagesView:
+    """Announce a container's new pinned set and return the view of it.
+
+    A channel reaches its audience through its room; a conversation reaches its
+    participants one at a time. `emit_to_container` already knows the
+    difference, so pinning no longer fans out over `participant_ids` by hand.
+    """
+    view = PinnedMessagesView(
+        container_type=ctx.container_type,
+        container_id=ctx.container_id,
+        pinned_message_ids=[str(message_id) for message_id in pinned_message_ids],
+    )
+    await emit_to_container(
+        sio,
+        container_type=ctx.container_type,
+        container_id=ctx.container_id,
+        conversation=ctx.conversation,
+        relationships_service=rel_service,
+        event="conversation_pins_updated",
+        payload=view.model_dump(mode="json"),
+    )
+    return view
+
+
 @router.post(
     "/{message_id}/pin",
-    response_model=SuccessResponse[ConversationView],
+    response_model=SuccessResponse[PinnedMessagesView],
     responses=build_error_responses(400, 403, 404),
     dependencies=[Depends(rate_limit("30/minute", scope="message_pin"))],
 )
@@ -751,30 +784,33 @@ async def pin_message(
     user=Depends(require_verified_user),
     ctx: MessageContext = Depends(require_message_access),
     service: ConversationsService = Depends(get_conversations_service),
+    channels: ChannelService = Depends(get_channel_service),
+    rel_service: RelationshipService = Depends(get_relationship_service),
 ):
-    conversation = ctx.require_conversation_container()
-    updated_conv = await service.pin_message(
-        user_id=user.str_id,
-        conversation_id=conversation.str_id,
-        message_id=ctx.message.str_id,
-    )
-    payload = {
-        "conversation_id": updated_conv.str_id,
-        "pinned_message_ids": updated_conv.pinned_message_ids,
-    }
-    for participant_id in updated_conv.participant_ids:
-        await emit_to_user(
-            sio, str(participant_id), "conversation_pins_updated", payload
+    if ctx.container_type == "channel":
+        updated = await channels.pin_message(
+            channel_id=ctx.container_id,
+            message_id=ctx.message.str_id,
+            actor_user_id=user.str_id,
         )
-    data = (
-        await service.views_for_user(user_id=user.str_id, conversations=[updated_conv])
-    )[0]
+    else:
+        updated = await service.pin_message(
+            user_id=user.str_id,
+            conversation_id=ctx.container_id,
+            message_id=ctx.message.str_id,
+        )
+    data = await _pinned_view(
+        sio,
+        ctx=ctx,
+        pinned_message_ids=updated.pinned_message_ids,
+        rel_service=rel_service,
+    )
     return ok(request, data=data)
 
 
 @router.delete(
     "/{message_id}/pin",
-    response_model=SuccessResponse[ConversationView],
+    response_model=SuccessResponse[PinnedMessagesView],
     responses=build_error_responses(400, 403, 404),
     dependencies=[Depends(rate_limit("30/minute", scope="message_unpin"))],
 )
@@ -784,22 +820,25 @@ async def unpin_message(
     user=Depends(require_verified_user),
     ctx: MessageContext = Depends(require_message_access),
     service: ConversationsService = Depends(get_conversations_service),
+    channels: ChannelService = Depends(get_channel_service),
+    rel_service: RelationshipService = Depends(get_relationship_service),
 ):
-    conversation = ctx.require_conversation_container()
-    updated_conv = await service.unpin_message(
-        user_id=user.str_id,
-        conversation_id=conversation.str_id,
-        message_id=ctx.message.str_id,
-    )
-    payload = {
-        "conversation_id": updated_conv.str_id,
-        "pinned_message_ids": updated_conv.pinned_message_ids,
-    }
-    for participant_id in updated_conv.participant_ids:
-        await emit_to_user(
-            sio, str(participant_id), "conversation_pins_updated", payload
+    if ctx.container_type == "channel":
+        updated = await channels.unpin_message(
+            channel_id=ctx.container_id,
+            message_id=ctx.message.str_id,
+            actor_user_id=user.str_id,
         )
-    data = (
-        await service.views_for_user(user_id=user.str_id, conversations=[updated_conv])
-    )[0]
+    else:
+        updated = await service.unpin_message(
+            user_id=user.str_id,
+            conversation_id=ctx.container_id,
+            message_id=ctx.message.str_id,
+        )
+    data = await _pinned_view(
+        sio,
+        ctx=ctx,
+        pinned_message_ids=updated.pinned_message_ids,
+        rel_service=rel_service,
+    )
     return ok(request, data=data)

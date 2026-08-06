@@ -99,6 +99,7 @@ class ChannelView(ChannelSummary):
     posting_policy: ChannelPostingPolicy
     comment_policy: ChannelCommentPolicy
     last_message_id: str | None
+    pinned_message_ids: list[str] = Field(default_factory=list)
     legacy_conversation_id: str | None
     created_by: str
     created_at: datetime

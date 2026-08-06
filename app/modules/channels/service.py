@@ -9,6 +9,7 @@ from app.db.models.embedded import OwnerRef, TextStyleDocument
 from app.modules.authorization import AuthorizationService
 from app.modules.authorization.permissions import (
     MESSAGE_CREATE,
+    MESSAGE_PIN,
     MESSAGE_READ,
     RESOURCE_DELETE,
     RESOURCE_MANAGE,
@@ -449,6 +450,49 @@ class ChannelService:
             )
         return message
 
+    async def pin_message(
+        self, *, channel_id: str, message_id: str, actor_user_id: str
+    ) -> ChannelDocument:
+        return await self._set_pinned(
+            channel_id=channel_id,
+            message_id=message_id,
+            actor_user_id=actor_user_id,
+            add=True,
+        )
+
+    async def unpin_message(
+        self, *, channel_id: str, message_id: str, actor_user_id: str
+    ) -> ChannelDocument:
+        return await self._set_pinned(
+            channel_id=channel_id,
+            message_id=message_id,
+            actor_user_id=actor_user_id,
+            add=False,
+        )
+
+    async def _set_pinned(
+        self, *, channel_id: str, message_id: str, actor_user_id: str, add: bool
+    ) -> ChannelDocument:
+        """Pin or unpin, resolved at the channel's own scope.
+
+        The pin right is decided against the channel resource, so channel roles
+        and channel ownership govern it — not the group management right that
+        the conversation path asks about.
+        """
+        channel = await self._get(channel_id)
+        await self.authorization.require(
+            actor_user_id,
+            MESSAGE_PIN,
+            "channel",
+            channel.str_id,
+            message="Not allowed to pin messages in this channel",
+        )
+        write = self.repo.add_pinned_message if add else self.repo.remove_pinned_message
+        updated = await write(channel_id=channel.str_id, message_id=message_id)
+        if updated is None:
+            raise self._not_found()
+        return updated
+
     async def list_for_inbox(
         self, *, user_id: str, limit: int = 100
     ) -> list[dict[str, Any]]:
@@ -773,6 +817,7 @@ class ChannelService:
             message_count=channel.message_count,
             follower_count=channel.follower_count,
             last_message_id=channel.last_message_id,
+            pinned_message_ids=[str(mid) for mid in channel.pinned_message_ids],
             last_activity_at=channel.last_activity_at,
             legacy_conversation_id=channel.legacy_conversation_id,
             created_by=str(channel.created_by),

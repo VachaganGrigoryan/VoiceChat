@@ -107,6 +107,35 @@ class ChannelsRepository(BaseRepository[ChannelDocument]):
         )
         return ChannelDocument.model_validate(raw) if raw is not None else None
 
+    async def add_pinned_message(
+        self, *, channel_id: str, message_id: str
+    ) -> ChannelDocument | None:
+        return await self._update_pinned(
+            channel_id=channel_id,
+            update={"$addToSet": {"pinned_message_ids": str(message_id)}},
+        )
+
+    async def remove_pinned_message(
+        self, *, channel_id: str, message_id: str
+    ) -> ChannelDocument | None:
+        return await self._update_pinned(
+            channel_id=channel_id,
+            update={"$pull": {"pinned_message_ids": str(message_id)}},
+        )
+
+    async def _update_pinned(
+        self, *, channel_id: str, update: dict[str, Any]
+    ) -> ChannelDocument | None:
+        channel = await self.get_by_id(channel_id, invalid_message="Invalid channel id")
+        if channel is None:
+            return None
+        raw = await self.raw.find_one_and_update(
+            {"_id": channel.id},
+            {**update, "$set": {"updated_at": datetime.now(UTC)}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return ChannelDocument.model_validate(raw) if raw is not None else None
+
     async def adjust_follower_count(
         self, *, channel_id: str, delta: int
     ) -> ChannelDocument | None:

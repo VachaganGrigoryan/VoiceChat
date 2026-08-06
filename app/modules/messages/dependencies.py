@@ -43,16 +43,10 @@ class MessageContext:
     message: MessageDocument
     container_type: Literal["conversation", "channel"]
     container_id: str
+    #: Resolved for conversation containers only, for the fan-out helpers that
+    #: need a participant roster. Its absence is not a reason to refuse an
+    #: operation: a channel is a container like any other.
     conversation: ConversationDocument | None = None
-
-    def require_conversation_container(self) -> ConversationDocument:
-        if self.container_type != "conversation" or self.conversation is None:
-            raise AppError(
-                code="INVALID_CONTAINER",
-                message="This operation is only supported for conversation messages",
-                status_code=400,
-            )
-        return self.conversation
 
 
 async def require_message_access(
