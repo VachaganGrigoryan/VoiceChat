@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 from app.core.errors import AppError
 from app.infra.storage.keys import FolderKind
@@ -163,4 +163,4 @@ def resolve_media_policy(
             status_code=400,
         )
 
-    return MEDIA_POLICIES[media_kind]
+    return MEDIA_POLICIES[cast(PreviewMediaKind, media_kind)]

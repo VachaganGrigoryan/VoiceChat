@@ -1,21 +1,27 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from bson import ObjectId
 from fastapi import UploadFile
 
 from app.core.errors import AppError
-from app.db.models import UserDocument
+from app.db.models import ChannelDocument, UserDocument
 from app.modules.auth.repository import UsersRepository
 from app.modules.auth.username import is_valid_username, normalize_username
-from app.modules.pings.repository import PingsRepository
+from app.modules.channels.repository import ChannelsRepository
+from app.modules.channels.schemas import ChannelSummary
+from app.modules.channels.service import ChannelService
 from app.modules.users.avatar import build_user_avatar_payload
 from app.modules.users.schemas import (
     SelectedUserProfileResponse,
     UpdateProfileRequest,
+    UpdateStatusRequest,
     UserProfileResponse,
 )
+from app.modules.relationships.schemas import ConnectionExtras, ConnectionState
+from app.modules.realtime.presence import PresenceState
 from app.infra.storage import get_storage, storage_key_builder
 
 ALLOWED_AVATAR_CONTENT_TYPES: dict[str, str] = {
@@ -26,9 +32,28 @@ ALLOWED_AVATAR_CONTENT_TYPES: dict[str, str] = {
 
 MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024
 
+# Bound the profile channel list; a user is unlikely to own more than a handful.
+MAX_PROFILE_CHANNELS = 50
+
 
 class PresenceServiceProto(Protocol):
     async def is_online(self, user_id: str) -> bool: ...
+
+    async def get_state(self, user_id: str) -> PresenceState: ...
+
+
+class ConnectionServiceProto(Protocol):
+    async def get_connection_state(
+        self, *, viewer_user_id: str, peer_user_id: str
+    ) -> ConnectionState: ...
+
+    async def get_connection_extras(
+        self, *, viewer_user_id: str, peer_user_id: str
+    ) -> ConnectionExtras: ...
+
+    async def shares_context(
+        self, viewer_user_id: str, peer_user_id: str
+    ) -> bool: ...
 
 
 def _strip_or_none(value: str | None) -> str | None:
@@ -50,12 +75,14 @@ class UsersService:
     def __init__(
         self,
         users: UsersRepository,
-        pings: PingsRepository,
+        connections: ConnectionServiceProto,
         presence_service: "PresenceServiceProto | None" = None,
+        channels: "ChannelsRepository | None" = None,
     ):
         self.users = users
-        self.pings = pings
+        self.connections = connections
         self.presence_service = presence_service
+        self.channels = channels
 
     async def get_me(self, *, user_id: str) -> UserProfileResponse:
         user = await self.users.find_by_id(user_id)
@@ -64,6 +91,7 @@ class UsersService:
                 code="USER_NOT_FOUND", message="User not found", status_code=404
             )
 
+        user = await self._clear_expired_status_if_needed(user)
         return self._to_profile_response(user)
 
     async def get_user_profile(
@@ -71,6 +99,7 @@ class UsersService:
         *,
         current_user_id: str,
         selected_user_id: str,
+        include: set[str] | None = None,
     ) -> SelectedUserProfileResponse:
         user = await self.users.find_by_id(selected_user_id)
         if not user:
@@ -79,18 +108,46 @@ class UsersService:
             )
 
         if current_user_id != selected_user_id:
-            has_access = await self.pings.has_accepted_permission(
-                user_a=current_user_id,
-                user_b=selected_user_id,
+            relationship = await self.connections.get_connection_state(
+                viewer_user_id=current_user_id,
+                peer_user_id=selected_user_id,
             )
-            if not has_access:
-                raise AppError(
-                    code="PROFILE_ACCESS_FORBIDDEN",
-                    message="Accepted ping required to access this profile",
-                    status_code=403,
-                )
+            shares_ctx = await self.connections.shares_context(
+                viewer_user_id=current_user_id,
+                peer_user_id=selected_user_id,
+            )
+            if not isinstance(shares_ctx, bool):
+                shares_ctx = False
+        else:
+            relationship = ConnectionState(
+                can_ping=False,
+                chat_allowed=False,
+                connection_status="none",
+            )
+            shares_ctx = True
 
-        return await self._to_selected_profile_response(user)
+        extras: ConnectionExtras | None = None
+        if (
+            include
+            and "contact_details" in include
+            and relationship.connection_status == "active"
+        ):
+            extras = await self.connections.get_connection_extras(
+                viewer_user_id=current_user_id,
+                peer_user_id=selected_user_id,
+            )
+
+        user = await self._clear_expired_status_if_needed(user)
+        has_private_access = current_user_id == selected_user_id or (
+            relationship.chat_allowed and not relationship.blocks_me
+        )
+        return await self._to_selected_profile_response(
+            user,
+            relationship=relationship,
+            include_private_profile=has_private_access or not _doc_value(user, "is_private"),
+            extras=extras,
+            shares_context=shares_ctx,
+        )
 
     async def update_me(
         self,
@@ -102,9 +159,35 @@ class UsersService:
             user_id=user_id,
             display_name=_strip_or_none(body.display_name),
             bio=_strip_or_none(body.bio),
+            pronouns=_strip_or_none(body.pronouns),
+            timezone=_strip_or_none(body.timezone),
             is_private=body.is_private,
             default_discovery_enabled=body.default_discovery_enabled,
         )
+        if body.is_private is not None and user.main_channel_id is not None:
+            await ChannelService(repo=self._require_channels()).set_profile_privacy(
+                channel_id=user.main_channel_id,
+                is_private=body.is_private,
+            )
+        return self._to_profile_response(user)
+
+    async def update_status(
+        self,
+        *,
+        user_id: str,
+        body: UpdateStatusRequest,
+    ) -> UserProfileResponse:
+        expires_at = self._normalize_status_expiry(body.status_expires_at)
+        user = await self.users.update_status(
+            user_id=user_id,
+            status_emoji=_strip_or_none(body.status_emoji),
+            status_text=_strip_or_none(body.status_text),
+            status_expires_at=expires_at,
+        )
+        return self._to_profile_response(user)
+
+    async def clear_status(self, *, user_id: str) -> UserProfileResponse:
+        user = await self.users.clear_status(user_id=user_id)
         return self._to_profile_response(user)
 
     async def update_username(
@@ -201,7 +284,104 @@ class UsersService:
         updated = await self.users.update_avatar(user_id=user_id, avatar=None)
         return self._to_profile_response(updated)
 
+    def _require_channels(self) -> ChannelsRepository:
+        if self.channels is None:
+            raise AppError(
+                code="CHANNELS_UNAVAILABLE",
+                message="Channel access is not configured",
+                status_code=500,
+            )
+        return self.channels
+
+    async def set_main_channel(
+        self,
+        *,
+        user_id: str,
+        channel_id: str | None,
+    ) -> UserProfileResponse:
+        """Pin (or clear) the public channel shown as the profile's main timeline.
+
+        Only the channel's owner (its creator) may pin it, and only public
+        channels are eligible so visitors can always view the pinned timeline.
+        """
+        if channel_id is not None:
+            channel = await self._require_channels().get_by_id(
+                channel_id, invalid_message="Invalid channel id"
+            )
+            if channel is None:
+                raise AppError(
+                    code="CHANNEL_NOT_FOUND",
+                    message="Channel not found",
+                    status_code=404,
+                )
+            if (
+                channel.owner.type != "user"
+                or str(channel.owner.id) != str(user_id)
+            ):
+                raise AppError(
+                    code="CHANNEL_NOT_OWNED",
+                    message="Only the channel owner can pin it as main",
+                    status_code=403,
+                )
+
+        user = await self.users.update_main_channel(
+            user_id=user_id, channel_id=channel_id
+        )
+        return self._to_profile_response(user)
+
+    async def list_user_channels(
+        self,
+        *,
+        user_id: str,
+        limit: int = MAX_PROFILE_CHANNELS,
+        offset: int = 0,
+    ) -> list[ChannelSummary]:
+        """Public channels owned by ``user_id``, main channel first.
+
+        Shared by the owner's ``/me`` page and visitors on ``/profile/:id``.
+        """
+        user = await self.users.find_by_id(user_id)
+        if not user:
+            raise AppError(
+                code="USER_NOT_FOUND", message="User not found", status_code=404
+            )
+
+        channels_repo = self._require_channels()
+        capped = max(1, min(limit, MAX_PROFILE_CHANNELS))
+        channels = await channels_repo.list_by_owner(
+            owner_type="user",
+            owner_id=user_id,
+            limit=capped,
+            skip=max(0, offset),
+        )
+
+        main_channel_id = _doc_value(user, "main_channel_id")
+        views = [
+            self._to_channel_view(channel, main_channel_id=main_channel_id)
+            for channel in channels
+        ]
+        # Surface the pinned main channel first; the rest keep newest-first order.
+        views.sort(key=lambda view: not view.is_main)
+        return views
+
+    def _to_channel_view(
+        self, channel: ChannelDocument, *, main_channel_id: str | None
+    ) -> ChannelSummary:
+        """One canonical channel shape, shared with every other listing.
+
+        The retired projection renamed four fields and carried a `read_policy`
+        that only ever mirrored `visibility`, so a client had two incompatible
+        shapes for one entity and no correct way to map between them.
+        """
+        channel_id = str(_doc_value(channel, "id", ""))
+        return ChannelService.to_summary(
+            channel,
+            is_main=main_channel_id is not None
+            and channel_id == str(main_channel_id),
+        )
+
     def _to_profile_response(self, user: UserDocument) -> UserProfileResponse:
+        user = self._without_expired_status(user)
         return UserProfileResponse(
             id=_doc_value(user, "id", ""),
             email=_doc_value(user, "email"),
@@ -211,6 +391,8 @@ class UsersService:
             bio=_doc_value(user, "bio"),
             avatar=build_user_avatar_payload(_doc_value(user, "avatar")),
             is_private=_doc_value(user, "is_private"),
+            is_bot=_doc_value(user, "is_bot", False),
+            main_channel_id=_doc_value(user, "main_channel_id"),
             default_discovery_enabled=_doc_value(user, "default_discovery_enabled"),
             last_seen_at=_doc_value(user, "last_seen_at"),
             username_updated_at=_doc_value(user, "username_updated_at"),
@@ -227,27 +409,96 @@ class UsersService:
         )
 
     async def _to_selected_profile_response(
-        self, user: UserDocument
+        self,
+        user: UserDocument,
+        *,
+        relationship: ConnectionState,
+        include_private_profile: bool,
+        extras: ConnectionExtras | None = None,
+        shares_context: bool = False,
     ) -> SelectedUserProfileResponse:
+        user = self._without_expired_status(user)
         user_id = _doc_value(user, "id", "")
-        is_online = (
-            await self.presence_service.is_online(user_id)
-            if self.presence_service
-            else False
-        )
+        presence_state: PresenceState = "offline"
+        if (include_private_profile or shares_context) and self.presence_service:
+            presence_state = await self.presence_service.get_state(user_id)
+        is_online = presence_state != "offline"
         return SelectedUserProfileResponse(
             id=user_id,
             username=_doc_value(user, "username"),
             display_name=_doc_value(user, "display_name"),
-            bio=_doc_value(user, "bio"),
+            bio=_doc_value(user, "bio") if include_private_profile else None,
             avatar=build_user_avatar_payload(_doc_value(user, "avatar")),
-            status_emoji=_doc_value(user, "status_emoji"),
-            status_text=_doc_value(user, "status_text"),
-            status_expires_at=_doc_value(user, "status_expires_at"),
-            pronouns=_doc_value(user, "pronouns"),
-            timezone=_doc_value(user, "timezone"),
+            is_bot=_doc_value(user, "is_bot", False),
+            main_channel_id=_doc_value(user, "main_channel_id"),
+            status_emoji=(
+                _doc_value(user, "status_emoji") if include_private_profile else None
+            ),
+            status_text=(
+                _doc_value(user, "status_text") if include_private_profile else None
+            ),
+            status_expires_at=(
+                _doc_value(user, "status_expires_at")
+                if include_private_profile
+                else None
+            ),
+            pronouns=_doc_value(user, "pronouns") if include_private_profile else None,
+            timezone=_doc_value(user, "timezone") if include_private_profile else None,
             is_online=is_online,
+            presence_state=presence_state,
+            last_seen_at=(
+                _doc_value(user, "last_seen_at")
+                if include_private_profile and presence_state in {"away", "offline"}
+                else None
+            ),
+            profile_visibility="full" if include_private_profile else "limited",
+            relationship=relationship,
+            connection_timestamp=extras.connection_timestamp if extras else None,
+            conversation_id=extras.conversation_id if extras else None,
+            shared_conversations=extras.shared_conversations if extras else [],
+            shared_spaces=extras.shared_spaces if extras else [],
         )
+
+    def _normalize_status_expiry(self, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        normalized = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        if normalized <= datetime.now(UTC):
+            raise AppError(
+                code="STATUS_EXPIRY_IN_PAST",
+                message="status_expires_at must be in the future",
+                status_code=400,
+            )
+        return normalized
+
+    def _status_is_expired(self, user: object) -> bool:
+        expires_at = _doc_value(user, "status_expires_at")
+        if expires_at is None:
+            return False
+        normalized = (
+            expires_at
+            if expires_at.tzinfo is not None
+            else expires_at.replace(tzinfo=UTC)
+        )
+        return normalized <= datetime.now(UTC)
+
+    def _without_expired_status(self, user: Any) -> Any:
+        if not self._status_is_expired(user):
+            return user
+        if isinstance(user, dict):
+            user["status_emoji"] = None
+            user["status_text"] = None
+            user["status_expires_at"] = None
+            return user
+        user.status_emoji = None
+        user.status_text = None
+        user.status_expires_at = None
+        return user
+
+    async def _clear_expired_status_if_needed(self, user: UserDocument) -> UserDocument:
+        if not self._status_is_expired(user):
+            return user
+        return await self.users.clear_status(user_id=_doc_value(user, "id", ""))
 
     async def _read_avatar_bytes(self, file: UploadFile) -> bytes:
         content_type = (file.content_type or "").lower().strip()

@@ -42,6 +42,7 @@ def _build_repo_call(
     now = datetime(2026, 4, 13, 12, 0, 0, tzinfo=UTC)
     return {
         "_id": "507f1f77bcf86cd799439011",
+        "conversation_id": "u1_u2",
         "caller_user_id": "u1",
         "callee_user_id": "u2",
         "participant_user_ids": ["u1", "u2"],
@@ -79,7 +80,7 @@ def _build_service() -> CallsService:
     return CallsService(
         repo=SimpleNamespace(),
         users_repo=SimpleNamespace(),
-        pings_service=SimpleNamespace(),
+        connection_service=SimpleNamespace(),
     )
 
 

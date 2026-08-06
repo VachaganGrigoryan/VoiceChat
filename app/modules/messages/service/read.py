@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from app.core.errors import AppError
+from app.db.models import MessageContainerType
 from app.modules.messages.repository.mappers import (
     to_message_doc,
     to_thread_summary,
@@ -13,11 +15,54 @@ from app.modules.messages.schemas import (
 
 
 class ReadMessagesMixin:
+    async def search_messages(
+        self,
+        *,
+        user_id: str,
+        query: str,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> tuple[list[MessageDoc], str | None]:
+        normalized_query = (query or "").strip()
+        if not normalized_query:
+            raise AppError(
+                code="INVALID_SEARCH_QUERY",
+                message="query is required",
+                status_code=400,
+            )
+        if limit < 1 or limit > 100:
+            raise AppError(
+                code="INVALID_LIMIT",
+                message="limit must be between 1 and 100",
+                status_code=400,
+            )
+        if self.conversations_service is None:
+            return [], None
+        conversation_ids = (
+            await self.conversations_service.accessible_conversation_ids(
+                user_id=user_id
+            )
+        )
+        docs, next_cursor = await self.repo.search_messages(
+            container_type="conversation",
+            container_ids=conversation_ids,
+            user_id=user_id,
+            query=normalized_query,
+            limit=limit,
+            cursor=cursor,
+        )
+        return [to_message_doc(doc) for doc in docs], next_cursor
+
     async def _to_message_docs_with_receipts(
-        self, *, conversation_id: str, docs
+        self,
+        *,
+        container_type: MessageContainerType,
+        container_id: str,
+        docs,
     ) -> list[MessageDoc]:
         summaries = await self.repo.receipt_summaries_for_messages(
-            conversation_id=conversation_id,
+            container_type=container_type,
+            container_id=container_id,
             messages=list(docs),
         )
         return [
@@ -25,54 +70,120 @@ class ReadMessagesMixin:
             for doc in docs
         ]
 
-    async def get_conversation_history(
+    async def get_messages_by_ids(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
+        message_ids: list[str],
+        user_id: str,
+    ) -> list[MessageDoc]:
+        docs = await self.repo.list_by_ids_in_container(
+            container_type=container_type,
+            container_id=container_id,
+            message_ids=message_ids,
+            user_id=user_id,
+        )
+        return await self._to_message_docs_with_receipts(
+            container_type=container_type, container_id=container_id, docs=docs
+        )
+
+    async def get_message(
+        self,
+        *,
+        container_type: MessageContainerType,
+        container_id: str,
+        message_id: str,
+        user_id: str,
+    ) -> MessageDoc:
+        doc = await self.repo.get_by_id_in_container(
+            container_type=container_type,
+            container_id=container_id,
+            message_id=message_id,
+            user_id=user_id,
+        )
+        if doc is None:
+            raise AppError(
+                code="MESSAGE_NOT_FOUND", message="Message not found", status_code=404
+            )
+        docs = await self._to_message_docs_with_receipts(
+            container_type=container_type, container_id=container_id, docs=[doc]
+        )
+        return docs[0]
+
+    async def get_history(
+        self,
+        *,
+        container_type: MessageContainerType,
+        container_id: str,
         user_id: str,
         limit: int = 20,
         cursor: Optional[str] = None,
     ):
-        docs, next_cursor = await self.repo.list_history_for_conversation(
-            conversation_id=conversation_id,
+        docs, next_cursor = await self.repo.list_history_for_container(
+            container_type=container_type,
+            container_id=container_id,
             user_id=user_id,
             limit=limit,
             cursor=cursor,
         )
         return (
             await self._to_message_docs_with_receipts(
-                conversation_id=conversation_id,
+                container_type=container_type,
+                container_id=container_id,
                 docs=docs,
             ),
             next_cursor,
         )
 
-    async def get_thread_for_conversation(
+    async def get_feed_for_containers(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_ids: list[str],
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> tuple[list[MessageDoc], str | None]:
+        docs, next_cursor = await self.repo.list_feed_for_containers(
+            container_type=container_type,
+            container_ids=container_ids,
+            limit=limit,
+            cursor=cursor,
+        )
+        return [to_message_doc(doc) for doc in docs], next_cursor
+
+    async def get_thread(
+        self,
+        *,
+        container_type: MessageContainerType,
+        container_id: str,
         message_id: str,
         user_id: str,
     ) -> list[MessageDoc]:
-        docs = await self.repo.load_thread_messages_for_conversation(
-            conversation_id=conversation_id,
+        """The flat item pool of a thread — a channel's is its comments (§35)."""
+        docs = await self.repo.load_thread_messages(
+            container_type=container_type,
+            container_id=container_id,
             message_id=message_id,
             user_id=user_id,
         )
         return await self._to_message_docs_with_receipts(
-            conversation_id=conversation_id,
+            container_type=container_type,
+            container_id=container_id,
             docs=docs,
         )
 
-    async def get_thread_summary_for_conversation(
+    async def get_thread_summary(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         message_id: str,
         user_id: str,
     ) -> ThreadSummary:
-        doc = await self.repo.load_thread_summary_for_conversation(
-            conversation_id=conversation_id,
+        doc = await self.repo.load_thread_summary(
+            container_type=container_type,
+            container_id=container_id,
             message_id=message_id,
             user_id=user_id,
         )

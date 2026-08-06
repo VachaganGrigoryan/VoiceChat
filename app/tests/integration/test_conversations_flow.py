@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.db.models import ConversationDocument, ParticipantDocument
+from app.db.models import ConversationDocument, RelationshipDocument
 from app.modules.conversations.repository.helpers import dm_key_for
 from app.tests.integration.test_realtime_socket import (
     _create_verified_user_and_tokens,
@@ -50,7 +50,7 @@ async def test_create_or_get_dm_is_idempotent(inprocess_client):
     assert first_data["peer_user"]["id"] == str(receiver["_id"])
     assert first_data["peer_user"]["username"] == receiver["username"]
     assert first_data["peer_user"]["chat_allowed"] is True
-    assert first_data["peer_user"]["ping_status"] == "accepted"
+    assert first_data["peer_user"]["connection_status"] == "active"
     assert {item["id"] for item in first_data["participant_users"]} == {
         str(sender["_id"]),
         str(receiver["_id"]),
@@ -177,6 +177,33 @@ async def test_conversation_scoped_send_and_list_with_content_envelope(
 
 
 @pytest.mark.asyncio
+async def test_send_text_resolves_mentions_against_conversation_participants(
+    inprocess_client,
+):
+    sender, sender_tokens, receiver, _ = await _pair(
+        "conv-mention-a@test.com", "conv-mention-b@test.com"
+    )
+
+    conv = await inprocess_client.post(
+        "/conversations",
+        json={"peer_user_id": str(receiver["_id"])},
+        headers=_auth(sender_tokens["access_token"]),
+    )
+    conversation_id = conv.json()["data"]["id"]
+
+    send = await inprocess_client.post(
+        f"/conversations/{conversation_id}/messages/text",
+        json={"text": f"hello @{receiver['username']} and @all"},
+        headers=_auth(sender_tokens["access_token"]),
+    )
+
+    assert send.status_code == 201, send.text
+    message = send.json()["data"]
+    assert message["mention_user_ids"] == [str(receiver["_id"])]
+    assert message["mention_scope"] == "all"
+
+
+@pytest.mark.asyncio
 async def test_mark_read_zeroes_unread(inprocess_client):
     sender, sender_tokens, receiver, receiver_tokens = await _pair(
         "conv-a4@test.com", "conv-b4@test.com"
@@ -235,8 +262,13 @@ async def test_call_materializes_conversation_entity(inprocess_client):
     dm_key = dm_key_for(str(caller["_id"]), str(callee["_id"]))
     conversation = await ConversationDocument.find_one({"type": "dm", "dm_key": dm_key})
     assert conversation is not None
-    participants = await ParticipantDocument.find(
-        {"conversation_id": conversation.str_id}
+    participants = await RelationshipDocument.find(
+        {
+            "kind": "membership",
+            "target_type": "conversation",
+            "target_id": conversation.str_id,
+            "status": "active",
+        }
     ).to_list()
     assert len(participants) == 2
 
@@ -261,7 +293,7 @@ async def test_edit_keeps_content_envelope_in_sync(inprocess_client):
     message_id = send.json()["data"]["id"]
 
     edit = await inprocess_client.patch(
-        f"/conversations/{conversation_id}/messages/{message_id}",
+        f"/messages/{message_id}",
         json={"text": "edited"},
         headers=_auth(sender_tokens["access_token"]),
     )

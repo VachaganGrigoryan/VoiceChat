@@ -6,6 +6,10 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.db.object_id import StrId
+from app.modules.relationships.schemas import (
+    ConnectionDirection,
+    ConnectionStatusView,
+)
 
 
 DiscoveryTokenType = Literal["code", "link"]
@@ -19,7 +23,9 @@ class DiscoveryUserSummary(BaseModel):
     is_online: bool = False
     can_ping: bool = False
     chat_allowed: bool = False
-    ping_status: str = "none"
+    connection_status: ConnectionStatusView = "none"
+    connection_direction: ConnectionDirection | None = None
+    relationship_id: StrId | None = None
     discovered_via: Literal["username", "code", "link"] | None = None
 
 

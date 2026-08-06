@@ -75,7 +75,7 @@ async def test_member_cannot_rename_group(inprocess_client):
     )
 
     assert resp.status_code == 403, resp.text
-    assert resp.json()["error"]["code"] == "CONVERSATION_FORBIDDEN"
+    assert resp.json()["error"]["code"] == "FORBIDDEN"
 
 
 @pytest.mark.asyncio
@@ -87,7 +87,7 @@ async def test_admin_can_rename_group(inprocess_client):
 
     promote = await inprocess_client.patch(
         f"/conversations/{conversation_id}/members/{member['_id']}/role",
-        json={"role": "admin"},
+        json={"role": "Admin"},
         headers=_auth(owner_tokens["access_token"]),
     )
     assert promote.status_code == 200, promote.text
@@ -141,7 +141,7 @@ async def test_member_cannot_set_group_avatar(inprocess_client):
     )
 
     assert resp.status_code == 403, resp.text
-    assert resp.json()["error"]["code"] == "CONVERSATION_FORBIDDEN"
+    assert resp.json()["error"]["code"] == "FORBIDDEN"
 
 
 @pytest.mark.asyncio
@@ -185,7 +185,7 @@ async def test_member_cannot_clear_history_for_everyone(inprocess_client):
     )
 
     assert resp.status_code == 403, resp.text
-    assert resp.json()["error"]["code"] == "CONVERSATION_FORBIDDEN"
+    assert resp.json()["error"]["code"] == "FORBIDDEN"
 
 
 @pytest.mark.asyncio

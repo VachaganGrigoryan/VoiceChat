@@ -8,6 +8,7 @@ from app.db.models import (
     MessageContentDocument,
     MessageDocument,
     PlaintextContentDocument,
+    PollRefDocument,
 )
 from app.infra.storage import build_storage_url
 from app.modules.messages.schemas import (
@@ -18,8 +19,10 @@ from app.modules.messages.schemas import (
     MessageDoc,
     MessageEdit,
     MessagePlaintext,
+    MessageTextStyle,
     MessageReceiptSummary,
     MessageReactionGroup,
+    PollRef,
     ReplyPreview,
     ThreadSummary,
 )
@@ -101,7 +104,31 @@ def _stored_plaintext(message: MessageDocument) -> PlaintextContentDocument | No
 
 def message_text(message: MessageDocument) -> str | None:
     plaintext = _stored_plaintext(message)
-    return plaintext.text if plaintext is not None else None
+    if plaintext is None:
+        return None
+    if plaintext.text:
+        return plaintext.text
+    if plaintext.poll_ref:
+        return plaintext.poll_ref.question or "Poll"
+    if plaintext.poll:
+        return str(plaintext.poll.get("question") or "Poll")
+    if plaintext.location:
+        return str(plaintext.location.get("name") or "Location")
+    if plaintext.contact:
+        return str(plaintext.contact.get("display_name") or "Contact")
+    if plaintext.link_preview:
+        return str(
+            plaintext.link_preview.get("title")
+            or plaintext.link_preview.get("url")
+            or "Link"
+        )
+    if plaintext.sticker:
+        return str(
+            plaintext.sticker.get("label")
+            or plaintext.sticker.get("emoji")
+            or "Sticker"
+        )
+    return None
 
 
 def message_media(message: MessageDocument) -> MediaDocument | None:
@@ -130,6 +157,12 @@ def _content_attachments(content: MessageContentDocument | None) -> list[MediaMe
         )
         if attachment is not None
     ]
+
+
+def _poll_ref_view(poll_ref: PollRefDocument | None) -> PollRef | None:
+    if poll_ref is None:
+        return None
+    return PollRef(poll_id=str(poll_ref.poll_id), question=poll_ref.question)
 
 
 def _stored_content_view(content: MessageContentDocument) -> MessageContent:
@@ -162,6 +195,19 @@ def _stored_content_view(content: MessageContentDocument) -> MessageContent:
             text=plaintext.text if plaintext is not None else None,
             media=media,
             call=call,
+            poll=plaintext.poll if plaintext is not None else None,
+            poll_ref=_poll_ref_view(
+                plaintext.poll_ref if plaintext is not None else None
+            ),
+            sticker=plaintext.sticker if plaintext is not None else None,
+            location=plaintext.location if plaintext is not None else None,
+            contact=plaintext.contact if plaintext is not None else None,
+            link_preview=plaintext.link_preview if plaintext is not None else None,
+            style=(
+                MessageTextStyle(**plaintext.style.model_dump())
+                if plaintext is not None and plaintext.style is not None
+                else None
+            ),
         ),
         attachments=_content_attachments(content),
     )
@@ -243,7 +289,8 @@ def to_message_doc(
 
     return MessageDoc(
         id=message.str_id,
-        conversation_id=message.conversation_id,
+        container_type=message.container_type,
+        container_id=message.container_id,
         sender_id=str(message.sender_id),
         type=normalized_type,
         content=content,
@@ -274,7 +321,8 @@ def to_message_doc(
 def to_thread_summary(message: MessageDocument) -> ThreadSummary:
     return ThreadSummary(
         thread_root_id=message.str_id,
-        conversation_id=message.conversation_id,
+        container_type=message.container_type,
+        container_id=message.container_id,
         is_thread_root=message.is_thread_root,
         thread_reply_count=int(message.thread_reply_count),
         last_thread_reply_at=message.last_thread_reply_at,

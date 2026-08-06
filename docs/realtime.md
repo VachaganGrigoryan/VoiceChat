@@ -42,12 +42,11 @@ HTTP base path: `/realtime`
   Hard-delete for everyone or hide-for-me acknowledgement, depending on actor.
 - `presence_update`
   Online or offline change.
-- `ping_received`
-- `ping_accepted`
-- `ping_declined`
-- `ping_cancelled`
-- `chat_permission_updated`
-- `user_blocked`
+- `relationship.requested`
+- `relationship.activated`
+- `relationship.revoked`
+- `block.created`
+- `block.removed`
 
 ## Notes
 

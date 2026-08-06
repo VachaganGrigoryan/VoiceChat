@@ -14,7 +14,6 @@ class SavedMessageDocument(TimestampedDocument):
 
     user_id: StrId
     message_id: StrId
-    conversation_id: str
     saved_at: datetime
 
     class Settings:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from unittest.mock import ANY
 
 import pytest
 
@@ -187,7 +188,7 @@ async def test_get_me_requires_auth(inprocess_client):
 
 
 @pytest.mark.asyncio
-async def test_get_selected_user_profile_allows_accepted_ping(inprocess_client):
+async def test_get_selected_user_profile_allows_active_connection(inprocess_client):
     viewer, viewer_tokens = await _create_verified_user_and_tokens(f"viewer-{uuid.uuid4().hex[:8]}@test.com")
     target, target_tokens = await _create_verified_user_and_tokens(f"target-{uuid.uuid4().hex[:8]}@test.com")
 
@@ -198,7 +199,7 @@ async def test_get_selected_user_profile_allows_accepted_ping(inprocess_client):
         headers={"Authorization": f"Bearer {target_tokens['access_token']}"},
         json={
             "display_name": "Target User",
-            "bio": "Visible through accepted ping",
+            "bio": "Visible through active connection",
         },
     )
     assert update_res.status_code == 200, update_res.text
@@ -217,14 +218,32 @@ async def test_get_selected_user_profile_allows_accepted_ping(inprocess_client):
         "id": str(target["_id"]),
         "username": target["username"],
         "display_name": "Target User",
-        "bio": "Visible through accepted ping",
+        "bio": "Visible through active connection",
         "avatar": None,
+        "is_bot": False,
         "status_emoji": None,
         "status_text": None,
         "status_expires_at": None,
         "pronouns": None,
         "timezone": None,
         "is_online": False,
+        "profile_visibility": "full",
+        "last_seen_at": None,
+        "presence_state": "offline",
+        "relationship": {
+            "can_ping": False,
+            "chat_allowed": True,
+            "connection_status": "active",
+            "direction": "outgoing",
+            "relationship_id": ANY,
+            "blocked_by_me": False,
+            "blocks_me": False,
+        },
+        "connection_timestamp": None,
+        "conversation_id": None,
+        "main_channel_id": None,
+        "shared_conversations": [],
+        "shared_spaces": [],
     }
     assert "email" not in data
     assert "is_private" not in data
@@ -232,18 +251,65 @@ async def test_get_selected_user_profile_allows_accepted_ping(inprocess_client):
 
 
 @pytest.mark.asyncio
-async def test_get_selected_user_profile_forbids_without_accepted_ping(inprocess_client):
+async def test_get_selected_user_profile_returns_limited_private_payload_without_accepted_ping(inprocess_client):
     viewer, viewer_tokens = await _create_verified_user_and_tokens(f"viewer-no-ping-{uuid.uuid4().hex[:8]}@test.com")
-    target, _ = await _create_verified_user_and_tokens(f"target-no-ping-{uuid.uuid4().hex[:8]}@test.com")
+    target, target_tokens = await _create_verified_user_and_tokens(f"target-no-ping-{uuid.uuid4().hex[:8]}@test.com")
+
+    update_res = await inprocess_client.patch(
+        "/users/me",
+        headers={"Authorization": f"Bearer {target_tokens['access_token']}"},
+        json={
+            "display_name": "Private Target",
+            "bio": "Hidden from strangers",
+            "is_private": True,
+        },
+    )
+    assert update_res.status_code == 200, update_res.text
 
     res = await inprocess_client.get(
         f"/users/{target['_id']}",
         headers={"Authorization": f"Bearer {viewer_tokens['access_token']}"},
     )
-    assert res.status_code == 403, res.text
+    assert res.status_code == 200, res.text
 
-    body = res.json()
-    assert body["error"]["code"] == "PROFILE_ACCESS_FORBIDDEN"
+    data = res.json()["data"]
+    assert data["id"] == str(target["_id"])
+    assert data["display_name"] == "Private Target"
+    assert data["bio"] is None
+    assert data["profile_visibility"] == "limited"
+    assert data["relationship"]["can_ping"] is True
+    assert data["relationship"]["chat_allowed"] is False
+
+
+@pytest.mark.asyncio
+async def test_set_and_clear_custom_status(inprocess_client):
+    user, tokens = await _create_verified_user_and_tokens(f"status-{uuid.uuid4().hex[:8]}@test.com")
+
+    set_res = await inprocess_client.patch(
+        "/users/me/status",
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
+        json={
+            "status_emoji": ":focus:",
+            "status_text": "Deep work",
+            "status_expires_at": "2099-01-01T00:00:00Z",
+        },
+    )
+    assert set_res.status_code == 200, set_res.text
+    assert set_res.json()["data"]["status_text"] == "Deep work"
+
+    profile_res = await inprocess_client.get(
+        f"/users/{user['_id']}",
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
+    )
+    assert profile_res.status_code == 200, profile_res.text
+    assert profile_res.json()["data"]["status_text"] == "Deep work"
+
+    clear_res = await inprocess_client.delete(
+        "/users/me/status",
+        headers={"Authorization": f"Bearer {tokens['access_token']}"},
+    )
+    assert clear_res.status_code == 200, clear_res.text
+    assert clear_res.json()["data"]["status_text"] is None
 
 
 @pytest.mark.asyncio

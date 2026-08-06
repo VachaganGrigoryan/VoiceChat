@@ -30,9 +30,8 @@ async def handle_message(message: AbstractIncomingMessage) -> None:
         log.warning("unknown email job type: %s", job_type)
 
 
-async def main() -> None:
-    setup_logging()
-
+async def consume_forever() -> None:
+    """Consume the email queue, reconnecting on failure. Assumes logging is set up."""
     while True:
         try:
             log.info("connecting to rabbitmq at %s", settings.rabbitmq_url)
@@ -55,6 +54,11 @@ async def main() -> None:
         except Exception as e:
             log.exception("email worker connection failed: %s", e)
             await asyncio.sleep(5)
+
+
+async def main() -> None:
+    setup_logging()
+    await consume_forever()
 
 
 if __name__ == "__main__":

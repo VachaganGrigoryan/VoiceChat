@@ -23,6 +23,12 @@ class UserDocument(BaseDocument):
     username_updated_at: datetime | None = None
     has_passkey: bool = False
     passkey_login_enabled: bool = True
+    is_bot: bool = False
+    # Public channel the user pins as their profile's main timeline (a
+    # ConversationDocument id, type="channel", visibility="public"). Null until
+    # the user creates/pins one.
+    main_channel_id: str | None = None
+
     # Rich profile + notification preferences (finalize-messenger-conversation-model).
     status_emoji: str | None = None
     status_text: str | None = None

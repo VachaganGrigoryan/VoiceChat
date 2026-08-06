@@ -51,6 +51,7 @@ class CallParticipantState(BaseModel):
 
 class CallDoc(BaseModel):
     id: StrId
+    conversation_id: StrId
     caller_user_id: StrId
     callee_user_id: StrId
     participant_user_ids: list[StrId] = Field(min_length=2, max_length=2)

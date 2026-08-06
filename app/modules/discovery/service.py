@@ -33,8 +33,8 @@ class PresenceServiceProto(Protocol):
     async def is_online(self, user_id: str) -> bool: ...
 
 
-class PingsServiceProto(Protocol):
-    async def get_contact_state(
+class ConnectionServiceProto(Protocol):
+    async def get_connection_state(
         self, *, viewer_user_id: str, peer_user_id: str
     ) -> Any: ...
 
@@ -59,13 +59,13 @@ class DiscoveryService:
         repo: DiscoveryTokensRepository,
         users_repo: UsersRepositoryProto,
         presence_service: PresenceServiceProto | None = None,
-        pings_service: PingsServiceProto | None = None,
+        connection_service: ConnectionServiceProto | None = None,
         config: DiscoveryConfig,
     ) -> None:
         self.repo = repo
         self.users_repo = users_repo
         self.presence_service = presence_service
-        self.pings_service = pings_service
+        self.connection_service = connection_service
         self.config = config
 
     async def regenerate_code(self, *, user_id: str) -> RegenerateCodeResponse:
@@ -173,6 +173,12 @@ class DiscoveryService:
                 continue
             if user.default_discovery_enabled is False:
                 continue
+            connection_state = await self.connection_service.get_connection_state(
+                viewer_user_id=requester_user_id,
+                peer_user_id=user.str_id,
+            )
+            if connection_state.blocked_by_me or connection_state.blocks_me:
+                continue
 
             result.append(
                 await self._to_summary(
@@ -233,7 +239,7 @@ class DiscoveryService:
             else False
         )
 
-        contact_state = await self.pings_service.get_contact_state(
+        connection_state = await self.connection_service.get_connection_state(
             viewer_user_id=requester_user_id,
             peer_user_id=user_id,
         )
@@ -244,8 +250,10 @@ class DiscoveryService:
             display_name=user.display_name,
             avatar=build_user_avatar_payload(user.avatar),
             is_online=online,
-            can_ping=contact_state.can_ping,
-            chat_allowed=contact_state.chat_allowed,
-            ping_status=contact_state.ping_status,
+            can_ping=connection_state.can_ping,
+            chat_allowed=connection_state.chat_allowed,
+            connection_status=connection_state.connection_status,
+            connection_direction=connection_state.direction,
+            relationship_id=connection_state.relationship_id,
             discovered_via=discovered_via,
         )

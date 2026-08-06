@@ -18,9 +18,9 @@ from app.modules.discovery.schemas import DiscoveryUserSummary
 from app.modules.passkeys.dependencies import get_passkey_service
 from app.modules.passkeys.router import router as passkeys_router
 from app.modules.passkeys.schemas import PasskeyResponse
-from app.modules.pings.dependencies import get_pings_service
-from app.modules.pings.router import router as pings_router
-from app.modules.pings.schemas import PingResponse
+from app.db.models import RelationshipDocument
+from app.modules.relationships.dependencies import get_connection_service
+from app.modules.relationships.router import connections_router
 
 FIXED_NOW = datetime(2026, 3, 24, 12, 0, 0, tzinfo=UTC)
 
@@ -35,30 +35,26 @@ class FakeSio:
         return None
 
 
-class FakePingsRepo:
-    async def find_by_id(self, ping_id: str) -> dict[str, Any]:
-        return {"_id": ping_id}
-
-
-class FakePingsService:
-    def __init__(self) -> None:
-        self.pings_repo = FakePingsRepo()
-
-    async def send_ping(self, *, from_user_id: str, to_user_id: str) -> PingResponse:
-        return PingResponse(
-            id="ping-1",
-            from_user_id=from_user_id,
-            to_user_id=to_user_id,
-            status="pending",
-            created_at=FIXED_NOW,
-            updated_at=FIXED_NOW,
-            responded_at=None,
+class FakeConnectionService:
+    async def request(
+        self, *, from_user_id: str, to_user_id: str
+    ) -> RelationshipDocument:
+        return RelationshipDocument.model_validate(
+            {
+                "_id": "507f1f77bcf86cd799439011",
+                "kind": "connection",
+                "user_id": from_user_id,
+                "target_type": "user",
+                "target_id": to_user_id,
+                "status": "pending",
+                "initiation": "request",
+                "initiated_by": from_user_id,
+                "pair_id": f"{from_user_id}_{to_user_id}",
+                "requested_at": FIXED_NOW,
+                "created_at": FIXED_NOW,
+                "updated_at": FIXED_NOW,
+            }
         )
-
-    async def to_realtime_payload(
-        self, doc: dict[str, Any], *, incoming_for: str
-    ) -> dict[str, Any]:
-        return {"id": doc["_id"], "incoming_for": incoming_for}
 
 
 class FakeDiscoveryService:
@@ -78,7 +74,7 @@ class FakeDiscoveryService:
                 is_online=False,
                 can_ping=True,
                 chat_allowed=False,
-                ping_status="none",
+                connection_status="none",
                 discovered_via="username",
             )
         ]
@@ -135,14 +131,16 @@ async def contract_client():
     app = FastAPI()
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(SuccessEnvelopeMiddleware)
-    app.include_router(pings_router)
+    app.include_router(connections_router)
     app.include_router(discovery_router)
     app.include_router(passkeys_router)
     app.state.sio = FakeSio()
     app.dependency_overrides[get_sio] = lambda: app.state.sio
     app.dependency_overrides[get_current_user_id] = lambda: "user-1"
     app.dependency_overrides[get_current_user] = lambda: FAKE_CURRENT_USER
-    app.dependency_overrides[get_pings_service] = lambda: FakePingsService()
+    app.dependency_overrides[get_connection_service] = (
+        lambda: FakeConnectionService()
+    )
     app.dependency_overrides[get_discovery_service] = lambda: FakeDiscoveryService()
     app.dependency_overrides[get_passkey_service] = lambda: FakePasskeyService()
 
@@ -171,20 +169,19 @@ async def clean_db():
 
 
 @pytest.mark.asyncio
-async def test_pings_create_response_uses_success_envelope(
+async def test_connection_create_response_uses_success_envelope(
     contract_client: AsyncClient,
 ):
     response = await contract_client.post(
-        "/pings",
-        json={"to_user_id": "user-2"},
+        "/connections/user-2/ping",
     )
 
-    assert response.status_code == 200, response.text
+    assert response.status_code == 201, response.text
     body = response.json()
     assert body["success"] is True
     assert body["request_id"]
-    assert body["data"]["from_user_id"] == "user-1"
-    assert body["data"]["to_user_id"] == "user-2"
+    assert body["data"]["user_id"] == "user-1"
+    assert body["data"]["target_id"] == "user-2"
     assert "success" not in body["data"]
 
 

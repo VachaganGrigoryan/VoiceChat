@@ -3,25 +3,39 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.db.collections import COL_CONVERSATION_PARTICIPANTS
-from app.db.models import MessageReceiptDocument
+from app.db.models import (
+    MessageContainerType,
+    MessageReceiptDocument,
+    RelationshipDocument,
+)
 from app.modules.messages.schemas import MessageReceiptSummary
 
 
 class ReceiptsRepositoryMixin:
+    """Delivery/read receipts.
+
+    Receipts count against a conversation's participants, so they are only
+    meaningful for a conversation container; a channel has followers rather than
+    a recipient roster and reports empty summaries.
+    """
+
     async def upsert_message_receipt(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         message_id: str,
         user_id: str,
         delivered: bool = False,
         read: bool = False,
     ) -> MessageReceiptSummary:
+        if container_type != "conversation":
+            return MessageReceiptSummary()
+
         now = datetime.now(UTC)
         set_data: dict[str, Any] = {"updated_at": now}
         set_on_insert = {
-            "conversation_id": conversation_id,
+            "conversation_id": container_id,
             "message_id": message_id,
             "user_id": user_id,
             "created_at": now,
@@ -38,7 +52,8 @@ class ReceiptsRepositoryMixin:
         )
         return (
             await self.receipt_summaries_for_messages(
-                conversation_id=conversation_id,
+                container_type="conversation",
+                container_id=container_id,
                 messages=[await self.get_by_id(message_id=message_id)],
             )
         )[message_id]
@@ -46,22 +61,27 @@ class ReceiptsRepositoryMixin:
     async def receipt_summaries_for_messages(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         messages: list[Any],
     ) -> dict[str, MessageReceiptSummary]:
         visible_messages = [message for message in messages if message is not None]
-        if not visible_messages:
+        if not visible_messages or container_type != "conversation":
             return {}
+        conversation_id = container_id
 
-        participant_docs = (
-            await self.db[COL_CONVERSATION_PARTICIPANTS]
-            .find(
-                {"conversation_id": conversation_id, "hidden": {"$ne": True}},
-                {"user_id": 1},
-            )
-            .to_list(length=None)
-        )
-        participant_ids = {str(doc["user_id"]) for doc in participant_docs}
+        participant_docs = await RelationshipDocument.find(
+            {
+                "kind": "membership",
+                "target_type": "conversation",
+                "target_id": conversation_id,
+                "status": "active",
+                "state.hidden": {"$ne": True},
+            }
+        ).to_list()
+        participant_ids = {
+            str(participant.user_id) for participant in participant_docs
+        }
         message_ids = [message.str_id for message in visible_messages]
         sender_by_message = {
             message.str_id: str(message.sender_id) for message in visible_messages
