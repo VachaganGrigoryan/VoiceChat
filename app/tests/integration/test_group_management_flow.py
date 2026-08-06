@@ -38,7 +38,7 @@ async def _group(inprocess_client, owner_email: str, *member_emails: str):
 
 async def _list_message_texts(inprocess_client, conversation_id, tokens):
     resp = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages",
+        f"/messages/conversation/{conversation_id}",
         headers=_auth(tokens["access_token"]),
     )
     assert resp.status_code == 200, resp.text
@@ -153,14 +153,14 @@ async def test_owner_clears_history_for_everyone(inprocess_client):
 
     for tokens, text in ((owner_tokens, "owner msg"), (member_tokens, "member msg")):
         send = await inprocess_client.post(
-            f"/conversations/{conversation_id}/messages/text",
+            f"/messages/conversation/{conversation_id}/text",
             json={"text": text},
             headers=_auth(tokens["access_token"]),
         )
         assert send.status_code == 201, send.text
 
     clear = await inprocess_client.delete(
-        f"/conversations/{conversation_id}/messages/all",
+        f"/messages/conversation/{conversation_id}/all",
         headers=_auth(owner_tokens["access_token"]),
     )
     assert clear.status_code == 200, clear.text
@@ -180,7 +180,7 @@ async def test_member_cannot_clear_history_for_everyone(inprocess_client):
     _member, member_tokens = members[0]
 
     resp = await inprocess_client.delete(
-        f"/conversations/{conversation_id}/messages/all",
+        f"/messages/conversation/{conversation_id}/all",
         headers=_auth(member_tokens["access_token"]),
     )
 
@@ -196,14 +196,14 @@ async def test_per_user_clear_leaves_history_for_others(inprocess_client):
     _member, member_tokens = members[0]
 
     send = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         json={"text": "owner keeps this"},
         headers=_auth(owner_tokens["access_token"]),
     )
     assert send.status_code == 201, send.text
 
     clear = await inprocess_client.delete(
-        f"/conversations/{conversation_id}/messages",
+        f"/messages/conversation/{conversation_id}",
         headers=_auth(member_tokens["access_token"]),
     )
     assert clear.status_code == 200, clear.text

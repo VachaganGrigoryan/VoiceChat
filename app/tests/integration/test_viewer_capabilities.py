@@ -44,7 +44,7 @@ async def test_capabilities_match_the_decision_for_the_owner(inprocess_client):
 
     # The claim is testable: posting must actually succeed.
     posted = await inprocess_client.post(
-        f"/channels/{channel['id']}/messages",
+        f"/messages/channel/{channel['id']}/text",
         json={"text": "hello"},
         headers=_auth(owner_tokens["access_token"]),
     )
@@ -71,7 +71,7 @@ async def test_denied_capability_matches_a_real_403(inprocess_client):
 
     # The denial is real, not cosmetic.
     posted = await inprocess_client.post(
-        f"/channels/{channel['id']}/messages",
+        f"/messages/channel/{channel['id']}/text",
         json={"text": "nope"},
         headers=_auth(other_tokens["access_token"]),
     )

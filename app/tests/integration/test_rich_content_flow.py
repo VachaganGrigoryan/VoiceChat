@@ -90,7 +90,7 @@ async def test_rich_content_types_round_trip(inprocess_client):
     sent_ids: list[str] = []
     for content_type, payload in cases:
         response = await inprocess_client.post(
-            f"/conversations/{conversation_id}/messages/content",
+            f"/messages/conversation/{conversation_id}/content",
             json={"type": content_type, **payload},
             headers=_auth(sender_tokens["access_token"]),
         )
@@ -101,7 +101,7 @@ async def test_rich_content_types_round_trip(inprocess_client):
         assert message["content"]["type"] == content_type
 
     listing = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages",
+        f"/messages/conversation/{conversation_id}",
         headers=_auth(receiver_tokens["access_token"]),
     )
     assert listing.status_code == 200, listing.text
@@ -120,7 +120,7 @@ async def test_multi_attachment_order_is_preserved(inprocess_client):
     attachments = [_attachment("media/first.png"), _attachment("media/second.png")]
 
     response = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/content",
+        f"/messages/conversation/{conversation_id}/content",
         json={
             "type": "link_preview",
             "link_preview": {"url": "https://example.test/album", "title": "Album"},
@@ -132,7 +132,7 @@ async def test_multi_attachment_order_is_preserved(inprocess_client):
     message_id = response.json()["data"]["id"]
 
     listing = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages",
+        f"/messages/conversation/{conversation_id}",
         headers=_auth(receiver_tokens["access_token"]),
     )
     assert listing.status_code == 200, listing.text
@@ -152,7 +152,7 @@ async def test_unknown_rich_content_type_is_rejected_at_api_boundary(inprocess_c
     )
 
     response = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/content",
+        f"/messages/conversation/{conversation_id}/content",
         json={"type": "whiteboard", "text": "future payload"},
         headers=_auth(sender_tokens["access_token"]),
     )

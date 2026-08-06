@@ -150,7 +150,7 @@ async def test_join_channel_room_delivers_message_and_rejects_non_readers(live_c
         assert outsider_errors[-1]["code"] == "FORBIDDEN"
 
         sent = await live_client.post(
-            f"/channels/{channel_id}/messages",
+            f"/messages/channel/{channel_id}/text",
             headers={"Authorization": f"Bearer {owner_tokens['access_token']}"},
             json={"text": "delivered over the channel room"},
         )

@@ -38,7 +38,7 @@ async def _dm(sender_email: str, receiver_email: str, client):
 
 async def _send_text(client, conversation_id, tokens, text):
     resp = await client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         json={"text": text},
         headers=_auth(tokens["access_token"]),
     )
@@ -82,7 +82,7 @@ async def test_pin_authorization_and_listing(inprocess_client):
     assert message["id"] in pinned.json()["data"]["pinned_message_ids"]
 
     listing = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages/pinned",
+        f"/messages/conversation/{conversation_id}/pinned",
         headers=_auth(member_tokens["access_token"]),
     )
     assert listing.status_code == 200, listing.text
@@ -113,7 +113,7 @@ async def test_dm_participants_can_pin_and_unpin_messages(inprocess_client):
     assert message["id"] in pinned.json()["data"]["pinned_message_ids"]
 
     listing = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages/pinned",
+        f"/messages/conversation/{conversation_id}/pinned",
         headers=_auth(sender_tokens["access_token"]),
     )
     assert listing.status_code == 200, listing.text
@@ -190,7 +190,7 @@ async def test_scheduled_message_withheld_then_released_and_cancelled(inprocess_
     )
 
     scheduled = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/schedule",
+        f"/messages/conversation/{conversation_id}/schedule",
         json={
             "text": "future message",
             "scheduled_for": (
@@ -205,14 +205,14 @@ async def test_scheduled_message_withheld_then_released_and_cancelled(inprocess_
 
     # Withheld from the timeline.
     timeline = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages",
+        f"/messages/conversation/{conversation_id}",
         headers=_auth(receiver_tokens["access_token"]),
     )
     assert scheduled_id not in [item["id"] for item in timeline.json()["data"]]
 
     # Visible in the sender's scheduled list.
     listing = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages/scheduled",
+        f"/messages/conversation/{conversation_id}/scheduled",
         headers=_auth(sender_tokens["access_token"]),
     )
     assert [item["id"] for item in listing.json()["data"]] == [scheduled_id]
@@ -231,7 +231,7 @@ async def test_scheduled_message_withheld_then_released_and_cancelled(inprocess_
     }
 
     timeline_after = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages",
+        f"/messages/conversation/{conversation_id}",
         headers=_auth(receiver_tokens["access_token"]),
     )
     released_item = next(
@@ -248,7 +248,7 @@ async def test_scheduled_message_cancel_before_send(inprocess_client):
         "sched-cancel-a@test.com", "sched-cancel-b@test.com", inprocess_client
     )
     scheduled = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/schedule",
+        f"/messages/conversation/{conversation_id}/schedule",
         json={
             "text": "never sent",
             "scheduled_for": (datetime.now(UTC) + timedelta(hours=2)).isoformat(),
@@ -258,13 +258,13 @@ async def test_scheduled_message_cancel_before_send(inprocess_client):
     scheduled_id = scheduled.json()["data"]["id"]
 
     cancelled = await inprocess_client.delete(
-        f"/conversations/{conversation_id}/messages/scheduled/{scheduled_id}",
+        f"/messages/{scheduled_id}/scheduled",
         headers=_auth(sender_tokens["access_token"]),
     )
     assert cancelled.status_code == 204, cancelled.text
 
     listing = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages/scheduled",
+        f"/messages/conversation/{conversation_id}/scheduled",
         headers=_auth(sender_tokens["access_token"]),
     )
     assert listing.json()["data"] == []

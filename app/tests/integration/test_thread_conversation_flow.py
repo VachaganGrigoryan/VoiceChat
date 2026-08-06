@@ -28,7 +28,7 @@ async def _dm_with_message(client, a_email: str, b_email: str):
     )
     conversation_id = conv.json()["data"]["id"]
     send = await client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         json={"text": "root message"},
         headers=_auth(a_tokens["access_token"]),
     )
@@ -43,7 +43,7 @@ async def test_thread_reply_does_not_create_a_conversation(inprocess_client):
     )
 
     reply = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         json={
             "text": "thread reply",
             "reply_mode": "thread",
@@ -70,7 +70,7 @@ async def test_thread_items_share_the_root_container(inprocess_client):
 
     for text, author in (("first", b_tokens), ("second", a_tokens)):
         created = await inprocess_client.post(
-            f"/conversations/{conversation_id}/messages/text",
+            f"/messages/conversation/{conversation_id}/text",
             json={
                 "text": text,
                 "reply_mode": "thread",

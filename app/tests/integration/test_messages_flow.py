@@ -13,16 +13,22 @@ def _auth(access_token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {access_token}"}
 
 
-def test_legacy_nested_item_paths_are_absent_from_openapi() -> None:
+def test_container_prefixed_message_paths_are_absent_from_openapi() -> None:
+    """Every message path is addressed under `/messages`, none under its container.
+
+    Both the nested *item* paths retired earlier and the whole container-prefixed
+    *collection* family this replaced: a message route living under
+    `/conversations` or `/channels` is the split the unified surface removed.
+    """
     spec = create_app().openapi()
 
-    nested_item_paths = [
+    container_prefixed = [
         path
         for path in spec["paths"]
-        if path.startswith("/conversations/") and "/messages/{" in path
+        if path.startswith(("/conversations/", "/channels/")) and "/messages" in path
     ]
 
-    assert nested_item_paths == []
+    assert container_prefixed == []
 
 
 @pytest.mark.asyncio
@@ -48,7 +54,7 @@ async def test_conversation_scoped_message_thread_and_reaction_flow(
     conversation_id = conversation.json()["data"]["id"]
 
     root = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         json={"text": "root"},
         headers=_auth(sender_tokens["access_token"]),
     )
@@ -60,7 +66,7 @@ async def test_conversation_scoped_message_thread_and_reaction_flow(
     assert "text" not in root_message
 
     reply = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         json={
             "text": "thread reply",
             "reply_mode": "thread",
@@ -111,7 +117,7 @@ async def test_non_participant_message_access_denied_with_403(inprocess_client):
     conversation_id = conversation.json()["data"]["id"]
 
     root = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         json={"text": "private message"},
         headers=_auth(sender_tokens["access_token"]),
     )
@@ -154,7 +160,7 @@ async def test_channel_message_flat_route_operations_and_pin_rejection(inprocess
     channel_id = channel.json()["data"]["id"]
 
     post = await inprocess_client.post(
-        f"/channels/{channel_id}/messages",
+        f"/messages/channel/{channel_id}/text",
         json={"text": "Channel Announcement"},
         headers=_auth(owner_tokens["access_token"]),
     )

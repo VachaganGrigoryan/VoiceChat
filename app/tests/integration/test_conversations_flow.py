@@ -84,7 +84,7 @@ async def test_send_materializes_conversation_and_unread(inprocess_client):
     )
     conversation_id = conv.json()["data"]["id"]
     send = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         json={"text": "hello there"},
         headers=_auth(sender_tokens["access_token"]),
     )
@@ -155,7 +155,7 @@ async def test_conversation_scoped_send_and_list_with_content_envelope(
     conversation_id = conv.json()["data"]["id"]
 
     send = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         json={"text": "scoped hello"},
         headers=_auth(sender_tokens["access_token"]),
     )
@@ -167,7 +167,7 @@ async def test_conversation_scoped_send_and_list_with_content_envelope(
     assert "text" not in message
 
     listing = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages",
+        f"/messages/conversation/{conversation_id}",
         headers=_auth(receiver_tokens["access_token"]),
     )
     assert listing.status_code == 200, listing.text
@@ -192,7 +192,7 @@ async def test_send_text_resolves_mentions_against_conversation_participants(
     conversation_id = conv.json()["data"]["id"]
 
     send = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         json={"text": f"hello @{receiver['username']} and @all"},
         headers=_auth(sender_tokens["access_token"]),
     )
@@ -216,7 +216,7 @@ async def test_mark_read_zeroes_unread(inprocess_client):
     )
     conversation_id = conv.json()["data"]["id"]
     await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         json={"text": "unread me"},
         headers=_auth(sender_tokens["access_token"]),
     )
@@ -286,7 +286,7 @@ async def test_edit_keeps_content_envelope_in_sync(inprocess_client):
     )
     conversation_id = conv.json()["data"]["id"]
     send = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         json={"text": "original"},
         headers=_auth(sender_tokens["access_token"]),
     )
@@ -320,7 +320,7 @@ async def test_conversation_send_requires_membership(inprocess_client):
     conversation_id = conv.json()["data"]["id"]
 
     resp = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages",
+        f"/messages/conversation/{conversation_id}",
         headers=_auth(outsider_tokens["access_token"]),
     )
     assert resp.status_code == 404, resp.text

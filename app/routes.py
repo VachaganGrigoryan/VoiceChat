@@ -30,7 +30,6 @@ from app.modules.extensibility.router import extensibility_router
 from app.modules.channels.router import router as channels_router
 from app.modules.messages.router import (
     container_messages_router,
-    conversation_messages_router,
     router as messages_router,
 )
 
@@ -46,7 +45,6 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(discovery_router)
     app.include_router(directory_router)
     app.include_router(conversations_router)
-    app.include_router(conversation_messages_router)
     # Order is load-bearing: the item routes and the container-addressed
     # collection routes share the `/messages` prefix and the same segment
     # count, so `/messages/{message_id}/pin` must be matched before

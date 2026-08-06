@@ -1,23 +1,19 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal, Optional
+from typing import Annotated
 
 import socketio
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, Query
 from starlette.requests import Request
 
 from app.core.deps import get_sio
-from app.db.models.embedded import TextStyleDocument
 from app.modules.authorization.capabilities import affected_viewer_ids
 from app.modules.realtime import emit_capabilities_invalidated
 from app.modules.realtime.emits import emit_resource_deleted
 from app.core.errors.openapi import build_error_responses
 from app.core.http import (
-    PaginatedResponse,
-    PaginationMeta,
     SuccessResponse,
     ok,
-    ok_paginated,
 )
 from app.core.rate_limit import rate_limit
 from app.core.security import require_verified_user
@@ -27,17 +23,12 @@ from app.modules.channels.schemas import (
     ChannelInboxRow,
     ChannelInboxUpdateRequest,
     ChannelMemberView,
-    ChannelMessageCreateRequest,
     ChannelNotificationUpdateRequest,
     ChannelUpdateRequest,
     ChannelView,
     ChannelViewerStateView,
 )
-from app.modules.channels.emit import fan_out_channel_message
 from app.modules.channels.service import ChannelService
-from app.modules.messages.schemas import MessageDoc, SendRichContentRequest
-from app.modules.notifications.dependencies import get_notifications_service
-from app.modules.notifications.service import NotificationsService
 
 # Edits that can change what a member may do. A rename cannot, so it must not
 # invalidate every member's capability cache.
@@ -168,150 +159,6 @@ async def delete_channel(
         resource_id=channel_id,
     )
     return ok(request, data=None, status_code=204)
-
-
-@router.get(
-    "/{channel_id}/messages",
-    response_model=PaginatedResponse[list[MessageDoc]],
-    dependencies=[Depends(rate_limit("60/minute", scope="channel_messages"))],
-)
-async def list_channel_messages(
-    request: Request,
-    channel_id: str,
-    limit: int = Query(default=20, ge=1, le=100),
-    cursor: Optional[str] = Query(default=None),
-    user=Depends(require_verified_user),
-    service: ChannelService = Depends(get_channel_service),
-):
-    items, next_cursor = await service.list_messages(
-        channel_id=channel_id,
-        viewer_id=user.str_id,
-        limit=limit,
-        cursor=cursor,
-    )
-    return ok_paginated(
-        request,
-        data=items,
-        meta=PaginationMeta(cursor=cursor, next_cursor=next_cursor, limit=limit),
-    )
-
-
-@router.post(
-    "/{channel_id}/messages",
-    status_code=201,
-    response_model=SuccessResponse[MessageDoc],
-    dependencies=[Depends(rate_limit("60/minute", scope="channel_message_create"))],
-)
-async def create_channel_message(
-    request: Request,
-    channel_id: str,
-    body: ChannelMessageCreateRequest,
-    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-    user=Depends(require_verified_user),
-    service: ChannelService = Depends(get_channel_service),
-    notifications: NotificationsService = Depends(get_notifications_service),
-):
-    result = await service.create_message(
-        channel_id=channel_id,
-        sender_id=user.str_id,
-        text=body.text,
-        reply_mode=body.reply_mode,
-        reply_to_message_id=body.reply_to_message_id,
-        style=(TextStyleDocument(**body.style.model_dump()) if body.style else None),
-    )
-    await fan_out_channel_message(
-        sio,
-        result=result,
-        notifications=notifications,
-    )
-    return ok(request, data=result.message, status_code=201)
-
-
-@router.post(
-    "/{channel_id}/messages/media",
-    status_code=201,
-    response_model=SuccessResponse[MessageDoc],
-    dependencies=[Depends(rate_limit("30/minute", scope="channel_media_upload"))],
-)
-async def send_channel_media(
-    request: Request,
-    channel_id: str,
-    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-    type: Literal["media", "file"] = Form(...),
-    media_kind: Optional[Literal["voice", "audio", "image", "video"]] = Form(None),
-    duration_ms: Optional[int] = Form(None),
-    text: Optional[str] = Form(None),
-    reply_mode: Optional[Literal["quote", "thread"]] = Form(None),
-    reply_to_message_id: Optional[str] = Form(None),
-    file: UploadFile = File(...),
-    user=Depends(require_verified_user),
-    service: ChannelService = Depends(get_channel_service),
-    notifications: NotificationsService = Depends(get_notifications_service),
-):
-    result = await service.upload_media(
-        channel_id=channel_id,
-        sender_id=user.str_id,
-        message_type=type,
-        media_kind=media_kind,
-        file=file,
-        text=text,
-        duration_ms=duration_ms,
-        reply_mode=reply_mode,
-        reply_to_message_id=reply_to_message_id,
-    )
-    await fan_out_channel_message(
-        sio,
-        result=result,
-        notifications=notifications,
-    )
-    return ok(request, data=result.message, status_code=201)
-
-
-@router.post(
-    "/{channel_id}/messages/content",
-    status_code=201,
-    response_model=SuccessResponse[MessageDoc],
-    dependencies=[Depends(rate_limit("60/minute", scope="channel_rich_message"))],
-)
-async def send_channel_rich_content(
-    request: Request,
-    channel_id: str,
-    body: SendRichContentRequest,
-    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
-    user=Depends(require_verified_user),
-    service: ChannelService = Depends(get_channel_service),
-    notifications: NotificationsService = Depends(get_notifications_service),
-):
-    result = await service.send_rich_content(
-        channel_id=channel_id,
-        sender_id=user.str_id,
-        body=body,
-    )
-    await fan_out_channel_message(
-        sio,
-        result=result,
-        notifications=notifications,
-    )
-    return ok(request, data=result.message, status_code=201)
-
-
-@router.post(
-    "/{channel_id}/messages/{message_id}/read",
-    response_model=SuccessResponse[MessageDoc],
-)
-async def mark_channel_message_read(
-    request: Request,
-    channel_id: str,
-    message_id: str,
-    user=Depends(require_verified_user),
-    service: ChannelService = Depends(get_channel_service),
-):
-    message = await service.mark_read(
-        channel_id=channel_id,
-        message_id=message_id,
-        user_id=user.str_id,
-    )
-    return ok(request, data=message)
 
 
 @router.post(

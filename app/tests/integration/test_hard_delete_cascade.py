@@ -65,7 +65,7 @@ async def test_deleting_a_channel_leaves_nothing_naming_it(inprocess_client):
     channel_id = created.json()["data"]["id"]
 
     posted = await inprocess_client.post(
-        f"/channels/{channel_id}/messages",
+        f"/messages/channel/{channel_id}/text",
         json={"text": "this should not survive"},
         headers=_auth(owner_tokens["access_token"]),
     )
@@ -98,7 +98,7 @@ async def test_deleting_a_group_leaves_nothing_naming_it(inprocess_client):
     group_id = group.str_id
 
     await inprocess_client.post(
-        f"/conversations/{group_id}/messages/text",
+        f"/messages/conversation/{group_id}/text",
         json={"text": "this should not survive"},
         headers=_auth(owner_tokens["access_token"]),
     )

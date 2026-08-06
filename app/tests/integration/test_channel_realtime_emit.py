@@ -89,7 +89,7 @@ async def test_channel_message_fans_out_to_followers(sio_spy_client):
     sio.emit.reset_mock()
 
     sent = await client.post(
-        f"/channels/{channel_id}/messages",
+        f"/messages/channel/{channel_id}/text",
         json={"text": "shipping the rail today"},
         headers=_auth(owner_tokens["access_token"]),
     )
@@ -133,7 +133,7 @@ async def test_channel_thread_reply_emits_thread_events(sio_spy_client):
     )
 
     root = await client.post(
-        f"/channels/{channel_id}/messages",
+        f"/messages/channel/{channel_id}/text",
         json={"text": "root post"},
         headers=_auth(owner_tokens["access_token"]),
     )
@@ -142,7 +142,7 @@ async def test_channel_thread_reply_emits_thread_events(sio_spy_client):
     sio.emit.reset_mock()
 
     reply = await client.post(
-        f"/channels/{channel_id}/messages",
+        f"/messages/channel/{channel_id}/text",
         json={
             "text": "a reply",
             "reply_mode": "thread",

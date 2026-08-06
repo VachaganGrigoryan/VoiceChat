@@ -56,7 +56,7 @@ async def test_home_profile_and_channel_feeds_are_root_only_and_paginated(
     assert profile_post.status_code == 201, profile_post.text
     profile_post_id = profile_post.json()["data"]["id"]
     profile_comment = await inprocess_client.post(
-        f"/channels/{profile_user.main_channel_id}/messages",
+        f"/messages/channel/{profile_user.main_channel_id}/text",
         json={
             "text": "Profile comment",
             "reply_mode": "thread",
@@ -79,13 +79,13 @@ async def test_home_profile_and_channel_feeds_are_root_only_and_paginated(
     assert public_channel.status_code == 201, public_channel.text
     public_channel_id = public_channel.json()["data"]["id"]
     channel_post = await inprocess_client.post(
-        f"/channels/{public_channel_id}/messages",
+        f"/messages/channel/{public_channel_id}/text",
         json={"text": "Channel root"},
         headers=_auth(channel_tokens["access_token"]),
     )
     assert channel_post.status_code == 201, channel_post.text
     channel_comment = await inprocess_client.post(
-        f"/channels/{public_channel_id}/messages",
+        f"/messages/channel/{public_channel_id}/text",
         json={
             "text": "Channel comment",
             "reply_mode": "thread",
@@ -109,7 +109,7 @@ async def test_home_profile_and_channel_feeds_are_root_only_and_paginated(
     assert members_channel.status_code == 201, members_channel.text
     members_channel_id = members_channel.json()["data"]["id"]
     hidden_post = await inprocess_client.post(
-        f"/channels/{members_channel_id}/messages",
+        f"/messages/channel/{members_channel_id}/text",
         json={"text": "Hidden root"},
         headers=_auth(channel_tokens["access_token"]),
     )

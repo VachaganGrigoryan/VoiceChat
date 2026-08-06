@@ -265,7 +265,7 @@ async def test_call_accept_offer_answer_connected_and_end_flow(live_client):
         assert conversation_res.status_code == 200, conversation_res.text
         conversation_id = conversation_res.json()["data"]["id"]
         message_history_res = await live_client.get(
-            f"/conversations/{conversation_id}/messages?limit=10",
+            f"/messages/conversation/{conversation_id}?limit=10",
             headers=_auth_header(caller_tokens["access_token"]),
         )
         assert message_history_res.status_code == 200, message_history_res.text
@@ -644,7 +644,7 @@ async def test_call_reject_flow_emits_rejected(live_client):
         assert conversation_res.status_code == 200, conversation_res.text
         conversation_id = conversation_res.json()["data"]["id"]
         message_history_res = await live_client.get(
-            f"/conversations/{conversation_id}/messages?limit=10",
+            f"/messages/conversation/{conversation_id}?limit=10",
             headers=_auth_header(caller_tokens["access_token"]),
         )
         assert message_history_res.status_code == 200, message_history_res.text
@@ -840,7 +840,7 @@ async def test_ringing_call_cancel_creates_call_message_and_history(inprocess_cl
     assert conversation_res.status_code == 200, conversation_res.text
     conversation_id = conversation_res.json()["data"]["id"]
     message_history_res = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages?limit=10",
+        f"/messages/conversation/{conversation_id}?limit=10",
         headers=_auth_header(caller_tokens["access_token"]),
     )
     assert message_history_res.status_code == 200, message_history_res.text
@@ -891,7 +891,7 @@ async def test_expired_call_creates_call_message_and_history(
     assert conversation_res.status_code == 200, conversation_res.text
     conversation_id = conversation_res.json()["data"]["id"]
     message_history_res = await inprocess_client.get(
-        f"/conversations/{conversation_id}/messages?limit=10",
+        f"/messages/conversation/{conversation_id}?limit=10",
         headers=_auth_header(caller_tokens["access_token"]),
     )
     assert message_history_res.status_code == 200, message_history_res.text
