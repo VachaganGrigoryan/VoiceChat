@@ -9,6 +9,13 @@ from app.db.document import EmbeddedBase
 from app.db.object_id import StrId
 
 
+class OwnerRef(EmbeddedBase):
+    """Reference to an owner entity (user or space)."""
+
+    type: Literal["user", "space"]
+    id: StrId
+
+
 class MediaDocument(EmbeddedBase):
     kind: Literal["voice", "audio", "image", "video", "file"]
     storage: Literal["local", "s3"]
@@ -39,6 +46,34 @@ class ReplyPreviewDocument(EmbeddedBase):
     is_deleted: bool = False
 
 
+class PollRefDocument(EmbeddedBase):
+    """Link from a message to a first-class poll entity.
+
+    Carries only the poll id plus a denormalized ``question`` for inbox preview and
+    opaque fallback; the poll's mutable state (options, votes, tallies) lives in the
+    linked ``PollDocument``.
+    """
+
+    poll_id: StrId
+    question: str
+
+
+class TextStyleDocument(EmbeddedBase):
+    """How a short text body is presented.
+
+    Additive and optional: absent on every message written before it existed,
+    and absent on any message that does not ask for it. `background` is an
+    identifier, never CSS, so the set of backgrounds can grow without a schema
+    change and a client that does not recognise one renders the text plainly.
+
+    Carries no authorization or delivery meaning and is never consulted when
+    resolving what a viewer may do.
+    """
+
+    background: str | None = Field(default=None, max_length=40)
+    align: Literal["start", "center"] | None = None
+
+
 class PlaintextContentDocument(EmbeddedBase):
     """Cleartext message body, present when the envelope encryption mode is "none".
 
@@ -48,6 +83,15 @@ class PlaintextContentDocument(EmbeddedBase):
     text: str | None = None
     media: MediaDocument | None = None
     call: CallMessageDocument | None = None
+    # `poll` (embedded payload) is retained for opaque tolerance of legacy records;
+    # new poll messages link via `poll_ref` instead of embedding poll data.
+    poll: dict[str, object] | None = None
+    poll_ref: PollRefDocument | None = None
+    sticker: dict[str, object] | None = None
+    location: dict[str, object] | None = None
+    contact: dict[str, object] | None = None
+    link_preview: dict[str, object] | None = None
+    style: TextStyleDocument | None = None
 
 
 class EncryptionEnvelopeDocument(EmbeddedBase):
@@ -121,7 +165,7 @@ class ConversationPreviewDocument(EmbeddedBase):
 
     message_id: str
     sender_id: StrId
-    type: Literal["text", "media", "file", "call", "system"]
+    type: ContentType
     text: str | None = None
     created_at: datetime
 

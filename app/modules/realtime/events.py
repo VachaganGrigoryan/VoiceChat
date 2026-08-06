@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from app.core.errors import AppError
+from app.modules.authorization.permissions import MESSAGE_READ
+from app.modules.authorization.service import AuthorizationService
+from app.modules.auth.repository import UsersRepository
 from app.modules.calls.ws import (
     handle_call_socket_connect,
     handle_call_socket_disconnect,
@@ -10,10 +15,14 @@ from app.modules.messages.dependencies import get_messages_service
 from app.modules.calls.ws import register_events as register_call_events
 from app.modules.realtime.auth import authenticate_socket, get_socket_user_id
 from app.modules.realtime.emits import (
+    channel_room,
     emit_message_status_to_user,
     emit_presence_update,
 )
 from app.modules.realtime.presence import get_presence_backend
+from app.modules.realtime.presence.base import PresenceState
+
+PRESENCE_STATES: set[PresenceState] = {"online", "away", "dnd", "offline"}
 
 
 def register_events(sio) -> None:
@@ -42,7 +51,7 @@ def register_events(sio) -> None:
         presence = get_presence_backend()
         became_online = await presence.add_connection(user_id, sid)
         if became_online:
-            await emit_presence_update(sio, user_id, True, skip_sid=sid)
+            await emit_presence_update(sio, user_id, "online", skip_sid=sid)
 
         await handle_call_socket_connect(sio, sid=sid, user_id=user_id)
         return True
@@ -58,11 +67,95 @@ def register_events(sio) -> None:
         presence = get_presence_backend()
         became_offline = await presence.remove_connection(user_id, sid)
         if became_offline:
-            await emit_presence_update(sio, user_id, False)
+            last_seen_at = datetime.now(UTC)
+            await UsersRepository().record_last_seen(
+                user_id=user_id,
+                last_seen_at=last_seen_at,
+            )
+            await emit_presence_update(sio, user_id, "offline", last_seen_at=last_seen_at)
+
+    @sio.event
+    async def presence_state(sid, data):
+        user_id = await get_socket_user_id(sio, sid)
+        if not user_id:
+            return
+
+        requested_state = (data or {}).get("state") or (data or {}).get("status")
+        if requested_state not in PRESENCE_STATES or requested_state == "offline":
+            await sio.emit(
+                "error",
+                {"code": "INVALID_PAYLOAD", "message": "state is invalid"},
+                to=sid,
+            )
+            return
+
+        presence = get_presence_backend()
+        state = await presence.set_state(user_id, requested_state)
+        last_seen_at = None
+        if state == "away":
+            last_seen_at = datetime.now(UTC)
+            await UsersRepository().record_last_seen(
+                user_id=user_id,
+                last_seen_at=last_seen_at,
+            )
+        await emit_presence_update(
+            sio,
+            user_id,
+            state,
+            last_seen_at=last_seen_at,
+            skip_sid=sid,
+        )
 
     @sio.event
     async def ping(sid, data):
         return {"pong": True}
+
+    @sio.event
+    async def join_channel(sid, data):
+        """Subscribe this socket to a channel's realtime room.
+
+        A client calls this when it opens a channel's timeline and
+        `leave_channel` when it navigates away. Every channel message, edit,
+        delete, reaction, and thread event broadcasts once to this room --
+        no membership/follower lookup, no fan-out ceiling.
+        """
+        user_id = await get_socket_user_id(sio, sid)
+        if not user_id:
+            return
+
+        channel_id = (data or {}).get("channel_id")
+        if not channel_id:
+            await sio.emit(
+                "error",
+                {"code": "INVALID_PAYLOAD", "message": "channel_id is required"},
+                to=sid,
+            )
+            return
+
+        allowed = await AuthorizationService().can(
+            user_id, MESSAGE_READ, "channel", channel_id
+        )
+        if not allowed:
+            await sio.emit(
+                "error",
+                {"code": "FORBIDDEN", "message": "Not allowed to read this channel"},
+                to=sid,
+            )
+            return
+
+        await sio.enter_room(sid, channel_room(channel_id))
+
+    @sio.event
+    async def leave_channel(sid, data):
+        user_id = await get_socket_user_id(sio, sid)
+        if not user_id:
+            return
+
+        channel_id = (data or {}).get("channel_id")
+        if not channel_id:
+            return
+
+        await sio.leave_room(sid, channel_room(channel_id))
 
     @sio.event
     async def typing_start(sid, data):
@@ -200,8 +293,9 @@ def register_events(sio) -> None:
                 user_id=receiver_id,
                 conversation_id=conversation_id,
             )
-            msg = await messages_service.mark_delivered_for_conversation(
-                conversation_id=conversation_id,
+            msg = await messages_service.mark_delivered(
+                container_type="conversation",
+                container_id=conversation_id,
                 message_id=message_id,
                 user_id=receiver_id,
             )
@@ -260,8 +354,9 @@ def register_events(sio) -> None:
                 user_id=receiver_id,
                 conversation_id=conversation_id,
             )
-            msg = await messages_service.mark_read_for_conversation(
-                conversation_id=conversation_id,
+            msg = await messages_service.mark_read(
+                container_type="conversation",
+                container_id=conversation_id,
                 message_id=message_id,
                 user_id=receiver_id,
             )

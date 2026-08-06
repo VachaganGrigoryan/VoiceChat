@@ -13,6 +13,7 @@ from app.db.models.auth import RefreshTokenDocument
 from app.db.models.block import BlockDocument
 from app.db.models.bot import BotDocument
 from app.db.models.call import CallDocument
+from app.db.models.channel import ChannelDocument
 from app.db.models.conversation import ConversationDocument
 from app.db.models.device import DeviceDocument
 from app.db.models.device_prekey import DevicePreKeyDocument
@@ -27,25 +28,43 @@ from app.db.models.embedded import (
     MessageContentDocument,
     MessageEditDocument,
     MessageReactionDocument,
+    OwnerRef,
     PlaintextContentDocument,
+    PollRefDocument,
     ReplyPreviewDocument,
+    TextStyleDocument,
 )
 from app.db.models.invite_link import InviteLinkDocument
 from app.db.models.join_request import JoinRequestDocument
-from app.db.models.message import MessageDocument
+from app.db.models.message import MessageContainerType, MessageDocument
 from app.db.models.message_receipt import MessageReceiptDocument
 from app.db.models.notification import NotificationDocument
 from app.db.models.participant import ParticipantDocument
 from app.db.models.passkey import PasskeyChallengeDocument, PasskeyDocument
-from app.db.models.ping import PingDocument
+from app.db.models.poll import (
+    PollDocument,
+    PollOptionDocument,
+    PollVoteDocument,
+)
 from app.db.models.push_token import PushTokenDocument
+from app.db.models.relationship import (
+    RelationshipDocument,
+    RelationshipInitiation,
+    RelationshipKind,
+    RelationshipPermissionOverrides,
+    RelationshipState,
+    RelationshipStatus,
+    RelationshipTargetType,
+)
 from app.db.models.report import ReportDocument
+from app.db.models.role import RoleDocument, RoleScopeType
 from app.db.models.saved_message import SavedMessageDocument
 from app.db.models.space import SpaceDocument
 from app.db.models.space_member import SpaceMemberDocument
 from app.db.models.user import UserDocument
 from app.db.models.verification import VerificationCodeDocument
 from app.db.models.webhook import WebhookDocument
+from app.db.models.slash_command import SlashCommandDocument
 
 # Single source of truth for Beanie registration (see app/db/init.py). Order is
 # stable but not significant; keep this list in sync when adding a Document.
@@ -56,26 +75,27 @@ DOCUMENT_MODELS: list[type[Document]] = [
     UserDocument,
     PasskeyDocument,
     PasskeyChallengeDocument,
-    PingDocument,
+    RelationshipDocument,
+    RoleDocument,
     CallDocument,
+    ChannelDocument,
     MessageDocument,
     MessageReceiptDocument,
     ConversationDocument,
-    ParticipantDocument,
     DeviceDocument,
     DevicePreKeyDocument,
     SpaceDocument,
-    SpaceMemberDocument,
     InviteLinkDocument,
-    JoinRequestDocument,
     BlockDocument,
     PushTokenDocument,
     SavedMessageDocument,
     NotificationDocument,
     BotDocument,
+    PollDocument,
     WebhookDocument,
     ReportDocument,
     AuditLogDocument,
+    SlashCommandDocument,
 ]
 
 __all__ = [
@@ -86,6 +106,7 @@ __all__ = [
     "CallDocument",
     "CallMessageDocument",
     "CallParticipantStateDocument",
+    "ChannelDocument",
     "ConversationDocument",
     "ConversationPreviewDocument",
     "DeviceDocument",
@@ -97,24 +118,40 @@ __all__ = [
     "JoinRequestDocument",
     "MediaDocument",
     "MessageContentDocument",
+    "MessageContainerType",
     "MessageDocument",
     "MessageEditDocument",
     "MessageReceiptDocument",
     "MessageReactionDocument",
     "NotificationDocument",
+    "OwnerRef",
     "ParticipantDocument",
     "PasskeyChallengeDocument",
     "PasskeyDocument",
-    "PingDocument",
     "PlaintextContentDocument",
+    "TextStyleDocument",
+    "PollDocument",
+    "PollOptionDocument",
+    "PollRefDocument",
+    "PollVoteDocument",
     "PushTokenDocument",
     "RefreshTokenDocument",
+    "RelationshipDocument",
+    "RelationshipInitiation",
+    "RelationshipKind",
+    "RelationshipPermissionOverrides",
+    "RelationshipState",
+    "RelationshipStatus",
+    "RelationshipTargetType",
     "ReplyPreviewDocument",
     "ReportDocument",
+    "RoleDocument",
+    "RoleScopeType",
     "SavedMessageDocument",
     "SpaceDocument",
     "SpaceMemberDocument",
     "UserDocument",
     "VerificationCodeDocument",
     "WebhookDocument",
+    "SlashCommandDocument",
 ]

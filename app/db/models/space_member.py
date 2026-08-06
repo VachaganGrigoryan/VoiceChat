@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
 
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
@@ -15,7 +14,9 @@ class SpaceMemberDocument(TimestampedDocument):
 
     space_id: StrId
     user_id: StrId
-    role: Literal["owner", "admin", "member"] = "member"
+    # The name of the `RoleDocument` this member holds, or None. The space owner
+    # is identified by `SpaceDocument.owner_user_id`, never by a role.
+    role: str | None = None
     joined_at: datetime
 
     class Settings:

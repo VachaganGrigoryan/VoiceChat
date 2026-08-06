@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pymongo import ReturnDocument
 
 from app.core.errors import AppError
-from app.db.models import MessageDocument
+from app.db.models import MessageContainerType, MessageDocument
 from app.db.object_id import parse_object_id as _oid
 
 
@@ -34,6 +34,20 @@ class DeletionRepositoryMixin:
         update: dict = {"edited_at": now, "updated_at": now}
         if existing.content is not None and existing.content.plaintext is not None:
             update["content.plaintext.text"] = text
+        # Append the pre-edit content to the append-only edit history so prior
+        # versions are retained with the timestamp at which they were replaced.
+        if existing.content is not None:
+            await self.col.update_one(
+                {"_id": _oid(message_id)},
+                {
+                    "$push": {
+                        "edit_history": {
+                            "content": existing.content.model_dump(mode="python"),
+                            "edited_at": now,
+                        }
+                    }
+                },
+            )
         return await existing.set(update)
 
     async def hard_delete_owned_message(
@@ -68,15 +82,17 @@ class DeletionRepositoryMixin:
         )
         return existing
 
-    async def bulk_hard_delete_own_messages_in_conversation(
+    async def bulk_hard_delete_own_messages_in_container(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         user_id: str,
     ) -> list[MessageDocument]:
         owned = await self.col.find(
             {
-                "conversation_id": conversation_id,
+                "container_type": container_type,
+                "container_id": container_id,
                 "sender_id": user_id,
             }
         ).to_list(length=None)
@@ -101,18 +117,19 @@ class DeletionRepositoryMixin:
         )
         return [MessageDocument.model_validate(doc) for doc in owned]
 
-    async def bulk_hard_delete_all_messages_in_conversation(
+    async def bulk_hard_delete_all_messages_in_container(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
     ) -> list[MessageDocument]:
-        """Hard-delete every message in a conversation, returning the removed docs.
+        """Hard-delete every message in a container, returning the removed docs.
 
         Used by the owner/admin "clear history for everyone" action; the returned
         documents let the caller clean up any associated media objects.
         """
         docs = await self.col.find(
-            {"conversation_id": conversation_id}
+            {"container_type": container_type, "container_id": container_id}
         ).to_list(length=None)
 
         if not docs:
@@ -125,13 +142,15 @@ class DeletionRepositoryMixin:
     async def hide_peer_messages_for_user(
         self,
         *,
-        conversation_id: str,
+        container_type: MessageContainerType,
+        container_id: str,
         user_id: str,
     ) -> int:
         now = datetime.now(UTC)
         result = await self.col.update_many(
             {
-                "conversation_id": conversation_id,
+                "container_type": container_type,
+                "container_id": container_id,
                 "sender_id": {"$ne": user_id},
                 "hidden_for_user_ids": {"$ne": user_id},
             },

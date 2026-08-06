@@ -20,7 +20,7 @@ class BaseDocument(Document):
     """Shared base for all Beanie documents.
 
     `extra="allow"` preserves behaviour where a few repositories persist fields
-    that aren't declared on the model (e.g. pings `blocked_by`).
+    that aren't declared on the model (e.g. fields from legacy documents).
     """
 
     model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)

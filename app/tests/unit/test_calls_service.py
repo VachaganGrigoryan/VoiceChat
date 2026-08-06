@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -14,27 +15,32 @@ from app.modules.calls.service import CallsService
 def service():
     repo = AsyncMock()
     users_repo = AsyncMock()
-    pings_service = AsyncMock()
+    connection_service = AsyncMock()
     presence_service = AsyncMock()
     webrtc_service = AsyncMock()
     messages_repo = AsyncMock()
+    conversations_service = AsyncMock()
 
     repo.list_due_call_ids.return_value = []
     repo.expire_call_if_due.return_value = None
+    conversations_service.ensure_dm_conversation.return_value = SimpleNamespace(
+        str_id="u1_u2"
+    )
 
     svc = CallsService(
         repo=repo,
         users_repo=users_repo,
-        pings_service=pings_service,
+        connection_service=connection_service,
         presence_service=presence_service,
         webrtc_service=webrtc_service,
         messages_repo=messages_repo,
+        conversations_service=conversations_service,
     )
     return (
         svc,
         repo,
         users_repo,
-        pings_service,
+        connection_service,
         presence_service,
         webrtc_service,
         messages_repo,
@@ -46,6 +52,7 @@ def ringing_call_doc():
     now = datetime(2026, 3, 23, 12, 0, 0, tzinfo=UTC)
     return {
         "_id": "507f1f77bcf86cd799439011",
+        "conversation_id": "u1_u2",
         "caller_user_id": "u1",
         "callee_user_id": "u2",
         "participant_user_ids": ["u1", "u2"],
@@ -112,7 +119,7 @@ async def test_create_call_requires_existing_target(service):
 async def test_create_call_enforces_permission_and_returns_doc(
     service, ringing_call_doc
 ):
-    svc, repo, users_repo, pings_service, _, _, _ = service
+    svc, repo, users_repo, connection_service, _, _, _ = service
     users_repo.find_by_id.return_value = {"_id": "u2", "username": "callee"}
     repo.create_call.return_value = ringing_call_doc
 
@@ -125,7 +132,7 @@ async def test_create_call_enforces_permission_and_returns_doc(
     assert result.status == "ringing"
     assert result.participant_states["u1"].audio_enabled is True
     assert result.participant_states["u2"].join_state == "waiting"
-    pings_service.ensure_can_message.assert_awaited_once_with(
+    connection_service.ensure_can_message.assert_awaited_once_with(
         sender_id="u1", receiver_id="u2"
     )
     repo.create_call.assert_awaited_once()
@@ -630,6 +637,7 @@ def test_to_call_doc_infers_participant_states_for_legacy_call(service):
     now = datetime(2026, 3, 23, 12, 0, 0, tzinfo=UTC)
     legacy_call = {
         "_id": "507f1f77bcf86cd799439011",
+        "conversation_id": "u1_u2",
         "caller_user_id": "u1",
         "callee_user_id": "u2",
         "participant_user_ids": ["u1", "u2"],

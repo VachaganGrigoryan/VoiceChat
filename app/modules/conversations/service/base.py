@@ -3,13 +3,17 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from app.core.errors import AppError
+from app.modules.authorization import AuthorizationService
 from app.modules.conversations.repository import ConversationsRepository
+from app.modules.realtime.presence import PresenceState
 
 
-class PingsPermissionProto(Protocol):
+class ConnectionPermissionProto(Protocol):
     async def ensure_can_message(self, *, sender_id: str, receiver_id: str) -> None: ...
 
-    async def get_contact_state(self, *, viewer_user_id: str, peer_user_id: str) -> Any: ...
+    async def get_connection_state(
+        self, *, viewer_user_id: str, peer_user_id: str
+    ) -> Any: ...
 
 
 class UsersRepositoryProto(Protocol):
@@ -19,19 +23,24 @@ class UsersRepositoryProto(Protocol):
 class PresenceServiceProto(Protocol):
     async def is_online(self, user_id: str) -> bool: ...
 
+    async def get_state(self, user_id: str) -> PresenceState: ...
+
 
 class BaseConversationsService:
     def __init__(
         self,
         repo: ConversationsRepository,
-        pings_service: PingsPermissionProto | None = None,
+        connection_service: ConnectionPermissionProto | None = None,
         users_repo: UsersRepositoryProto | None = None,
         presence_service: PresenceServiceProto | None = None,
+        authorization: AuthorizationService | None = None,
     ) -> None:
         self.repo = repo
-        self.pings_service = pings_service
+        self.connection_service = connection_service
         self.users_repo = users_repo
         self.presence_service = presence_service
+        # One decision point for every conversation authorization question (§56).
+        self.authorization = authorization or AuthorizationService()
 
     def _require_distinct(self, *, user_id: str, peer_user_id: str) -> None:
         if str(user_id) == str(peer_user_id):
@@ -42,9 +51,9 @@ class BaseConversationsService:
             )
 
     async def _ensure_can_message(self, *, sender_id: str, receiver_id: str) -> None:
-        if self.pings_service is None:
+        if self.connection_service is None:
             return
-        await self.pings_service.ensure_can_message(
+        await self.connection_service.ensure_can_message(
             sender_id=str(sender_id), receiver_id=str(receiver_id)
         )
 

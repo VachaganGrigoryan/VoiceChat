@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
-from app.db.models import ConversationDocument, ConversationPreviewDocument
+from app.db.models import ConversationDocument, ConversationPreviewDocument, OwnerRef
 from app.db.object_id import parse_object_id
 from app.modules.conversations.repository.helpers import dm_key_for
 
@@ -50,20 +52,36 @@ class ConversationsWriteMixin:
         created_by: str,
         participant_ids: list[str],
         title: str,
+        space_id: str | None = None,
+        space_visibility: str | None = None,
     ) -> ConversationDocument:
         now = datetime.now(UTC)
+        parsed_space_id = parse_object_id(space_id) if space_id is not None else None
+        owner = (
+            OwnerRef(type="space", id=str(space_id))
+            if space_id is not None
+            else OwnerRef(type="user", id=str(created_by))
+        )
         conversation = ConversationDocument(
             type="group",
+            owner=owner,
             participant_ids=participant_ids,
             created_by=str(created_by),
             title=title,
             encryption="none",
             dm_key=None,
+            space_id=parsed_space_id,
+            space_visibility=space_visibility,  # type: ignore[arg-type]
             created_at=now,
             updated_at=now,
         )
         await conversation.insert()
         return conversation
+
+    async def get_public_by_slug(self, slug: str) -> ConversationDocument | None:
+        return await ConversationDocument.find_one(
+            {"slug": slug, "visibility": "public", "type": "group"}
+        )
 
     async def update_group_title(
         self, *, conversation_id: str, title: str
@@ -77,6 +95,18 @@ class ConversationsWriteMixin:
         assert updated is not None
         return updated
 
+    async def set_conversation_setting(
+        self, *, conversation_id: str, key: str, value: Any
+    ) -> ConversationDocument:
+        now = datetime.now(UTC)
+        await self.raw.update_one(
+            {"_id": parse_object_id(conversation_id)},
+            {"$set": {f"settings.{key}": value, "updated_at": now}},
+        )
+        updated = await self.get_by_id(conversation_id)
+        assert updated is not None
+        return updated
+
     async def update_group_image(
         self, *, conversation_id: str, image: dict | None
     ) -> ConversationDocument:
@@ -84,6 +114,28 @@ class ConversationsWriteMixin:
         await self.raw.update_one(
             {"_id": parse_object_id(conversation_id)},
             {"$set": {"image": image, "updated_at": now}},
+        )
+        updated = await self.get_by_id(conversation_id)
+        assert updated is not None
+        return updated
+
+    async def set_owner_user(
+        self, *, conversation_id: str, user_id: str
+    ) -> ConversationDocument:
+        """Move a group's `OwnerRef` to a user — the ownership-transfer write.
+
+        Ownership lives on the resource, not on a role, so a transfer is a
+        write here rather than a role swap on two memberships (§51).
+        """
+        now = datetime.now(UTC)
+        await self.raw.update_one(
+            {"_id": parse_object_id(conversation_id)},
+            {
+                "$set": {
+                    "owner": {"type": "user", "id": str(user_id)},
+                    "updated_at": now,
+                }
+            },
         )
         updated = await self.get_by_id(conversation_id)
         assert updated is not None
@@ -115,6 +167,49 @@ class ConversationsWriteMixin:
                 "$set": {"updated_at": now},
             },
         )
+
+    async def sync_member_count(self, *, conversation_id: str) -> None:
+        """Recompute denormalized ``member_count`` from ``participant_ids``."""
+        now = datetime.now(UTC)
+        await self.raw.update_one(
+            {"_id": parse_object_id(conversation_id)},
+            [
+                {
+                    "$set": {
+                        "member_count": {"$size": "$participant_ids"},
+                        "updated_at": now,
+                    }
+                }
+            ],
+        )
+
+    async def add_pinned_message(
+        self, *, conversation_id: str, message_id: str
+    ) -> ConversationDocument | None:
+        now = datetime.now(UTC)
+        raw = await self.raw.find_one_and_update(
+            {"_id": parse_object_id(conversation_id)},
+            {
+                "$addToSet": {"pinned_message_ids": str(message_id)},
+                "$set": {"updated_at": now},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return ConversationDocument.model_validate(raw) if raw is not None else None
+
+    async def remove_pinned_message(
+        self, *, conversation_id: str, message_id: str
+    ) -> ConversationDocument | None:
+        now = datetime.now(UTC)
+        raw = await self.raw.find_one_and_update(
+            {"_id": parse_object_id(conversation_id)},
+            {
+                "$pull": {"pinned_message_ids": str(message_id)},
+                "$set": {"updated_at": now},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return ConversationDocument.model_validate(raw) if raw is not None else None
 
     async def touch_last_message(
         self,

@@ -48,12 +48,32 @@ class UsersRepository(BaseRepository[UserDocument]):
             updated_at=now,
         )
 
+    async def _ensure_profile_channel(self, user: UserDocument) -> UserDocument:
+        if user.main_channel_id is not None:
+            return user
+        from app.modules.channels.repository import ChannelsRepository
+        from app.modules.channels.service import ChannelService
+
+        channel = await ChannelService(
+            repo=ChannelsRepository()
+        ).ensure_profile_channel(
+            user_id=user.str_id,
+            username=user.username,
+            is_private=user.is_private,
+        )
+        return await user.set(
+            {
+                UserDocument.main_channel_id: channel.str_id,
+                UserDocument.updated_at: datetime.now(UTC),
+            }
+        )
+
     async def create_user(self, email: str) -> UserDocument:
         username = await self._generate_unique_username()
         doc = self._build_new_user_doc(email, username)
         try:
             await doc.insert()
-            return doc
+            return await self._ensure_profile_channel(doc)
         except DuplicateKeyError as exc:
             raise AppError(
                 code="EMAIL_ALREADY_EXISTS",
@@ -66,17 +86,17 @@ class UsersRepository(BaseRepository[UserDocument]):
         email_n = email.lower().strip()
         existing = await UserDocument.find_one(UserDocument.email == email_n)
         if existing:
-            return existing
+            return await self._ensure_profile_channel(existing)
 
         username = await self._generate_unique_username()
         doc = self._build_new_user_doc(email_n, username)
         try:
             await doc.insert()
-            return doc
+            return await self._ensure_profile_channel(doc)
         except DuplicateKeyError:
             existing2 = await UserDocument.find_one(UserDocument.email == email_n)
             if existing2:
-                return existing2
+                return await self._ensure_profile_channel(existing2)
             raise
 
     async def find_by_id(self, user_id: str) -> UserDocument | None:
@@ -121,6 +141,8 @@ class UsersRepository(BaseRepository[UserDocument]):
         user_id: str,
         display_name: str | None,
         bio: str | None,
+        pronouns: str | None,
+        timezone: str | None,
         is_private: bool | None,
         default_discovery_enabled: bool | None,
     ) -> UserDocument:
@@ -129,6 +151,10 @@ class UsersRepository(BaseRepository[UserDocument]):
             updates[UserDocument.display_name] = display_name
         if bio is not None:
             updates[UserDocument.bio] = bio
+        if pronouns is not None:
+            updates[UserDocument.pronouns] = pronouns
+        if timezone is not None:
+            updates[UserDocument.timezone] = timezone
         if is_private is not None:
             updates[UserDocument.is_private] = is_private
         if default_discovery_enabled is not None:
@@ -136,6 +162,35 @@ class UsersRepository(BaseRepository[UserDocument]):
 
         user = await self._get_or_404(user_id)
         return await user.set(updates)
+
+    async def update_status(
+        self,
+        *,
+        user_id: str,
+        status_emoji: str | None,
+        status_text: str | None,
+        status_expires_at: datetime | None,
+    ) -> UserDocument:
+        user = await self._get_or_404(user_id)
+        return await user.set(
+            {
+                UserDocument.status_emoji: status_emoji,
+                UserDocument.status_text: status_text,
+                UserDocument.status_expires_at: status_expires_at,
+                UserDocument.updated_at: datetime.now(UTC),
+            }
+        )
+
+    async def clear_status(self, *, user_id: str) -> UserDocument:
+        user = await self._get_or_404(user_id)
+        return await user.set(
+            {
+                UserDocument.status_emoji: None,
+                UserDocument.status_text: None,
+                UserDocument.status_expires_at: None,
+                UserDocument.updated_at: datetime.now(UTC),
+            }
+        )
 
     async def update_username(self, *, user_id: str, username: str) -> UserDocument:
         now = datetime.now(UTC)
@@ -156,6 +211,20 @@ class UsersRepository(BaseRepository[UserDocument]):
                 status_code=409,
             ) from exc
 
+    async def update_main_channel(
+        self,
+        *,
+        user_id: str,
+        channel_id: str | None,
+    ) -> UserDocument:
+        user = await self._get_or_404(user_id)
+        return await user.set(
+            {
+                UserDocument.main_channel_id: channel_id,
+                UserDocument.updated_at: datetime.now(UTC),
+            }
+        )
+
     async def update_avatar(
         self,
         *,
@@ -166,6 +235,20 @@ class UsersRepository(BaseRepository[UserDocument]):
         user = await self._get_or_404(user_id)
         return await user.set(
             {UserDocument.avatar: avatar, UserDocument.updated_at: now}
+        )
+
+    async def record_last_seen(
+        self,
+        *,
+        user_id: str,
+        last_seen_at: datetime,
+    ) -> None:
+        user = await self._get_or_404(user_id)
+        await user.set(
+            {
+                UserDocument.last_seen_at: last_seen_at,
+                UserDocument.updated_at: datetime.now(UTC),
+            }
         )
 
     async def set_has_passkey(self, *, user_id: str, value: bool) -> None:

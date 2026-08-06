@@ -8,28 +8,26 @@ from app.db.models import CallDocument, MediaDocument
 from app.db.mongo import get_db
 from app.modules.messages.repository import MessagesRepository
 from app.modules.messages.repository.mappers import message_call, message_text
+from app.modules.relationships.service import RelationshipService
 
 
 async def _add_participants(db, conversation_id: str, *user_ids: str) -> None:
-    await db["conversation_participants"].delete_many(
-        {"conversation_id": conversation_id}
+    await db["relationships"].delete_many(
+        {
+            "kind": "membership",
+            "target_type": "conversation",
+            "target_id": conversation_id,
+        }
     )
-    now = datetime.now(UTC)
-    await db["conversation_participants"].insert_many(
-        [
-            {
-                "conversation_id": conversation_id,
-                "user_id": user_id,
-                "role": "member",
-                "joined_at": now,
-                "hidden": False,
-                "muted": False,
-                "created_at": now,
-                "updated_at": now,
-            }
-            for user_id in user_ids
-        ]
-    )
+    relationships = RelationshipService()
+    for user_id in user_ids:
+        await relationships.request(
+            kind="membership",
+            user_id=user_id,
+            target_type="conversation",
+            target_id=conversation_id,
+            status="active",
+        )
 
 
 @pytest.mark.asyncio
@@ -42,8 +40,9 @@ async def test_create_and_list_history_with_cursor():
     u1 = str(ObjectId())
 
     for i in range(3):
-        await repo.create_conversation_message(
-            conversation_id="conversation-history",
+        await repo.create_message(
+            container_type="conversation",
+            container_id="conversation-history",
             sender_id=u1,
             message_type="media",
             media=MediaDocument(
@@ -56,16 +55,18 @@ async def test_create_and_list_history_with_cursor():
             ),
         )
 
-    items, next_cursor = await repo.list_history_for_conversation(
-        conversation_id="conversation-history",
+    items, next_cursor = await repo.list_history_for_container(
+        container_type="conversation",
+        container_id="conversation-history",
         user_id=u1,
         limit=2,
     )
     assert len(items) == 2
     assert next_cursor is not None
 
-    items2, next2 = await repo.list_history_for_conversation(
-        conversation_id="conversation-history",
+    items2, next2 = await repo.list_history_for_container(
+        container_type="conversation",
+        container_id="conversation-history",
         user_id=u1,
         limit=2,
         cursor=next_cursor,
@@ -88,15 +89,17 @@ async def test_message_receipts_track_delivered_and_read_counts():
     receiver_id = str(ObjectId())
     await _add_participants(db, conversation_id, sender_id, receiver_id)
 
-    message = await repo.create_conversation_message(
-        conversation_id=conversation_id,
+    message = await repo.create_message(
+        container_type="conversation",
+        container_id=conversation_id,
         sender_id=sender_id,
         message_type="text",
         text="hello",
     )
 
     read_summary = await repo.upsert_message_receipt(
-        conversation_id=conversation_id,
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=message.str_id,
         user_id=receiver_id,
         delivered=True,
@@ -107,7 +110,8 @@ async def test_message_receipts_track_delivered_and_read_counts():
     assert read_summary.read_count == 1
 
     delivered_summary = await repo.upsert_message_receipt(
-        conversation_id=conversation_id,
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=message.str_id,
         user_id=receiver_id,
         delivered=True,
@@ -126,8 +130,9 @@ async def test_hidden_message_is_excluded_only_for_hiding_user():
     sender_id = str(ObjectId())
     receiver_id = str(ObjectId())
 
-    message = await repo.create_conversation_message(
-        conversation_id="conversation-hidden",
+    message = await repo.create_message(
+        container_type="conversation",
+        container_id="conversation-hidden",
         sender_id=sender_id,
         message_type="text",
         text="hide me",
@@ -138,13 +143,15 @@ async def test_hidden_message_is_excluded_only_for_hiding_user():
         user_id=receiver_id,
     )
 
-    receiver_items, _ = await repo.list_history_for_conversation(
-        conversation_id="conversation-hidden",
+    receiver_items, _ = await repo.list_history_for_container(
+        container_type="conversation",
+        container_id="conversation-hidden",
         user_id=receiver_id,
         limit=20,
     )
-    sender_items, _ = await repo.list_history_for_conversation(
-        conversation_id="conversation-hidden",
+    sender_items, _ = await repo.list_history_for_container(
+        container_type="conversation",
+        container_id="conversation-hidden",
         user_id=sender_id,
         limit=20,
     )
@@ -165,37 +172,42 @@ async def test_thread_replies_are_excluded_from_history_and_inherit_root():
     receiver_id = str(ObjectId())
 
     conversation_id = "conversation-thread"
-    root = await repo.create_conversation_message(
-        conversation_id=conversation_id,
+    root = await repo.create_message(
+        container_type="conversation",
+        container_id=conversation_id,
         sender_id=sender_id,
         message_type="text",
         text="root",
     )
 
-    first_reply = await repo.create_conversation_thread_reply(
-        conversation_id=conversation_id,
+    first_reply = await repo.create_thread_reply(
+        container_type="conversation",
+        container_id=conversation_id,
         sender_id=receiver_id,
         message_type="text",
         reply_to_message_id=root.str_id,
         text="first thread reply",
     )
-    second_reply = await repo.create_conversation_thread_reply(
-        conversation_id=conversation_id,
+    second_reply = await repo.create_thread_reply(
+        container_type="conversation",
+        container_id=conversation_id,
         sender_id=sender_id,
         message_type="text",
         reply_to_message_id=first_reply.str_id,
         text="second thread reply",
     )
-    quote_reply = await repo.create_conversation_quote_reply(
-        conversation_id=conversation_id,
+    quote_reply = await repo.create_quote_reply(
+        container_type="conversation",
+        container_id=conversation_id,
         sender_id=sender_id,
         message_type="text",
         reply_to_message_id=root.str_id,
         text="quoted in timeline",
     )
 
-    history, _ = await repo.list_history_for_conversation(
-        conversation_id=conversation_id,
+    history, _ = await repo.list_history_for_container(
+        container_type="conversation",
+        container_id=conversation_id,
         user_id=sender_id,
         limit=20,
     )
@@ -213,8 +225,9 @@ async def test_thread_replies_are_excluded_from_history_and_inherit_root():
     assert first_reply.reply_preview.message_id == root.str_id
     assert second_reply.reply_preview.message_id == first_reply.str_id
 
-    thread_items = await repo.load_thread_messages_for_conversation(
-        conversation_id=conversation_id,
+    thread_items = await repo.load_thread_messages(
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=second_reply.str_id,
         user_id=receiver_id,
     )
@@ -223,8 +236,9 @@ async def test_thread_replies_are_excluded_from_history_and_inherit_root():
         "second thread reply",
     ]
 
-    summary = await repo.load_thread_summary_for_conversation(
-        conversation_id=conversation_id,
+    summary = await repo.load_thread_summary(
+        container_type="conversation",
+        container_id=conversation_id,
         message_id=first_reply.str_id,
         user_id=sender_id,
     )
@@ -244,8 +258,9 @@ async def test_grouped_reactions_toggle_and_deleted_messages_reject_reactions():
     sender_id = str(ObjectId())
     receiver_id = str(ObjectId())
 
-    message = await repo.create_conversation_message(
-        conversation_id="conversation-reactions",
+    message = await repo.create_message(
+        container_type="conversation",
+        container_id="conversation-reactions",
         sender_id=sender_id,
         message_type="text",
         text="react to me",
@@ -313,6 +328,7 @@ async def test_create_call_message_is_unique_per_call():
 
     call_doc = CallDocument.model_validate({
         "_id": call_oid,
+        "conversation_id": "conversation-call",
         "caller_user_id": caller_id,
         "callee_user_id": callee_id,
         "participant_user_ids": [caller_id, callee_id],

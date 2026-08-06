@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.bots.seed import seed_builtin_bots
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.db.init import init_database
@@ -27,6 +28,7 @@ async def lifespan(app: FastAPI):
 
     await connect_mongo()
     await init_database()
+    await seed_builtin_bots()
     calls_repo = CallsRepository()
     await calls_repo.expire_stale_calls()
 

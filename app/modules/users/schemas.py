@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.db.object_id import StrId
+from app.modules.relationships.schemas import (
+    ConnectionState,
+    SharedConversationSummary,
+    SharedSpaceSummary,
+)
+from app.modules.realtime.presence.base import PresenceState
 
 
 class UserProfileResponse(BaseModel):
@@ -18,6 +25,8 @@ class UserProfileResponse(BaseModel):
     bio: str | None = None
     avatar: dict | None = None
     is_private: bool
+    is_bot: bool = False
+    main_channel_id: str | None = None
     default_discovery_enabled: bool
     last_seen_at: datetime | None = None
     username_updated_at: datetime | None = None
@@ -41,20 +50,47 @@ class SelectedUserProfileResponse(BaseModel):
     display_name: str | None = None
     bio: str | None = None
     avatar: dict | None = None
+    is_bot: bool = False
+    main_channel_id: str | None = None
     status_emoji: str | None = None
     status_text: str | None = None
     status_expires_at: datetime | None = None
     pronouns: str | None = None
     timezone: str | None = None
     is_online: bool = False
+    presence_state: PresenceState = "offline"
+    last_seen_at: datetime | None = None
+    profile_visibility: Literal["full", "limited"] = "full"
+    relationship: ConnectionState
+    # Contact extras, populated only when requested via `include=contact_details`
+    # and the viewer has an accepted contact relationship with this user.
+    connection_timestamp: datetime | None = None
+    conversation_id: StrId | None = None
+    shared_conversations: list[SharedConversationSummary] = Field(default_factory=list)
+    shared_spaces: list[SharedSpaceSummary] = Field(default_factory=list)
 
 
 class UpdateProfileRequest(BaseModel):
     display_name: str | None = Field(default=None, max_length=80)
     bio: str | None = Field(default=None, max_length=300)
+    pronouns: str | None = Field(default=None, max_length=40)
+    timezone: str | None = Field(default=None, max_length=80)
     is_private: bool | None = None
     default_discovery_enabled: bool | None = None
 
 
 class UpdateUsernameRequest(BaseModel):
     username: str = Field(min_length=3, max_length=30)
+
+
+class UpdateStatusRequest(BaseModel):
+    status_emoji: str | None = Field(default=None, max_length=16)
+    status_text: str | None = Field(default=None, max_length=80)
+    status_expires_at: datetime | None = None
+
+
+class SetMainChannelRequest(BaseModel):
+    # Public channel to pin as the profile's main timeline, or null to clear it.
+    channel_id: str | None = None
+
+

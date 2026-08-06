@@ -10,4 +10,7 @@ uploads_test/
 node_modules
 
 
-AGENTS.md
+
+# AGENTS.md is intentionally tracked: agent-facing notes are reviewed like
+# code so their currency is visible in history. Ignoring them is why the
+# previous set became untrustworthy and was deleted.

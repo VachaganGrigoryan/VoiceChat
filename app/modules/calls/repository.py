@@ -49,6 +49,7 @@ class CallsRepository(BaseRepository[CallDocument]):
     async def create_call(
         self,
         *,
+        conversation_id: str,
         caller_user_id: str,
         callee_user_id: str,
         call_type: CallType,
@@ -59,6 +60,7 @@ class CallsRepository(BaseRepository[CallDocument]):
 
         doc = CallDocument(
             id=call_id,
+            conversation_id=conversation_id,
             caller_user_id=caller_user_id,
             callee_user_id=callee_user_id,
             participant_user_ids=[caller_user_id, callee_user_id],

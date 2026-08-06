@@ -3,6 +3,11 @@ from __future__ import annotations
 import os
 
 os.environ["ENV_FILE"] = ".env.test"
+os.environ["MONGO_DB"] = os.getenv("TEST_MONGO_DB", "voicechat_test")
+os.environ["REDIS_URL"] = os.getenv("TEST_REDIS_URL", "redis://redis:6379/1")
+os.environ["RATE_LIMIT_STORAGE_URI"] = os.getenv(
+    "TEST_RATE_LIMIT_STORAGE_URI", "async+memory://"
+)
 
 from pymongo import AsyncMongoClient
 
@@ -22,8 +27,19 @@ TEST_SERVER_URL = os.getenv("TEST_SERVER_URL", "http://api_test:8000")
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/1")
 
 
+def _assert_test_database() -> None:
+    if "test" not in settings.mongo_db.lower():
+        raise RuntimeError(
+            "Integration tests refuse to clean non-test Mongo database "
+            f"{settings.mongo_db!r}. Use MONGO_DB=voicechat_test or "
+            "TEST_MONGO_DB=<test database>."
+        )
+
+
 @pytest_asyncio.fixture(scope="function", autouse=True)
-async def app_lifecycle():
+async def app_lifecycle(clean_db):
+    del clean_db
+    _assert_test_database()
     await connect_mongo()
     await init_database()
     yield
@@ -50,7 +66,6 @@ async def clean_rate_limits():
 
 TEST_COLLECTIONS = [
     "users",
-    "pings",
     "calls",
     "messages",
     "message_receipts",
@@ -60,29 +75,44 @@ TEST_COLLECTIONS = [
     "passkey_challenges",
     "discovery_tokens",
     "conversations",
-    "conversation_participants",
+    "channels",
     "devices",
     "device_prekeys",
     "spaces",
-    "space_members",
     "invite_links",
-    "join_requests",
+    "relationships",
+    "roles",
     "blocks",
     "push_tokens",
     "saved_messages",
     "notifications",
     "bots",
+    "polls",
     "webhooks",
     "reports",
     "audit_logs",
+    "slash_commands",
+]
+
+LEGACY_TEST_COLLECTIONS = [
+    "conversation_participants",
+    "join_requests",
+    "pings",
+    "space_members",
+    "sticker_packs",
+    "stickers",
+    "upload_sessions",
 ]
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def clean_db():
+    _assert_test_database()
     client: AsyncMongoClient = AsyncMongoClient(settings.mongo_uri)
     db = client[settings.mongo_db]
 
+    for name in LEGACY_TEST_COLLECTIONS:
+        await db.drop_collection(name)
     for name in TEST_COLLECTIONS:
         await db[name].delete_many({})
 
@@ -90,6 +120,8 @@ async def clean_db():
 
     for name in TEST_COLLECTIONS:
         await db[name].delete_many({})
+    for name in LEGACY_TEST_COLLECTIONS:
+        await db.drop_collection(name)
 
     await client.close()
 

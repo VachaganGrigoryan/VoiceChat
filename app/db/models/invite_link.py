@@ -12,20 +12,18 @@ from app.db.object_id import StrId
 
 
 class InviteLinkDocument(TimestampedDocument):
-    """A redeemable invite to a conversation or a space.
+    """A redeemable invite that creates or activates a membership relationship."""
 
-    Redeeming a link joins the target directly, or creates a ``JoinRequest`` when
-    ``requires_approval`` is set.
-    """
-
-    target_type: Literal["conversation", "space"]
+    target_type: Literal["conversation", "channel", "space"]
     target_id: StrId
     code: str
     created_by: StrId
+    role_ids: list[StrId] = Field(default_factory=list)
     expires_at: datetime | None = None
+    invitee_id: StrId | None = None
     max_uses: int | None = Field(default=None, ge=1)
-    use_count: int = Field(default=0, ge=0)
-    requires_approval: bool = False
+    uses: int = Field(default=0, ge=0)
+    approval_required: bool = False
     revoked: bool = False
 
     class Settings:

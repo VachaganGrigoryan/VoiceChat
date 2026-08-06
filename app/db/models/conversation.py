@@ -2,26 +2,30 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
+from typing_extensions import Self
 
-from pydantic import Field
+from beanie import Insert, before_event
+from pydantic import Field, model_validator
 from pymongo import ASCENDING, DESCENDING, IndexModel
 
 from app.db.collections import COL_CONVERSATIONS
 from app.db.document import TimestampedDocument
-from app.db.models.embedded import ConversationPreviewDocument
+from app.db.models.embedded import ConversationPreviewDocument, OwnerRef
 from app.db.object_id import StrId
 
+# The write contract: only these types may be created. ``channel`` re-homes to the
+# ``channels`` collection; threads are message topology and no longer exist here.
+ConversationType = Literal["dm", "group"]
 
 class ConversationDocument(TimestampedDocument):
     """First-class conversation entity.
 
-    Replaces the derived ``sorted("{a}_{b}")`` conversation id. Modeled for N
-    participants (``type == "group"``), but the service layer enforces DM-only for
-    now. ``dm_key`` reuses the legacy sorted pair string and is uniquely indexed
-    (partial, ``type == "dm"``) to guarantee one DM per pair.
+    Conversations are DMs or groups. Channels live in their own collection and
+    threads are message topology. DMs have no owner; groups carry an owner.
     """
 
-    type: Literal["dm", "group", "channel", "thread"] = "dm"
+    type: ConversationType = "dm"
+    owner: OwnerRef | None = None
     participant_ids: list[StrId] = Field(default_factory=list)
     created_by: StrId
     title: str | None = None
@@ -33,9 +37,7 @@ class ConversationDocument(TimestampedDocument):
     visibility: Literal["private", "public"] = "private"
     posting_policy: Literal["everyone", "admins"] = "everyone"
     space_id: StrId | None = None
-    # Thread-as-sub-conversation linkage (type == "thread").
-    parent_conversation_id: StrId | None = None
-    root_message_id: str | None = None
+    space_visibility: Literal["space_public", "invite_only"] | None = None
     # Public/discoverable + broadcast metadata.
     slug: str | None = None
     description: str | None = None
@@ -45,6 +47,29 @@ class ConversationDocument(TimestampedDocument):
     settings: dict[str, Any] = Field(default_factory=dict)
     last_message_at: datetime | None = None
     last_message_preview: ConversationPreviewDocument | None = None
+
+    @model_validator(mode="after")
+    def validate_conversation_invariants(self) -> Self:
+        if self.type == "dm":
+            if self.owner is not None:
+                raise ValueError("DM conversation cannot have an owner")
+            if self.space_id is not None:
+                raise ValueError("DM conversation cannot have a space_id")
+        elif self.type == "group":
+            if self.owner is None:
+                if self.space_id:
+                    self.owner = OwnerRef(type="space", id=self.space_id)
+                elif hasattr(self, "created_by") and self.created_by:
+                    self.owner = OwnerRef(type="user", id=self.created_by)
+            if self.owner is not None and self.owner.type == "space":
+                if not self.space_id or str(self.space_id) != str(self.owner.id):
+                    raise ValueError("Space-owned group conversation must have matching space_id")
+        return self
+
+    @before_event(Insert)
+    def _validate_write_invariants(self) -> None:
+        if self.type == "dm" and len(set(map(str, self.participant_ids))) != 2:
+            raise ValueError("DM conversation must have exactly two distinct participants")
 
     class Settings:
         name = COL_CONVERSATIONS
@@ -75,8 +100,17 @@ class ConversationDocument(TimestampedDocument):
                 [("space_id", ASCENDING)],
                 name="ix_conversations_space_id",
             ),
+            # Group directory browse. The leading three fields are the listing
+            # invariant itself: only space-scoped, space-public groups are
+            # discoverable, so a spaceless group never enters the index scan.
             IndexModel(
-                [("parent_conversation_id", ASCENDING)],
-                name="ix_conversations_parent_conversation_id",
+                [
+                    ("type", ASCENDING),
+                    ("space_id", ASCENDING),
+                    ("space_visibility", ASCENDING),
+                    ("created_at", DESCENDING),
+                    ("_id", DESCENDING),
+                ],
+                name="ix_conversations_directory_groups",
             ),
         ]

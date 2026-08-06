@@ -14,6 +14,7 @@ async def test_expire_stale_calls_releases_live_call_uniqueness_lock():
     repo = CallsRepository()
 
     call = await repo.create_call(
+        conversation_id="conversation-u1-u2",
         caller_user_id="u1",
         callee_user_id="u2",
         call_type="audio",
@@ -30,6 +31,7 @@ async def test_expire_stale_calls_releases_live_call_uniqueness_lock():
     assert released.is_live is False
 
     replacement = await repo.create_call(
+        conversation_id="conversation-u1-u2",
         caller_user_id="u1",
         callee_user_id="u2",
         call_type="video",
@@ -45,6 +47,7 @@ async def test_reconnect_timeout_releases_live_call_uniqueness_lock():
     repo = CallsRepository()
 
     call = await repo.create_call(
+        conversation_id="conversation-u1-u2",
         caller_user_id="u1",
         callee_user_id="u2",
         call_type="audio",
@@ -77,6 +80,7 @@ async def test_reconnect_timeout_releases_live_call_uniqueness_lock():
     assert released.is_live is False
 
     replacement = await repo.create_call(
+        conversation_id="conversation-u1-u2",
         caller_user_id="u1",
         callee_user_id="u2",
         call_type="video",
@@ -101,6 +105,7 @@ async def test_list_history_returns_terminal_calls_with_peer_filter_and_cursor()
         [
             {
                 "_id": first_id,
+                "conversation_id": "conversation-u1-u2",
                 "caller_user_id": "u1",
                 "callee_user_id": "u2",
                 "participant_user_ids": ["u1", "u2"],
@@ -119,6 +124,7 @@ async def test_list_history_returns_terminal_calls_with_peer_filter_and_cursor()
             },
             {
                 "_id": second_id,
+                "conversation_id": "conversation-u1-u2",
                 "caller_user_id": "u2",
                 "callee_user_id": "u1",
                 "participant_user_ids": ["u2", "u1"],
@@ -137,6 +143,7 @@ async def test_list_history_returns_terminal_calls_with_peer_filter_and_cursor()
             },
             {
                 "_id": third_id,
+                "conversation_id": "conversation-u1-u3",
                 "caller_user_id": "u1",
                 "callee_user_id": "u3",
                 "participant_user_ids": ["u1", "u3"],

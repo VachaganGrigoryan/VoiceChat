@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from app.modules.messages.service.base import (
     BaseMessagesService,
+    ReleasedScheduledMessage,
     SendMessageResult,
 )
 from app.modules.messages.service.create import CreateMessagesMixin
@@ -31,5 +32,6 @@ class MessagesService(
 
 __all__ = [
     "MessagesService",
+    "ReleasedScheduledMessage",
     "SendMessageResult",
 ]

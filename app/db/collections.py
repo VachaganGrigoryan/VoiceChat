@@ -15,6 +15,7 @@ COL_CONVERSATION_PARTICIPANTS = "conversation_participants"
 COL_DEVICES = "devices"
 COL_DEVICE_PREKEYS = "device_prekeys"
 # finalize-messenger-conversation-model
+COL_CHANNELS = "channels"
 COL_SPACES = "spaces"
 COL_SPACE_MEMBERS = "space_members"
 COL_INVITE_LINKS = "invite_links"
@@ -24,6 +25,13 @@ COL_PUSH_TOKENS = "push_tokens"
 COL_SAVED_MESSAGES = "saved_messages"
 COL_NOTIFICATIONS = "notifications"
 COL_BOTS = "bots"
+COL_POLLS = "polls"
 COL_WEBHOOKS = "webhooks"
 COL_REPORTS = "reports"
 COL_AUDIT_LOGS = "audit_logs"
+COL_SLASH_COMMANDS = "slash_commands"
+# unified-relationships
+COL_RELATIONSHIPS = "relationships"
+# resource-authorization
+COL_ROLES = "roles"
+
