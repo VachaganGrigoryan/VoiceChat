@@ -50,6 +50,30 @@ async def test_connection_lifecycle_and_block_cutover(inprocess_client):
     assert incoming[0]["peer"]["id"] == str(sender["_id"])
     assert incoming[0]["direction"] == "incoming"
 
+    create_dm_before_accept_res = await inprocess_client.post(
+        "/conversations",
+        headers=sender_headers,
+        json={"peer_user_id": str(receiver["_id"])},
+    )
+    assert create_dm_before_accept_res.status_code == 403, (
+        create_dm_before_accept_res.text
+    )
+
+    peer_id_accept_res = await inprocess_client.post(
+        f"/connections/{sender['_id']}/accept",
+        headers=receiver_headers,
+    )
+    assert peer_id_accept_res.status_code == 404, peer_id_accept_res.text
+    assert peer_id_accept_res.json()["error"]["code"] == "CONNECTION_NOT_FOUND"
+
+    still_pending_res = await inprocess_client.get(
+        "/connections/pending",
+        headers=receiver_headers,
+        params={"direction": "incoming"},
+    )
+    assert still_pending_res.status_code == 200, still_pending_res.text
+    assert still_pending_res.json()["data"][0]["relationship"]["status"] == "pending"
+
     accept_res = await inprocess_client.post(
         f"/connections/{relationship_id}/accept",
         headers=receiver_headers,
@@ -63,6 +87,13 @@ async def test_connection_lifecycle_and_block_cutover(inprocess_client):
     )
     assert contacts_res.status_code == 200, contacts_res.text
     assert contacts_res.json()["data"][0]["relationship"]["id"] == relationship_id
+
+    receiver_contacts_res = await inprocess_client.get(
+        "/connections",
+        headers=receiver_headers,
+    )
+    assert receiver_contacts_res.status_code == 200, receiver_contacts_res.text
+    assert receiver_contacts_res.json()["data"][0]["relationship"]["id"] == relationship_id
 
     conversation_res = await inprocess_client.post(
         "/conversations",
