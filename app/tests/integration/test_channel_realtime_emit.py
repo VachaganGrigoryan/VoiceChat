@@ -14,6 +14,7 @@ from app.modules.channels.repository import ChannelsRepository
 from app.modules.channels.service import ChannelService
 from app.tests.integration.test_realtime_socket import (
     _create_verified_user_and_tokens,
+    _grant_chat_permission,
 )
 
 
@@ -202,3 +203,150 @@ async def test_profile_post_also_fans_out(sio_spy_client):
     assert posted.json()["data"]["id"]
 
     assert f"channel:{main_channel_id}" in _rooms_for(sio, "receive_message")
+
+
+@pytest.mark.asyncio
+async def test_channel_read_reaches_the_reader_only(sio_spy_client):
+    """A channel read is a personal event: the reader's own sessions, not the audience."""
+    client, sio = sio_spy_client
+
+    owner, owner_tokens = await _create_verified_user_and_tokens("read-owner@test.com")
+    reader, reader_tokens = await _create_verified_user_and_tokens(
+        "read-follower@test.com"
+    )
+
+    created = await client.post(
+        "/channels",
+        json={
+            "name": "Announcements",
+            "kind": "text",
+            "visibility": "public",
+            "posting_policy": "everyone",
+            "comment_policy": "everyone",
+            "slug": "read-announcements",
+        },
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert created.status_code == 201, created.text
+    channel_id = created.json()["data"]["id"]
+
+    await client.post(
+        f"/channels/{channel_id}/follow",
+        headers=_auth(reader_tokens["access_token"]),
+    )
+    await client.post(
+        f"/messages/channel/{channel_id}/text",
+        json={"text": "please read"},
+        headers=_auth(owner_tokens["access_token"]),
+    )
+
+    sio.emit.reset_mock()
+
+    marked = await client.post(
+        f"/channels/{channel_id}/read",
+        headers=_auth(reader_tokens["access_token"]),
+    )
+    assert marked.status_code == 200, marked.text
+
+    rooms = _rooms_for(sio, "channel_read")
+    assert rooms == {f"user:{str(reader['_id'])}"}, (
+        f"a channel read must reach only the reader's own sessions, reached {rooms}"
+    )
+    assert f"channel:{channel_id}" not in rooms
+
+
+@pytest.mark.asyncio
+async def test_channel_message_read_broadcasts_no_receipt_state(sio_spy_client):
+    """Receipts need a recipient roster; a channel has followers, so the summary
+    is structurally empty and must not be broadcast at all."""
+    client, sio = sio_spy_client
+
+    owner, owner_tokens = await _create_verified_user_and_tokens(
+        "receipt-owner@test.com"
+    )
+    reader, reader_tokens = await _create_verified_user_and_tokens(
+        "receipt-reader@test.com"
+    )
+
+    created = await client.post(
+        "/channels",
+        json={
+            "name": "Receipts",
+            "kind": "text",
+            "visibility": "public",
+            "posting_policy": "everyone",
+            "comment_policy": "everyone",
+            "slug": "receipt-channel",
+        },
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert created.status_code == 201, created.text
+    channel_id = created.json()["data"]["id"]
+
+    posted = await client.post(
+        f"/messages/channel/{channel_id}/text",
+        json={"text": "no receipts here"},
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert posted.status_code == 201, posted.text
+    message_id = posted.json()["data"]["id"]
+
+    sio.emit.reset_mock()
+
+    read = await client.post(
+        f"/messages/{message_id}/read",
+        headers=_auth(reader_tokens["access_token"]),
+    )
+    assert read.status_code == 200, read.text
+    delivered = await client.post(
+        f"/messages/{message_id}/delivered",
+        headers=_auth(reader_tokens["access_token"]),
+    )
+    assert delivered.status_code == 200, delivered.text
+
+    assert "message_status" not in _events(sio), (
+        f"expected no receipt broadcast for a channel, got {_events(sio)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_conversation_message_read_still_broadcasts_receipt_state(sio_spy_client):
+    """The channel suppression must not have taken the conversation case with it."""
+    client, sio = sio_spy_client
+
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "receipt-dm-sender@test.com"
+    )
+    receiver, receiver_tokens = await _create_verified_user_and_tokens(
+        "receipt-dm-receiver@test.com"
+    )
+    await _grant_chat_permission(str(sender["_id"]), str(receiver["_id"]))
+
+    conversation = await client.post(
+        "/conversations",
+        json={"peer_user_id": str(receiver["_id"])},
+        headers=_auth(sender_tokens["access_token"]),
+    )
+    # A DM is get-or-create, so this answers 200 rather than 201.
+    assert conversation.status_code == 200, conversation.text
+    conversation_id = conversation.json()["data"]["id"]
+
+    posted = await client.post(
+        f"/messages/conversation/{conversation_id}/text",
+        json={"text": "receipts apply here"},
+        headers=_auth(sender_tokens["access_token"]),
+    )
+    assert posted.status_code == 201, posted.text
+    message_id = posted.json()["data"]["id"]
+
+    sio.emit.reset_mock()
+
+    read = await client.post(
+        f"/messages/{message_id}/read",
+        headers=_auth(receiver_tokens["access_token"]),
+    )
+    assert read.status_code == 200, read.text
+
+    assert "message_status" in _events(sio), (
+        f"expected a receipt broadcast for a conversation, got {_events(sio)}"
+    )

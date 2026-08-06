@@ -229,15 +229,19 @@ async def mark_message_delivered(
         "receipt_summary": message.receipt_summary.model_dump(mode="json"),
         "updated_at": message.updated_at,
     }
-    await emit_to_container(
-        sio,
-        container_type=ctx.container_type,
-        container_id=ctx.container_id,
-        conversation=ctx.conversation,
-        relationships_service=rel_service,
-        event="message_status",
-        payload=payload,
-    )
+    # Receipts count against a recipient roster and a channel has followers
+    # instead, so the summary is structurally empty. Broadcasting it would only
+    # invite the client to render a state that cannot exist there.
+    if ctx.container_type == "conversation":
+        await emit_to_container(
+            sio,
+            container_type=ctx.container_type,
+            container_id=ctx.container_id,
+            conversation=ctx.conversation,
+            relationships_service=rel_service,
+            event="message_status",
+            payload=payload,
+        )
     return ok(request, data=message)
 
 
@@ -285,15 +289,19 @@ async def mark_message_read(
         "receipt_summary": message.receipt_summary.model_dump(mode="json"),
         "updated_at": message.updated_at,
     }
-    await emit_to_container(
-        sio,
-        container_type=ctx.container_type,
-        container_id=ctx.container_id,
-        conversation=ctx.conversation,
-        relationships_service=rel_service,
-        event="message_status",
-        payload=payload,
-    )
+    # Receipts count against a recipient roster and a channel has followers
+    # instead, so the summary is structurally empty. Broadcasting it would only
+    # invite the client to render a state that cannot exist there.
+    if ctx.container_type == "conversation":
+        await emit_to_container(
+            sio,
+            container_type=ctx.container_type,
+            container_id=ctx.container_id,
+            conversation=ctx.conversation,
+            relationships_service=rel_service,
+            event="message_status",
+            payload=payload,
+        )
     return ok(request, data=message)
 
 

@@ -8,7 +8,7 @@ from starlette.requests import Request
 
 from app.core.deps import get_sio
 from app.modules.authorization.capabilities import affected_viewer_ids
-from app.modules.realtime import emit_capabilities_invalidated
+from app.modules.realtime import emit_capabilities_invalidated, emit_to_user
 from app.modules.realtime.emits import emit_resource_deleted
 from app.core.errors.openapi import build_error_responses
 from app.core.http import (
@@ -252,8 +252,23 @@ async def update_channel_notifications(
 async def mark_channel_read(
     request: Request,
     channel_id: str,
+    sio: Annotated[socketio.AsyncServer, Depends(get_sio)],
     user=Depends(require_verified_user),
     service: ChannelService = Depends(get_channel_service),
 ):
     state = await service.mark_channel_read(channel_id=channel_id, user_id=user.str_id)
+    # To the reader's own sessions, never to the channel. A channel has
+    # followers rather than participants, so telling an audience of arbitrary
+    # size that one of them has caught up is volume without meaning; the value
+    # is that the reader's other devices agree.
+    await emit_to_user(
+        sio,
+        user.str_id,
+        "channel_read",
+        {
+            "container_type": "channel",
+            "container_id": channel_id,
+            "channel_id": channel_id,
+        },
+    )
     return ok(request, data=state)

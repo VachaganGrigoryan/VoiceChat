@@ -3,7 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from app.core.errors import AppError
-from app.modules.authorization.permissions import MESSAGE_READ
+from app.modules.authorization.permissions import (
+    MESSAGE_CREATE,
+    MESSAGE_READ,
+    THREAD_REPLY,
+)
 from app.modules.authorization.service import AuthorizationService
 from app.modules.auth.repository import UsersRepository
 from app.modules.calls.ws import (
@@ -157,25 +161,68 @@ def register_events(sio) -> None:
 
         await sio.leave_room(sid, channel_room(channel_id))
 
-    @sio.event
-    async def typing_start(sid, data):
+    async def relay_typing(sid, data, *, event: str) -> None:
+        """Relay an ephemeral typing event to whoever is watching the container.
+
+        A conversation addresses its participants individually; a channel has no
+        roster to address, so it broadcasts once to its room exactly as its
+        messages do. Nothing is persisted and no notification is generated.
+        """
         user_id = await get_socket_user_id(sio, sid)
         if not user_id:
             return
 
-        conversation_id = (data or {}).get("conversation_id")
-        if not conversation_id:
+        payload = data or {}
+        container_type = payload.get("container_type")
+        container_id = payload.get("container_id")
+        if container_type not in ("conversation", "channel") or not container_id:
             await sio.emit(
                 "error",
-                {"code": "INVALID_PAYLOAD", "message": "conversation_id is required"},
+                {
+                    "code": "INVALID_PAYLOAD",
+                    "message": "container_type and container_id are required",
+                },
                 to=sid,
             )
+            return
+
+        relayed = {
+            "from": user_id,
+            "container_type": container_type,
+            "container_id": container_id,
+            # Mirror, as every other message event carries: null for a channel.
+            "conversation_id": (
+                container_id if container_type == "conversation" else None
+            ),
+        }
+
+        if container_type == "channel":
+            # Typing announces an intent to contribute, so reading is not enough
+            # -- but a channel may take comments from an audience it will not let
+            # post to (§59), and a commenter typing a comment is legitimate.
+            authorization = AuthorizationService()
+            may_contribute = await authorization.can(
+                user_id, MESSAGE_CREATE, "channel", container_id
+            ) or await authorization.can(
+                user_id, THREAD_REPLY, "channel", container_id
+            )
+            if not may_contribute:
+                await sio.emit(
+                    "error",
+                    {
+                        "code": "FORBIDDEN",
+                        "message": "Not allowed to post in this channel",
+                    },
+                    to=sid,
+                )
+                return
+            await sio.emit(event, relayed, room=channel_room(container_id))
             return
 
         try:
             participant_ids = await get_conversation_participant_ids(
                 user_id=user_id,
-                conversation_id=conversation_id,
+                conversation_id=container_id,
             )
         except AppError as e:
             await sio.emit("error", {"code": e.code, "message": e.message}, to=sid)
@@ -183,43 +230,15 @@ def register_events(sio) -> None:
 
         for participant_id in participant_ids:
             if participant_id != user_id:
-                await sio.emit(
-                    "typing_start",
-                    {"from": user_id, "conversation_id": conversation_id},
-                    room=f"user:{participant_id}",
-                )
+                await sio.emit(event, relayed, room=f"user:{participant_id}")
+
+    @sio.event
+    async def typing_start(sid, data):
+        await relay_typing(sid, data, event="typing_start")
 
     @sio.event
     async def typing_stop(sid, data):
-        user_id = await get_socket_user_id(sio, sid)
-        if not user_id:
-            return
-
-        conversation_id = (data or {}).get("conversation_id")
-        if not conversation_id:
-            await sio.emit(
-                "error",
-                {"code": "INVALID_PAYLOAD", "message": "conversation_id is required"},
-                to=sid,
-            )
-            return
-
-        try:
-            participant_ids = await get_conversation_participant_ids(
-                user_id=user_id,
-                conversation_id=conversation_id,
-            )
-        except AppError as e:
-            await sio.emit("error", {"code": e.code, "message": e.message}, to=sid)
-            return
-
-        for participant_id in participant_ids:
-            if participant_id != user_id:
-                await sio.emit(
-                    "typing_stop",
-                    {"from": user_id, "conversation_id": conversation_id},
-                    room=f"user:{participant_id}",
-                )
+        await relay_typing(sid, data, event="typing_stop")
 
     @sio.event
     async def send_message(sid, data):
