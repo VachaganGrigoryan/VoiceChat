@@ -789,7 +789,14 @@ async def clear_container_messages_for_everyone(
         conversation=ctx.conversation,
         relationships_service=rel_service,
         event="conversation_history_cleared",
-        payload={"conversation_id": container_id, "cleared_count": count},
+        payload={
+            "container_type": ctx.container_type,
+            "container_id": container_id,
+            # Mirror, as every other message event carries: a client matching on
+            # the conversation key alone would take a cleared channel for one.
+            "conversation_id": container_id,
+            "cleared_count": count,
+        },
     )
     return ok(
         request,
