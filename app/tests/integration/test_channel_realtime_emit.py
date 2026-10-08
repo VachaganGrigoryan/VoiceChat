@@ -1,21 +1,28 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
+from bson import ObjectId
 from httpx import ASGITransport, AsyncClient
 
 from app.db.models import UserDocument
+from app.db.mongo import get_db
 from app.factory import create_app
 from app.modules.auth.repository import UsersRepository
 from app.modules.channels.repository import ChannelsRepository
 from app.modules.channels.service import ChannelService
+from app.modules.messages.dependencies import get_messages_service
+from app.modules.notifications.dependencies import get_notifications_service
 from app.tests.integration.test_realtime_socket import (
     _create_verified_user_and_tokens,
     _grant_chat_permission,
 )
+from app.workers.scheduled_worker import release_and_deliver
 
 
 def _auth(access_token: str) -> dict[str, str]:
@@ -350,3 +357,56 @@ async def test_conversation_message_read_still_broadcasts_receipt_state(sio_spy_
     assert "message_status" in _events(sio), (
         f"expected a receipt broadcast for a conversation, got {_events(sio)}"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_released_scheduled_channel_post_reaches_the_room(sio_spy_client):
+    """The worker released scheduled channel posts with an empty recipient list,
+    so nothing reached the channel's room and the channel never recorded them."""
+    client, _sio = sio_spy_client
+    _owner, owner_tokens = await _create_verified_user_and_tokens(
+        "emit-scheduled-owner@test.com"
+    )
+    created = await client.post(
+        "/channels",
+        json={
+            "name": "Scheduled",
+            "kind": "text",
+            "visibility": "public",
+            "posting_policy": "everyone",
+            "comment_policy": "everyone",
+            "slug": "emit-scheduled",
+        },
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert created.status_code == 201, created.text
+    channel_id = created.json()["data"]["id"]
+
+    scheduled = await client.post(
+        f"/messages/channel/{channel_id}/schedule",
+        json={
+            "text": "goes out later",
+            "scheduled_for": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        },
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert scheduled.status_code == 201, scheduled.text
+    scheduled_id = scheduled.json()["data"]["id"]
+    await get_db()["messages"].update_one(
+        {"_id": ObjectId(scheduled_id)},
+        {"$set": {"scheduled_for": datetime.now(UTC) - timedelta(minutes=1)}},
+    )
+
+    worker_sio = AsyncMock()
+    released = await release_and_deliver(
+        sio=worker_sio,
+        messages=get_messages_service(),
+        notifications=get_notifications_service(),
+    )
+    assert released == 1
+    assert f"channel:{channel_id}" in _rooms_for(worker_sio, "receive_message")
+
+    channel = await ChannelsRepository().get_by_id(channel_id)
+    assert channel is not None
+    assert channel.last_message_id == scheduled_id
+    assert channel.message_count == 1

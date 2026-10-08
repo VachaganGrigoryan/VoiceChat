@@ -330,6 +330,12 @@ class CreateMessagesMixin:
         results: list[ReleasedScheduledMessage] = []
         for doc in released:
             await self._materialize_conversation_message(doc)
+            if doc.container_type == "channel" and self.channels_repo is not None:
+                await self.channels_repo.record_message(
+                    channel_id=doc.container_id,
+                    message_id=doc.str_id,
+                    created_at=doc.created_at,
+                )
             summaries = await self.repo.receipt_summaries_for_messages(
                 container_type=doc.container_type,
                 container_id=doc.container_id,
