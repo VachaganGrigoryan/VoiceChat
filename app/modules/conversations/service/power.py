@@ -31,9 +31,6 @@ class PowerFeaturesServiceMixin(BaseConversationsService):
         conversation = await self.require_participant(
             user_id=user_id, conversation_id=conversation_id
         )
-        if conversation.type == "dm":
-            return conversation
-
         await self.require_permission(
             user_id=user_id, conversation_id=conversation_id, permission=MESSAGE_PIN
         )

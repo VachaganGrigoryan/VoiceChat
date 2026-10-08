@@ -252,3 +252,39 @@ async def test_capabilities_require_authentication(inprocess_client):
         json={"resources": [{"type": "channel", "id": "000000000000000000000000"}]},
     )
     assert resp.status_code in (401, 403), resp.text
+
+
+@pytest.mark.asyncio
+async def test_either_dm_participant_may_pin_and_is_told_so(inprocess_client):
+    # A DM seeds no roles, yet either participant manages its pins; the
+    # capability must report that, or a client gating on it hides the action.
+    a, a_tokens = await _create_verified_user_and_tokens("cap-dm-pin-a@test.com")
+    b, b_tokens = await _create_verified_user_and_tokens("cap-dm-pin-b@test.com")
+    await _grant_chat_permission(str(a["_id"]), str(b["_id"]))
+    dm = await inprocess_client.post(
+        "/conversations",
+        json={"peer_user_id": str(b["_id"])},
+        headers=_auth(a_tokens["access_token"]),
+    )
+    assert dm.status_code in (200, 201), dm.text
+    dm_id = dm.json()["data"]["id"]
+    sent = await inprocess_client.post(
+        f"/messages/conversation/{dm_id}/text",
+        json={"text": "pin this"},
+        headers=_auth(a_tokens["access_token"]),
+    )
+    assert sent.status_code == 201, sent.text
+
+    for tokens in (a_tokens, b_tokens):
+        caps = await inprocess_client.get(
+            f"/conversations/{dm_id}/capabilities",
+            headers=_auth(tokens["access_token"]),
+        )
+        assert caps.status_code == 200, caps.text
+        assert "message.pin" in caps.json()["data"]["allowed"]
+
+    pinned = await inprocess_client.post(
+        f"/messages/{sent.json()['data']['id']}/pin",
+        headers=_auth(b_tokens["access_token"]),
+    )
+    assert pinned.status_code == 200, pinned.text
