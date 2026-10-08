@@ -410,3 +410,46 @@ async def test_a_released_scheduled_channel_post_reaches_the_room(sio_spy_client
     assert channel is not None
     assert channel.last_message_id == scheduled_id
     assert channel.message_count == 1
+
+
+@pytest.mark.asyncio
+async def test_channel_pins_and_clear_for_everyone_reach_the_room(sio_spy_client):
+    client, sio = sio_spy_client
+    _owner, owner_tokens = await _create_verified_user_and_tokens(
+        "emit-pins-owner@test.com"
+    )
+    created = await client.post(
+        "/channels",
+        json={
+            "name": "Pins",
+            "kind": "text",
+            "visibility": "public",
+            "posting_policy": "everyone",
+            "comment_policy": "everyone",
+            "slug": "emit-pins",
+        },
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert created.status_code == 201, created.text
+    channel_id = created.json()["data"]["id"]
+    sent = await client.post(
+        f"/messages/channel/{channel_id}/text",
+        json={"text": "pin and clear"},
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert sent.status_code == 201, sent.text
+    sio.emit.reset_mock()
+
+    pinned = await client.post(
+        f"/messages/{sent.json()['data']['id']}/pin",
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert pinned.status_code == 200, pinned.text
+    assert f"channel:{channel_id}" in _rooms_for(sio, "conversation_pins_updated")
+
+    cleared = await client.delete(
+        f"/messages/channel/{channel_id}/all",
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert f"channel:{channel_id}" in _rooms_for(sio, "conversation_history_cleared")

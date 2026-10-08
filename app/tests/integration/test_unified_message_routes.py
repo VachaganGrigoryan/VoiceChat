@@ -423,3 +423,29 @@ async def test_item_routes_win_over_the_container_family(inprocess_client):
         headers=_auth(owner_tokens["access_token"]),
     )
     assert cancelled.status_code == 204, cancelled.text
+
+
+@pytest.mark.asyncio
+async def test_channel_pin_rights_are_resolved_at_the_channel_scope(inprocess_client):
+    # Owning another channel grants pin rights there, not here.
+    _owner, owner_tokens = await _create_verified_user_and_tokens(
+        "unified-pin-scope-owner@test.com"
+    )
+    _member, member_tokens = await _create_verified_user_and_tokens(
+        "unified-pin-scope-member@test.com"
+    )
+    channel_id = await _channel(inprocess_client, owner_tokens, slug="pin-scope")
+    await _channel(inprocess_client, member_tokens, slug="pin-scope-elsewhere")
+    joined = await inprocess_client.post(
+        f"/channels/{channel_id}/join", headers=_auth(member_tokens["access_token"])
+    )
+    assert joined.status_code == 201, joined.text
+    post = await _send_text(
+        inprocess_client, "channel", channel_id, owner_tokens, "not yours to pin"
+    )
+
+    refused = await inprocess_client.post(
+        f"/messages/{post['id']}/pin",
+        headers=_auth(member_tokens["access_token"]),
+    )
+    assert refused.status_code == 403, refused.text
