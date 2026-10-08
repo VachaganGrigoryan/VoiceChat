@@ -53,9 +53,7 @@ async def release_and_deliver(
                 result=item.result,
                 participant_ids=item.participant_ids,
             )
-        generated = await notifications.generate_for_message(
-            message=item.result.message
-        )
+        generated = await notifications.generate_for_message(message=item.result.message)
         for notification in generated:
             await emit_to_user(
                 sio,
@@ -104,9 +102,7 @@ async def close_due_polls(
             break
         message = await messages_repo.get_by_id(message_id=str(poll.message_id))
         if message is None:
-            log.warning(
-                "auto-closed poll without linked message poll_id=%s", poll.str_id
-            )
+            log.warning("auto-closed poll without linked message poll_id=%s", poll.str_id)
             closed += 1
             continue
         if message.container_type == "conversation":
@@ -134,9 +130,7 @@ async def close_due_polls(
                 ),
             ]
             participant_ids = list(
-                dict.fromkeys(
-                    str(relationship.user_id) for relationship in relationships
-                )
+                dict.fromkeys(str(relationship.user_id) for relationship in relationships)
             )
         await emit_poll_updated(
             sio,

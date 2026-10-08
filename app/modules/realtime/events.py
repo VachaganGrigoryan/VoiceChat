@@ -76,9 +76,7 @@ def register_events(sio) -> None:
                 user_id=user_id,
                 last_seen_at=last_seen_at,
             )
-            await emit_presence_update(
-                sio, user_id, "offline", last_seen_at=last_seen_at
-            )
+            await emit_presence_update(sio, user_id, "offline", last_seen_at=last_seen_at)
 
     @sio.event
     async def presence_state(sid, data):
@@ -205,7 +203,9 @@ def register_events(sio) -> None:
             authorization = AuthorizationService()
             may_contribute = await authorization.can(
                 user_id, MESSAGE_CREATE, "channel", container_id
-            ) or await authorization.can(user_id, THREAD_REPLY, "channel", container_id)
+            ) or await authorization.can(
+                user_id, THREAD_REPLY, "channel", container_id
+            )
             if not may_contribute:
                 await sio.emit(
                     "error",
