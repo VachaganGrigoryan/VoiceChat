@@ -230,7 +230,7 @@
         "title": "BlockedUserListItem",
         "type": "object"
       },
-      "Body_send_channel_media_channels__channel_id__messages_media_post": {
+      "Body_send_container_media_messages__container_type___container_id__media_post": {
         "properties": {
           "duration_ms": {
             "anyOf": [
@@ -315,95 +315,7 @@
           "type",
           "file"
         ],
-        "title": "Body_send_channel_media_channels__channel_id__messages_media_post",
-        "type": "object"
-      },
-      "Body_send_media_conversations__conversation_id__messages_media_post": {
-        "properties": {
-          "duration_ms": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Duration Ms"
-          },
-          "file": {
-            "contentMediaType": "application/octet-stream",
-            "title": "File",
-            "type": "string"
-          },
-          "media_kind": {
-            "anyOf": [
-              {
-                "enum": [
-                  "voice",
-                  "audio",
-                  "image",
-                  "video"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Media Kind"
-          },
-          "reply_mode": {
-            "anyOf": [
-              {
-                "enum": [
-                  "quote",
-                  "thread"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reply Mode"
-          },
-          "reply_to_message_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reply To Message Id"
-          },
-          "text": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Text"
-          },
-          "type": {
-            "enum": [
-              "media",
-              "file"
-            ],
-            "title": "Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "type",
-          "file"
-        ],
-        "title": "Body_send_media_conversations__conversation_id__messages_media_post",
+        "title": "Body_send_container_media_messages__container_type___container_id__media_post",
         "type": "object"
       },
       "Body_set_group_avatar_conversations_groups__conversation_id__avatar_patch": {
@@ -1718,6 +1630,13 @@
           "owner": {
             "$ref": "#/components/schemas/ChannelOwnerView"
           },
+          "pinned_message_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pinned Message Ids",
+            "type": "array"
+          },
           "posting_policy": {
             "enum": [
               "owner",
@@ -2148,7 +2067,7 @@
         "type": "object"
       },
       "ConversationSendTextRequest": {
-        "description": "Conversation-scoped text send; the receiver is derived from the path.",
+        "description": "Body of a text send; the container is derived from the path.",
         "properties": {
           "reply_mode": {
             "anyOf": [
@@ -5893,6 +5812,42 @@
         "title": "PeerUserSummary",
         "type": "object"
       },
+      "PinnedMessagesView": {
+        "description": "A container's pinned set, shaped the same for both container types.\n\nPinning used to answer with a whole `ConversationView`, which is why it\ncould not answer at all for a channel. The pinned set is what the caller\nasked to change, so that is what it gets back.",
+        "properties": {
+          "container_id": {
+            "title": "Container Id",
+            "type": "string"
+          },
+          "container_type": {
+            "enum": [
+              "conversation",
+              "channel"
+            ],
+            "title": "Container Type",
+            "type": "string"
+          },
+          "conversation_id": {
+            "readOnly": true,
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "pinned_message_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pinned Message Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "container_type",
+          "container_id",
+          "conversation_id"
+        ],
+        "title": "PinnedMessagesView",
+        "type": "object"
+      },
       "PollOptionInput": {
         "properties": {
           "id": {
@@ -9489,6 +9444,34 @@
           "data"
         ],
         "title": "SuccessResponse[PasskeyResponse]",
+        "type": "object"
+      },
+      "SuccessResponse_PinnedMessagesView_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PinnedMessagesView"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SuccessResponse[PinnedMessagesView]",
         "type": "object"
       },
       "SuccessResponse_PollView_": {
@@ -16774,921 +16757,6 @@
         ]
       }
     },
-    "/channels/{channel_id}/messages": {
-      "get": {
-        "operationId": "list_channel_messages_channels__channel_id__messages_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "channel_id",
-            "required": true,
-            "schema": {
-              "title": "Channel Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 20,
-              "maximum": 100,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "cursor",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PaginatedResponse_list_MessageDoc__"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "The request could not be processed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request. The request is syntactically valid but business validation failed."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid authentication token."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized. Authentication is missing, invalid, or expired."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "FORBIDDEN",
-                    "message": "You do not have permission to perform this action."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Forbidden. The authenticated user is not allowed to perform this action."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "NOT_FOUND",
-                    "message": "Requested resource was not found."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Not Found. The requested resource does not exist."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "CONFLICT",
-                    "message": "A resource with the same identifier already exists."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflict. The request conflicts with the current state of the resource."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "value is not a valid email address",
-                        "type": "value_error"
-                      }
-                    ],
-                    "message": "Request validation failed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation Error. One or more request fields failed validation."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Internal server error."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error. An unexpected server error occurred."
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Channel Messages",
-        "tags": [
-          "channels"
-        ]
-      },
-      "post": {
-        "operationId": "create_channel_message_channels__channel_id__messages_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "channel_id",
-            "required": true,
-            "schema": {
-              "title": "Channel Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ChannelMessageCreateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse_MessageDoc_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "The request could not be processed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request. The request is syntactically valid but business validation failed."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid authentication token."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized. Authentication is missing, invalid, or expired."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "FORBIDDEN",
-                    "message": "You do not have permission to perform this action."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Forbidden. The authenticated user is not allowed to perform this action."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "NOT_FOUND",
-                    "message": "Requested resource was not found."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Not Found. The requested resource does not exist."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "CONFLICT",
-                    "message": "A resource with the same identifier already exists."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflict. The request conflicts with the current state of the resource."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "value is not a valid email address",
-                        "type": "value_error"
-                      }
-                    ],
-                    "message": "Request validation failed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation Error. One or more request fields failed validation."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Internal server error."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error. An unexpected server error occurred."
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Create Channel Message",
-        "tags": [
-          "channels"
-        ]
-      }
-    },
-    "/channels/{channel_id}/messages/content": {
-      "post": {
-        "operationId": "send_channel_rich_content_channels__channel_id__messages_content_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "channel_id",
-            "required": true,
-            "schema": {
-              "title": "Channel Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SendRichContentRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse_MessageDoc_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "The request could not be processed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request. The request is syntactically valid but business validation failed."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid authentication token."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized. Authentication is missing, invalid, or expired."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "FORBIDDEN",
-                    "message": "You do not have permission to perform this action."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Forbidden. The authenticated user is not allowed to perform this action."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "NOT_FOUND",
-                    "message": "Requested resource was not found."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Not Found. The requested resource does not exist."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "CONFLICT",
-                    "message": "A resource with the same identifier already exists."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflict. The request conflicts with the current state of the resource."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "value is not a valid email address",
-                        "type": "value_error"
-                      }
-                    ],
-                    "message": "Request validation failed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation Error. One or more request fields failed validation."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Internal server error."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error. An unexpected server error occurred."
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Send Channel Rich Content",
-        "tags": [
-          "channels"
-        ]
-      }
-    },
-    "/channels/{channel_id}/messages/media": {
-      "post": {
-        "operationId": "send_channel_media_channels__channel_id__messages_media_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "channel_id",
-            "required": true,
-            "schema": {
-              "title": "Channel Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_send_channel_media_channels__channel_id__messages_media_post"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse_MessageDoc_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "The request could not be processed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request. The request is syntactically valid but business validation failed."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid authentication token."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized. Authentication is missing, invalid, or expired."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "FORBIDDEN",
-                    "message": "You do not have permission to perform this action."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Forbidden. The authenticated user is not allowed to perform this action."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "NOT_FOUND",
-                    "message": "Requested resource was not found."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Not Found. The requested resource does not exist."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "CONFLICT",
-                    "message": "A resource with the same identifier already exists."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflict. The request conflicts with the current state of the resource."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "value is not a valid email address",
-                        "type": "value_error"
-                      }
-                    ],
-                    "message": "Request validation failed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation Error. One or more request fields failed validation."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Internal server error."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error. An unexpected server error occurred."
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Send Channel Media",
-        "tags": [
-          "channels"
-        ]
-      }
-    },
-    "/channels/{channel_id}/messages/{message_id}/read": {
-      "post": {
-        "operationId": "mark_channel_message_read_channels__channel_id__messages__message_id__read_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "channel_id",
-            "required": true,
-            "schema": {
-              "title": "Channel Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "message_id",
-            "required": true,
-            "schema": {
-              "title": "Message Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse_MessageDoc_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "The request could not be processed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request. The request is syntactically valid but business validation failed."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid authentication token."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized. Authentication is missing, invalid, or expired."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "FORBIDDEN",
-                    "message": "You do not have permission to perform this action."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Forbidden. The authenticated user is not allowed to perform this action."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "NOT_FOUND",
-                    "message": "Requested resource was not found."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Not Found. The requested resource does not exist."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "CONFLICT",
-                    "message": "A resource with the same identifier already exists."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Conflict. The request conflicts with the current state of the resource."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "value is not a valid email address",
-                        "type": "value_error"
-                      }
-                    ],
-                    "message": "Request validation failed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation Error. One or more request fields failed validation."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Internal server error."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error. An unexpected server error occurred."
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Mark Channel Message Read",
-        "tags": [
-          "channels"
-        ]
-      }
-    },
     "/channels/{channel_id}/notifications": {
       "patch": {
         "operationId": "update_channel_notifications_channels__channel_id__notifications_patch",
@@ -24536,1288 +23604,6 @@
         ]
       }
     },
-    "/conversations/{conversation_id}/messages": {
-      "delete": {
-        "operationId": "clear_messages_conversations__conversation_id__messages_delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse_ClearChatResponse_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "The request could not be processed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request. The request is syntactically valid but business validation failed."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid authentication token."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized. Authentication is missing, invalid, or expired."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "value is not a valid email address",
-                        "type": "value_error"
-                      }
-                    ],
-                    "message": "Request validation failed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation Error. One or more request fields failed validation."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Internal server error."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error. An unexpected server error occurred."
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Clear Messages",
-        "tags": [
-          "messages"
-        ]
-      },
-      "get": {
-        "operationId": "list_messages_conversations__conversation_id__messages_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 20,
-              "maximum": 100,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "cursor",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PaginatedResponse_list_MessageDoc__"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "The request could not be processed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request. The request is syntactically valid but business validation failed."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid authentication token."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized. Authentication is missing, invalid, or expired."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "value is not a valid email address",
-                        "type": "value_error"
-                      }
-                    ],
-                    "message": "Request validation failed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation Error. One or more request fields failed validation."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Internal server error."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error. An unexpected server error occurred."
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Messages",
-        "tags": [
-          "messages"
-        ]
-      }
-    },
-    "/conversations/{conversation_id}/messages/all": {
-      "delete": {
-        "operationId": "clear_messages_for_everyone_conversations__conversation_id__messages_all_delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse_ClearChatResponse_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "The request could not be processed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request. The request is syntactically valid but business validation failed."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid authentication token."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized. Authentication is missing, invalid, or expired."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "value is not a valid email address",
-                        "type": "value_error"
-                      }
-                    ],
-                    "message": "Request validation failed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation Error. One or more request fields failed validation."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Internal server error."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error. An unexpected server error occurred."
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Clear Messages For Everyone",
-        "tags": [
-          "messages"
-        ]
-      }
-    },
-    "/conversations/{conversation_id}/messages/content": {
-      "post": {
-        "operationId": "send_rich_content_conversations__conversation_id__messages_content_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SendRichContentRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse_MessageDoc_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "The request could not be processed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request. The request is syntactically valid but business validation failed."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid authentication token."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized. Authentication is missing, invalid, or expired."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "value is not a valid email address",
-                        "type": "value_error"
-                      }
-                    ],
-                    "message": "Request validation failed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation Error. One or more request fields failed validation."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Internal server error."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error. An unexpected server error occurred."
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Send Rich Content",
-        "tags": [
-          "messages"
-        ]
-      }
-    },
-    "/conversations/{conversation_id}/messages/media": {
-      "post": {
-        "operationId": "send_media_conversations__conversation_id__messages_media_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_send_media_conversations__conversation_id__messages_media_post"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse_MessageDoc_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "The request could not be processed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request. The request is syntactically valid but business validation failed."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid authentication token."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized. Authentication is missing, invalid, or expired."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "value is not a valid email address",
-                        "type": "value_error"
-                      }
-                    ],
-                    "message": "Request validation failed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation Error. One or more request fields failed validation."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Internal server error."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error. An unexpected server error occurred."
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Send Media",
-        "tags": [
-          "messages"
-        ]
-      }
-    },
-    "/conversations/{conversation_id}/messages/pinned": {
-      "get": {
-        "operationId": "list_pinned_messages_conversations__conversation_id__messages_pinned_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse_list_MessageDoc__"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "The request could not be processed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request. The request is syntactically valid but business validation failed."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid authentication token."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized. Authentication is missing, invalid, or expired."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "value is not a valid email address",
-                        "type": "value_error"
-                      }
-                    ],
-                    "message": "Request validation failed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation Error. One or more request fields failed validation."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Internal server error."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error. An unexpected server error occurred."
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Pinned Messages",
-        "tags": [
-          "messages"
-        ]
-      }
-    },
-    "/conversations/{conversation_id}/messages/schedule": {
-      "post": {
-        "operationId": "schedule_message_conversations__conversation_id__messages_schedule_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ScheduleMessageRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse_MessageDoc_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "The request could not be processed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request. The request is syntactically valid but business validation failed."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid authentication token."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized. Authentication is missing, invalid, or expired."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "FORBIDDEN",
-                    "message": "You do not have permission to perform this action."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Forbidden. The authenticated user is not allowed to perform this action."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "NOT_FOUND",
-                    "message": "Requested resource was not found."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Not Found. The requested resource does not exist."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "value is not a valid email address",
-                        "type": "value_error"
-                      }
-                    ],
-                    "message": "Request validation failed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation Error. One or more request fields failed validation."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Internal server error."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error. An unexpected server error occurred."
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Schedule Message",
-        "tags": [
-          "messages"
-        ]
-      }
-    },
-    "/conversations/{conversation_id}/messages/scheduled": {
-      "get": {
-        "operationId": "list_scheduled_messages_conversations__conversation_id__messages_scheduled_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse_list_MessageDoc__"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "The request could not be processed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request. The request is syntactically valid but business validation failed."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid authentication token."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized. Authentication is missing, invalid, or expired."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "value is not a valid email address",
-                        "type": "value_error"
-                      }
-                    ],
-                    "message": "Request validation failed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation Error. One or more request fields failed validation."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Internal server error."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error. An unexpected server error occurred."
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Scheduled Messages",
-        "tags": [
-          "messages"
-        ]
-      }
-    },
-    "/conversations/{conversation_id}/messages/scheduled/{message_id}": {
-      "delete": {
-        "operationId": "cancel_scheduled_message_conversations__conversation_id__messages_scheduled__message_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "message_id",
-            "required": true,
-            "schema": {
-              "title": "Message Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "The request could not be processed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request. The request is syntactically valid but business validation failed."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid authentication token."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized. Authentication is missing, invalid, or expired."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "NOT_FOUND",
-                    "message": "Requested resource was not found."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Not Found. The requested resource does not exist."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "value is not a valid email address",
-                        "type": "value_error"
-                      }
-                    ],
-                    "message": "Request validation failed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation Error. One or more request fields failed validation."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Internal server error."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error. An unexpected server error occurred."
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Cancel Scheduled Message",
-        "tags": [
-          "messages"
-        ]
-      }
-    },
-    "/conversations/{conversation_id}/messages/text": {
-      "post": {
-        "operationId": "send_text_conversations__conversation_id__messages_text_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConversationSendTextRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse_MessageDoc_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "The request could not be processed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request. The request is syntactically valid but business validation failed."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "UNAUTHORIZED",
-                    "message": "Missing or invalid authentication token."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Unauthorized. Authentication is missing, invalid, or expired."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "VALIDATION_ERROR",
-                    "details": [
-                      {
-                        "field": "email",
-                        "message": "value is not a valid email address",
-                        "type": "value_error"
-                      }
-                    ],
-                    "message": "Request validation failed."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Validation Error. One or more request fields failed validation."
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Internal server error."
-                  },
-                  "request_id": "req_1234567890",
-                  "success": false
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "description": "Internal Server Error. An unexpected server error occurred."
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Send Text",
-        "tags": [
-          "messages"
-        ]
-      }
-    },
     "/conversations/{conversation_id}/ownership": {
       "post": {
         "operationId": "transfer_ownership_conversations__conversation_id__ownership_post",
@@ -31194,6 +28980,1559 @@
         ]
       }
     },
+    "/messages/{container_type}/{container_id}": {
+      "delete": {
+        "description": "Clear the caller's own view of a container.\n\nPer-viewer in both container types: the caller's own messages go, everyone\nelse's are marked hidden for them alone. Nobody else's view changes, which\nis why reading the container is right to ask for.",
+        "operationId": "clear_container_messages_messages__container_type___container_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "container_type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "conversation",
+                "channel"
+              ],
+              "title": "Container Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "container_id",
+            "required": true,
+            "schema": {
+              "title": "Container Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse_ClearChatResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "BAD_REQUEST",
+                    "message": "The request could not be processed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request. The request is syntactically valid but business validation failed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing or invalid authentication token."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized. Authentication is missing, invalid, or expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden. The authenticated user is not allowed to perform this action."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Requested resource was not found."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found. The requested resource does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "value is not a valid email address",
+                        "type": "value_error"
+                      }
+                    ],
+                    "message": "Request validation failed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error. One or more request fields failed validation."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Internal server error."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error. An unexpected server error occurred."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Clear Container Messages",
+        "tags": [
+          "messages"
+        ]
+      },
+      "get": {
+        "operationId": "list_container_messages_messages__container_type___container_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "container_type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "conversation",
+                "channel"
+              ],
+              "title": "Container Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "container_id",
+            "required": true,
+            "schema": {
+              "title": "Container Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_list_MessageDoc__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "BAD_REQUEST",
+                    "message": "The request could not be processed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request. The request is syntactically valid but business validation failed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing or invalid authentication token."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized. Authentication is missing, invalid, or expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden. The authenticated user is not allowed to perform this action."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Requested resource was not found."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found. The requested resource does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "value is not a valid email address",
+                        "type": "value_error"
+                      }
+                    ],
+                    "message": "Request validation failed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error. One or more request fields failed validation."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Internal server error."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error. An unexpected server error occurred."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Container Messages",
+        "tags": [
+          "messages"
+        ]
+      }
+    },
+    "/messages/{container_type}/{container_id}/all": {
+      "delete": {
+        "operationId": "clear_container_messages_for_everyone_messages__container_type___container_id__all_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "container_type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "conversation",
+                "channel"
+              ],
+              "title": "Container Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "container_id",
+            "required": true,
+            "schema": {
+              "title": "Container Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse_ClearChatResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "BAD_REQUEST",
+                    "message": "The request could not be processed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request. The request is syntactically valid but business validation failed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing or invalid authentication token."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized. Authentication is missing, invalid, or expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden. The authenticated user is not allowed to perform this action."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Requested resource was not found."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found. The requested resource does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "value is not a valid email address",
+                        "type": "value_error"
+                      }
+                    ],
+                    "message": "Request validation failed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error. One or more request fields failed validation."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Internal server error."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error. An unexpected server error occurred."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Clear Container Messages For Everyone",
+        "tags": [
+          "messages"
+        ]
+      }
+    },
+    "/messages/{container_type}/{container_id}/content": {
+      "post": {
+        "operationId": "send_container_rich_content_messages__container_type___container_id__content_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "container_type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "conversation",
+                "channel"
+              ],
+              "title": "Container Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "container_id",
+            "required": true,
+            "schema": {
+              "title": "Container Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendRichContentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse_MessageDoc_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "BAD_REQUEST",
+                    "message": "The request could not be processed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request. The request is syntactically valid but business validation failed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing or invalid authentication token."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized. Authentication is missing, invalid, or expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden. The authenticated user is not allowed to perform this action."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Requested resource was not found."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found. The requested resource does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "value is not a valid email address",
+                        "type": "value_error"
+                      }
+                    ],
+                    "message": "Request validation failed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error. One or more request fields failed validation."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Internal server error."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error. An unexpected server error occurred."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Send Container Rich Content",
+        "tags": [
+          "messages"
+        ]
+      }
+    },
+    "/messages/{container_type}/{container_id}/media": {
+      "post": {
+        "operationId": "send_container_media_messages__container_type___container_id__media_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "container_type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "conversation",
+                "channel"
+              ],
+              "title": "Container Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "container_id",
+            "required": true,
+            "schema": {
+              "title": "Container Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_send_container_media_messages__container_type___container_id__media_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse_MessageDoc_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "BAD_REQUEST",
+                    "message": "The request could not be processed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request. The request is syntactically valid but business validation failed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing or invalid authentication token."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized. Authentication is missing, invalid, or expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden. The authenticated user is not allowed to perform this action."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Requested resource was not found."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found. The requested resource does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "value is not a valid email address",
+                        "type": "value_error"
+                      }
+                    ],
+                    "message": "Request validation failed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error. One or more request fields failed validation."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Internal server error."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error. An unexpected server error occurred."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Send Container Media",
+        "tags": [
+          "messages"
+        ]
+      }
+    },
+    "/messages/{container_type}/{container_id}/pinned": {
+      "get": {
+        "description": "The container's pinned messages.\n\nBoth kinds track pinned ids on the container document itself, so the gate\nthat resolved the container already carries them -- and the channel's read\npolicy, rather than its membership, is what decided the caller may see them.",
+        "operationId": "list_container_pinned_messages_messages__container_type___container_id__pinned_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "container_type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "conversation",
+                "channel"
+              ],
+              "title": "Container Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "container_id",
+            "required": true,
+            "schema": {
+              "title": "Container Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse_list_MessageDoc__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "BAD_REQUEST",
+                    "message": "The request could not be processed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request. The request is syntactically valid but business validation failed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing or invalid authentication token."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized. Authentication is missing, invalid, or expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden. The authenticated user is not allowed to perform this action."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Requested resource was not found."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found. The requested resource does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "value is not a valid email address",
+                        "type": "value_error"
+                      }
+                    ],
+                    "message": "Request validation failed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error. One or more request fields failed validation."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Internal server error."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error. An unexpected server error occurred."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Container Pinned Messages",
+        "tags": [
+          "messages"
+        ]
+      }
+    },
+    "/messages/{container_type}/{container_id}/schedule": {
+      "post": {
+        "operationId": "schedule_container_message_messages__container_type___container_id__schedule_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "container_type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "conversation",
+                "channel"
+              ],
+              "title": "Container Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "container_id",
+            "required": true,
+            "schema": {
+              "title": "Container Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse_MessageDoc_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "BAD_REQUEST",
+                    "message": "The request could not be processed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request. The request is syntactically valid but business validation failed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing or invalid authentication token."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized. Authentication is missing, invalid, or expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden. The authenticated user is not allowed to perform this action."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Requested resource was not found."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found. The requested resource does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "value is not a valid email address",
+                        "type": "value_error"
+                      }
+                    ],
+                    "message": "Request validation failed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error. One or more request fields failed validation."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Internal server error."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error. An unexpected server error occurred."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Schedule Container Message",
+        "tags": [
+          "messages"
+        ]
+      }
+    },
+    "/messages/{container_type}/{container_id}/scheduled": {
+      "get": {
+        "operationId": "list_container_scheduled_messages_messages__container_type___container_id__scheduled_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "container_type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "conversation",
+                "channel"
+              ],
+              "title": "Container Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "container_id",
+            "required": true,
+            "schema": {
+              "title": "Container Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse_list_MessageDoc__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "BAD_REQUEST",
+                    "message": "The request could not be processed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request. The request is syntactically valid but business validation failed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing or invalid authentication token."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized. Authentication is missing, invalid, or expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden. The authenticated user is not allowed to perform this action."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Requested resource was not found."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found. The requested resource does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "value is not a valid email address",
+                        "type": "value_error"
+                      }
+                    ],
+                    "message": "Request validation failed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error. One or more request fields failed validation."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Internal server error."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error. An unexpected server error occurred."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Container Scheduled Messages",
+        "tags": [
+          "messages"
+        ]
+      }
+    },
+    "/messages/{container_type}/{container_id}/text": {
+      "post": {
+        "operationId": "send_container_text_messages__container_type___container_id__text_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "container_type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "conversation",
+                "channel"
+              ],
+              "title": "Container Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "container_id",
+            "required": true,
+            "schema": {
+              "title": "Container Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationSendTextRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse_MessageDoc_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "BAD_REQUEST",
+                    "message": "The request could not be processed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request. The request is syntactically valid but business validation failed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing or invalid authentication token."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized. Authentication is missing, invalid, or expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden. The authenticated user is not allowed to perform this action."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Requested resource was not found."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found. The requested resource does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "value is not a valid email address",
+                        "type": "value_error"
+                      }
+                    ],
+                    "message": "Request validation failed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error. One or more request fields failed validation."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Internal server error."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error. An unexpected server error occurred."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Send Container Text",
+        "tags": [
+          "messages"
+        ]
+      }
+    },
     "/messages/{message_id}": {
       "delete": {
         "operationId": "delete_message_messages__message_id__delete",
@@ -31989,7 +31328,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse_ConversationView_"
+                  "$ref": "#/components/schemas/SuccessResponse_PinnedMessagesView_"
                 }
               }
             },
@@ -32139,7 +31478,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SuccessResponse_ConversationView_"
+                  "$ref": "#/components/schemas/SuccessResponse_PinnedMessagesView_"
                 }
               }
             },
@@ -32742,6 +32081,152 @@
           }
         ],
         "summary": "Mark Message Read",
+        "tags": [
+          "messages"
+        ]
+      }
+    },
+    "/messages/{message_id}/scheduled": {
+      "delete": {
+        "description": "Cancel a scheduled message, addressed like any other message.\n\nThe scheduled message names its own container, so no container segment is\nneeded. The repository's sender filter is what keeps cancellation to the\nauthor -- a reader of the container gets a 404, not someone else's message.",
+        "operationId": "cancel_scheduled_message_by_id_messages__message_id__scheduled_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "BAD_REQUEST",
+                    "message": "The request could not be processed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request. The request is syntactically valid but business validation failed."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "UNAUTHORIZED",
+                    "message": "Missing or invalid authentication token."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized. Authentication is missing, invalid, or expired."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "FORBIDDEN",
+                    "message": "You do not have permission to perform this action."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden. The authenticated user is not allowed to perform this action."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "NOT_FOUND",
+                    "message": "Requested resource was not found."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found. The requested resource does not exist."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "VALIDATION_ERROR",
+                    "details": [
+                      {
+                        "field": "email",
+                        "message": "value is not a valid email address",
+                        "type": "value_error"
+                      }
+                    ],
+                    "message": "Request validation failed."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation Error. One or more request fields failed validation."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "Internal server error."
+                  },
+                  "request_id": "req_1234567890",
+                  "success": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error. An unexpected server error occurred."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Cancel Scheduled Message By Id",
         "tags": [
           "messages"
         ]

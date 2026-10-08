@@ -14,7 +14,10 @@ from app.db.init import init_database
 from app.db.mongo import connect_mongo
 from app.modules.conversations.repository import ConversationsRepository
 from app.modules.messages.dependencies import get_messages_service
-from app.modules.messages.emit_helpers import emit_send_result
+from app.modules.messages.emit_helpers import (
+    emit_send_result,
+    emit_send_result_to_channel,
+)
 from app.modules.messages.repository import MessagesRepository
 from app.modules.messages.service import MessagesService
 from app.modules.notifications.dependencies import get_notifications_service
@@ -39,11 +42,17 @@ async def release_and_deliver(
     released = await messages.release_due_scheduled_messages()
     for item in released:
         # Mirror the REST send path: realtime message + notification generation.
-        await emit_send_result(
-            sio,
-            result=item.result,
-            participant_ids=item.participant_ids,
-        )
+        message = item.result.message
+        if message.container_type == "channel":
+            await emit_send_result_to_channel(
+                sio, message.container_id, result=item.result
+            )
+        else:
+            await emit_send_result(
+                sio,
+                result=item.result,
+                participant_ids=item.participant_ids,
+            )
         generated = await notifications.generate_for_message(message=item.result.message)
         for notification in generated:
             await emit_to_user(

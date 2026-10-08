@@ -257,7 +257,7 @@ async def test_reply_resurfaces_archived_but_incoming_does_not(inprocess_client)
 
     # An incoming message from the receiver must NOT unarchive the sender's view.
     incoming = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         json={"text": "hi"},
         headers=_auth(receiver_tokens["access_token"]),
     )
@@ -270,7 +270,7 @@ async def test_reply_resurfaces_archived_but_incoming_does_not(inprocess_client)
 
     # The sender's own reply resurfaces the conversation for them.
     reply = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         json={"text": "back"},
         headers=_auth(sender_tokens["access_token"]),
     )

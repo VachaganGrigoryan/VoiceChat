@@ -150,7 +150,7 @@ async def test_join_channel_room_delivers_message_and_rejects_non_readers(live_c
         assert outsider_errors[-1]["code"] == "FORBIDDEN"
 
         sent = await live_client.post(
-            f"/channels/{channel_id}/messages",
+            f"/messages/channel/{channel_id}/text",
             headers={"Authorization": f"Bearer {owner_tokens['access_token']}"},
             json={"text": "delivered over the channel room"},
         )
@@ -165,4 +165,140 @@ async def test_join_channel_room_delivers_message_and_rejects_non_readers(live_c
             await asyncio.wait_for(owner_sio.disconnect(), timeout=3)
         if outsider_sio.connected:
             await asyncio.wait_for(outsider_sio.disconnect(), timeout=3)
+        await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_typing_reaches_a_channel_room_and_refuses_a_reader(live_client):
+    """Typing in a channel is a room event, and it announces an intent to
+    contribute -- so a viewer who may read but not post is refused."""
+    try:
+        health = await live_client.get("/health/live")
+    except Exception:
+        pytest.skip("Live server is not running on http://api_test:8000")
+    assert health.status_code == 200
+
+    owner, owner_tokens = await _create_verified_user_and_tokens(
+        "typing-owner@test.com"
+    )
+    reader, reader_tokens = await _create_verified_user_and_tokens(
+        "typing-reader@test.com"
+    )
+
+    created = await live_client.post(
+        "/channels",
+        headers={"Authorization": f"Bearer {owner_tokens['access_token']}"},
+        json={
+            "name": "Typing Room",
+            "kind": "text",
+            "visibility": "public",
+            # Readable by anyone, contributable by no one but the owner -- which
+            # is exactly the viewer typing must refuse.
+            "posting_policy": "owner",
+            "comment_policy": "disabled",
+            "slug": f"typing-room-{uuid.uuid4().hex[:8]}",
+        },
+    )
+    assert created.status_code == 201, created.text
+    channel_id = created.json()["data"]["id"]
+
+    owner_sio = await _connect_socket(owner_tokens["access_token"])
+    reader_sio = await _connect_socket(reader_tokens["access_token"])
+
+    typing: list[dict] = []
+    typing_event = asyncio.Event()
+    reader_errors: list[dict] = []
+    reader_error_event = asyncio.Event()
+
+    @reader_sio.on("typing_start")
+    async def on_typing_start(data):
+        typing.append(data)
+        typing_event.set()
+
+    @reader_sio.on("error")
+    async def on_error(data):
+        reader_errors.append(data)
+        reader_error_event.set()
+
+    try:
+        await reader_sio.emit("join_channel", {"channel_id": channel_id})
+        await asyncio.sleep(0.2)
+
+        await owner_sio.emit(
+            "typing_start",
+            {"container_type": "channel", "container_id": channel_id},
+        )
+        await asyncio.wait_for(typing_event.wait(), timeout=5)
+        assert typing[-1]["container_type"] == "channel"
+        assert typing[-1]["container_id"] == channel_id
+        assert typing[-1]["conversation_id"] is None
+
+        # The reader may see the channel but not post to it, so their own
+        # typing is refused rather than relayed.
+        await reader_sio.emit(
+            "typing_start",
+            {"container_type": "channel", "container_id": channel_id},
+        )
+        await asyncio.wait_for(reader_error_event.wait(), timeout=5)
+        assert reader_errors[-1]["code"] == "FORBIDDEN"
+    finally:
+        if owner_sio.connected:
+            await asyncio.wait_for(owner_sio.disconnect(), timeout=3)
+        if reader_sio.connected:
+            await asyncio.wait_for(reader_sio.disconnect(), timeout=3)
+        await asyncio.sleep(0.1)
+
+
+@pytest.mark.asyncio
+async def test_typing_in_a_conversation_reaches_the_other_participant(live_client):
+    """The conversation path keeps addressing participants individually."""
+    try:
+        health = await live_client.get("/health/live")
+    except Exception:
+        pytest.skip("Live server is not running on http://api_test:8000")
+    assert health.status_code == 200
+
+    sender, sender_tokens = await _create_verified_user_and_tokens(
+        "typing-dm-sender@test.com"
+    )
+    receiver, receiver_tokens = await _create_verified_user_and_tokens(
+        "typing-dm-receiver@test.com"
+    )
+    await _grant_chat_permission(str(sender["_id"]), str(receiver["_id"]))
+
+    conversation = await live_client.post(
+        "/conversations",
+        headers={"Authorization": f"Bearer {sender_tokens['access_token']}"},
+        json={"peer_user_id": str(receiver["_id"])},
+    )
+    # A DM is get-or-create, so this answers 200 rather than 201.
+    assert conversation.status_code == 200, conversation.text
+    conversation_id = conversation.json()["data"]["id"]
+
+    sender_sio = await _connect_socket(sender_tokens["access_token"])
+    receiver_sio = await _connect_socket(receiver_tokens["access_token"])
+
+    typing: list[dict] = []
+    typing_event = asyncio.Event()
+
+    @receiver_sio.on("typing_start")
+    async def on_typing_start(data):
+        typing.append(data)
+        typing_event.set()
+
+    try:
+        await sender_sio.emit(
+            "typing_start",
+            {"container_type": "conversation", "container_id": conversation_id},
+        )
+        await asyncio.wait_for(typing_event.wait(), timeout=5)
+        assert typing[-1]["container_type"] == "conversation"
+        assert typing[-1]["container_id"] == conversation_id
+        assert typing[-1]["conversation_id"] == conversation_id
+        assert typing[-1]["from"] == str(sender["_id"])
+    finally:
+        if sender_sio.connected:
+            await asyncio.wait_for(sender_sio.disconnect(), timeout=3)
+        if receiver_sio.connected:
+            await asyncio.wait_for(receiver_sio.disconnect(), timeout=3)
         await asyncio.sleep(0.1)

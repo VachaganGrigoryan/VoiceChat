@@ -119,6 +119,42 @@ async def emit_send_result(
         return
 
 
+async def fan_out_container_send(
+    sio: socketio.AsyncServer,
+    *,
+    container_type: str,
+    container_id: str,
+    result: SendMessageResult,
+    notifications: NotificationsService,
+    conversation: ConversationDocument | None = None,
+) -> None:
+    """Deliver a freshly created message to whoever watches its container.
+
+    The one entry point the unified send routes use, so a message reaches the
+    same audience whichever container it was addressed to: a channel broadcasts
+    once to its room, a conversation goes per-participant. Notifications are
+    generated the same way for both.
+    """
+    if container_type == "channel":
+        await emit_send_result_to_channel(sio, container_id, result=result)
+    else:
+        await emit_send_result(
+            sio,
+            result=result,
+            participant_ids=[
+                str(participant_id)
+                for participant_id in (
+                    conversation.participant_ids if conversation is not None else []
+                )
+            ],
+        )
+    await emit_message_notifications(
+        sio,
+        notifications=notifications,
+        message=result.message,
+    )
+
+
 async def emit_send_result_to_channel(
     sio: socketio.AsyncServer,
     channel_id: str,

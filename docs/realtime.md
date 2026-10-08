@@ -2,53 +2,88 @@
 
 HTTP base path: `/realtime`
 
+## Purpose
+
+Socket.IO carries live updates: new messages, receipts, typing, presence, relationship changes and call signalling. **REST is the source of truth for every write.** Socket events tell other clients that something changed. Socket.IO is served by the same ASGI app as the REST API.
+
+## Connecting
+
+Authenticate with the access token, either in the Socket.IO `auth` payload (`{ "token": "<access_token>" }`) or as a `token` query parameter. On connect the socket joins `user:{user_id}`, and the user's presence becomes `online`.
+
+## Rooms
+
+- `user:{user_id}`
+  Joined automatically. Conversation events are sent here, one room per participant.
+- `channel:{channel_id}`
+  Joined on request with `join_channel`, after a `message.read` check. Channel events are broadcast here once.
+- Call rooms
+  Joined through `call.join`. See [Calls](./calls.md).
+
 ## Presence Endpoints
 
 - `GET /realtime/online-users`
-  Return all currently online user ids.
+  All currently online user ids.
 - `GET /realtime/presence`
-  Return online status for a provided list of user ids.
-
-## Socket Rooms
-
-- Each authenticated socket joins `user:{user_id}`.
+  Presence for the given `user_ids`.
 
 ## Client Events
 
 - `ping`
-  Health check event.
-- `typing_start`
-  Requires `to`. Chat permission is enforced.
-- `typing_stop`
-  Requires `to`. Chat permission is enforced.
-- `send_message`
-  Compatibility ack event only. REST remains the source of truth for persistence. Chat permission is enforced.
-- `message_delivered`
-  Requires `message_id`.
-- `message_read`
-  Requires `message_id`.
+  Health check. The server answers `{ "pong": true }`.
+- `presence_state`
+  Set the caller's state. Body: `{ "state": "online" | "away" | "dnd" }`.
+- `join_channel`, `leave_channel`
+  Subscribe to or leave a channel room. Body: `{ "channel_id" }`.
+- `typing_start`, `typing_stop`
+  Body: `{ "container_type", "container_id" }`. In a channel the sender must be allowed to post or reply.
+- `message_delivered`, `message_read`
+  Body: `{ "message_id" }`.
 - `conversation_read`
-  Requires `peer_user_id`.
+  Mark a conversation read from the socket. Body: `{ "conversation_id" }`.
+- `send_message`
+  Compatibility acknowledgement only. It does not persist anything; send through REST.
+- `call.*`
+  Call signalling. See [Calls](./calls.md).
 
 ## Server Events
 
-- `receive_message`
-  New incoming message payload.
-- `message_status`
-  Delivery or read updates.
-- `message_edited`
-  Message edit event for both participants.
-- `message_deleted`
-  Hard-delete for everyone or hide-for-me acknowledgement, depending on actor.
+Messages and threads:
+
+- `receive_message`, `message_status`, `message_edited`, `message_deleted`, `message_reacted`
+- `thread_reply_created`, `thread_summary_updated`
+- `conversation_history_cleared`, `conversation_pins_updated`
+- `conversation_read_ack`, `channel_read`
+- `message_ack`, `send_message_ack`
+- `typing_start`, `typing_stop`
+- `poll_updated`
+
+People and presence:
+
 - `presence_update`
-  Online or offline change.
-- `relationship.requested`
-- `relationship.activated`
-- `relationship.revoked`
-- `block.created`
-- `block.removed`
+  Carries `user_id`, `state`, `online` and `last_seen_at`.
+- `relationship.requested`, `relationship.activated`, `relationship.revoked`
+- `block.created`, `block.removed`
+
+Resources and access:
+
+- `space:invite`
+- `resource.deleted`
+  Payload `{ "resource": { "type", "id" } }`. Clients drop the resource and navigate away from it.
+- `capabilities.invalidated`
+  Same payload shape. Clients refetch capabilities for the resource.
+- `notification_created`
+
+Calls:
+
+- `call.incoming`, `call.accepted`, `call.rejected`, `call.offer`, `call.answer`, `call.ice_candidate`, `call.participant_updated`, `call.connected`, `call.reconnecting`, `call.recovery_available`, `call.resumed`, `call.ended`
+
+Errors:
+
+- `error`
+  Body: `{ "code", "message" }`, for example `INVALID_PAYLOAD` or `FORBIDDEN`.
 
 ## Notes
 
-- Typing and compatibility send events now follow the same permission rules as REST messaging.
-- Message persistence still happens through REST endpoints.
+- With more than one API process, or with the worker emitting events, set `SOCKETIO_QUEUE_BACKEND=redis` so emits reach every process.
+- Presence is stored by `PRESENCE_BACKEND` (`memory` or `redis`).
+- Typing and receipts follow the same permission rules as REST messaging.

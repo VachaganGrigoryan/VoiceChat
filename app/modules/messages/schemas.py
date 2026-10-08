@@ -256,6 +256,17 @@ class DeleteMessageResponse(ContainerEnvelope):
     deleted_media: bool = False
 
 
+class PinnedMessagesView(ContainerEnvelope):
+    """A container's pinned set, shaped the same for both container types.
+
+    Pinning used to answer with a whole `ConversationView`, which is why it
+    could not answer at all for a channel. The pinned set is what the caller
+    asked to change, so that is what it gets back.
+    """
+
+    pinned_message_ids: list[str] = Field(default_factory=list)
+
+
 class MessageDeleteOutcome(BaseModel):
     response: DeleteMessageResponse
     sender_id: str

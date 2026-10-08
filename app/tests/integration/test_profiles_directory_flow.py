@@ -89,7 +89,7 @@ async def test_block_prevents_direct_message_send(inprocess_client):
     assert block_res.status_code == 201, block_res.text
 
     message_res = await inprocess_client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         headers={"Authorization": f"Bearer {sender_tokens['access_token']}"},
         json={"text": "hello"},
     )

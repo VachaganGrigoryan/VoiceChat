@@ -255,7 +255,7 @@ class RedeemInviteResponse(BaseModel):
 
 
 class ConversationSendTextRequest(BaseModel):
-    """Conversation-scoped text send; the receiver is derived from the path."""
+    """Body of a text send; the container is derived from the path."""
 
     text: str = Field(min_length=1, max_length=4000)
     reply_mode: Optional[ReplyMode] = None

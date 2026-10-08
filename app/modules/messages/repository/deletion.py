@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from pymongo import ReturnDocument
 
@@ -145,15 +146,18 @@ class DeletionRepositoryMixin:
         container_type: MessageContainerType,
         container_id: str,
         user_id: str,
+        include_own: bool = False,
     ) -> int:
         now = datetime.now(UTC)
+        query: dict[str, Any] = {
+            "container_type": container_type,
+            "container_id": container_id,
+            "hidden_for_user_ids": {"$ne": user_id},
+        }
+        if not include_own:
+            query["sender_id"] = {"$ne": user_id}
         result = await self.col.update_many(
-            {
-                "container_type": container_type,
-                "container_id": container_id,
-                "sender_id": {"$ne": user_id},
-                "hidden_for_user_ids": {"$ne": user_id},
-            },
+            query,
             {
                 "$addToSet": {"hidden_for_user_ids": user_id},
                 "$set": {"updated_at": now},
