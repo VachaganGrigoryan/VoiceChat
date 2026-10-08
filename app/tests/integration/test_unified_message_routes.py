@@ -211,6 +211,47 @@ async def test_clear_for_one_viewer_leaves_the_other_alone(
 
 
 @pytest.mark.asyncio
+async def test_an_author_clearing_a_channel_does_not_delete_their_posts(
+    inprocess_client,
+):
+    # In a conversation an author's clear deletes their own messages, but a
+    # channel post belongs to its audience: clearing only hides it for the author.
+    owner, owner_tokens = await _create_verified_user_and_tokens(
+        "unified-clear-author@test.com"
+    )
+    reader, reader_tokens = await _create_verified_user_and_tokens(
+        "unified-clear-author-reader@test.com"
+    )
+    channel_id = await _channel(inprocess_client, owner_tokens, slug="clear-author")
+    joined = await inprocess_client.post(
+        f"/channels/{channel_id}/join", headers=_auth(reader_tokens["access_token"])
+    )
+    assert joined.status_code == 201, joined.text
+    post = await _send_text(
+        inprocess_client, "channel", channel_id, owner_tokens, "post"
+    )
+
+    cleared = await inprocess_client.delete(
+        f"/messages/channel/{channel_id}",
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["data"]["cleared_count"] == 1
+
+    mine = await inprocess_client.get(
+        f"/messages/channel/{channel_id}",
+        headers=_auth(owner_tokens["access_token"]),
+    )
+    assert mine.json()["data"] == []
+
+    theirs = await inprocess_client.get(
+        f"/messages/channel/{channel_id}",
+        headers=_auth(reader_tokens["access_token"]),
+    )
+    assert [m["id"] for m in theirs.json()["data"]] == [post["id"]]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("container_type", ["conversation", "channel"])
 async def test_clear_for_everyone_needs_the_containers_own_manage_right(
     inprocess_client, container_type
