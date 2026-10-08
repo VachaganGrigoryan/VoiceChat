@@ -56,6 +56,7 @@ DEFAULT_ACTIONS: dict[ResourceType, tuple[str, ...]] = {
         REACTION_CREATE,
         MESSAGE_EDIT_OWN,
         MESSAGE_DELETE_OWN,
+        MESSAGE_PIN,
         POLL_CREATE,
         RESOURCE_MANAGE,
     ),

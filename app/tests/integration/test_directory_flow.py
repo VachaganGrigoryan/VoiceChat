@@ -53,7 +53,7 @@ async def test_members_visibility_channel_is_listable_but_not_readable(inprocess
     assert "dir-members" in slugs
 
     content = await inprocess_client.get(
-        f"/channels/{channel['id']}/messages",
+        f"/messages/channel/{channel['id']}",
         headers=_auth(seeker_tokens["access_token"]),
     )
     assert content.status_code == 403, content.text

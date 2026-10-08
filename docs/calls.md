@@ -18,6 +18,10 @@ Calls provide 1:1 WebRTC signaling for audio and video calls. Media stays peer-t
   Reject a ringing call.
 - `POST /calls/{call_id}/end`
   End or cancel a call depending on the current lifecycle state.
+- `GET /calls/history`
+  The caller's call log. Query: `limit`, `cursor`, optional `peer_user_id`.
+- `DELETE /calls/history`
+  Clear the caller's call log, optionally for one `peer_user_id`.
 
 ## REST Response Shape
 
@@ -82,7 +86,7 @@ Server to client:
 
 ## Notes
 
-- Calls reuse the existing accepted-ping permission and block rules.
+- Calls require an active connection and no block between the two users. See [Relationships](./relationships.md).
 - A user can only participate in one live call at a time.
 - Offline users can still be called; unanswered calls expire after `CALL_RING_TIMEOUT_SECONDS`.
 - Active calls survive page refresh through a short reconnect grace window. A refreshed client should fetch `GET /calls/active` or wait for `call.recovery_available`, then emit `call.resume` and renegotiate WebRTC.
@@ -118,4 +122,4 @@ Relevant settings:
 - `CF_TURN_USAGE_CACHE_SECONDS`
 - `TURN_TTL`
 
-ICE server selection is env-driven. Call payloads and `/webrtc/ice-servers` use the same provider layer.
+ICE server selection is env-driven. Call payloads and `/webrtc/ice-servers` use the same provider layer. See [WebRTC](./webrtc.md) and [Configuration](./configuration.md#calls-and-turn).

@@ -27,7 +27,7 @@ async def _notified_user(client, sender_email: str, recipient_email: str):
     conversation_id = dm.json()["data"]["id"]
 
     sent = await client.post(
-        f"/conversations/{conversation_id}/messages/text",
+        f"/messages/conversation/{conversation_id}/text",
         json={"text": "ping"},
         headers=_auth(sender_tokens["access_token"]),
     )

@@ -24,6 +24,7 @@ from app.modules.authorization.permissions import (
     MEMBER_INVITE,
     MESSAGE_CREATE,
     MESSAGE_DELETE_ANY,
+    MESSAGE_PIN,
     MESSAGE_READ,
     REACTION_CREATE,
     RESOURCE_MANAGE,
@@ -515,6 +516,15 @@ class AuthorizationService:
             # seeds none at all (§51), and the `.own` gate has already
             # established authorship. Moderating *others*' messages still needs
             # the `.any` sibling, which only a role grants.
+            return True
+        if (
+            action == MESSAGE_PIN
+            and is_member
+            and resource_type == "conversation"
+            and getattr(resource, "type", None) == "dm"
+        ):
+            # A DM has no admin tier and seeds no roles, so either participant
+            # manages its pins.
             return True
         if action in _POSTING_ACTIONS:
             if getattr(resource, "posting_policy", None) == "everyone":

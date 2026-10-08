@@ -94,7 +94,19 @@ class DeleteMessagesMixin:
         """
         Hard-deletes own messages (with media cleanup) and soft-hides peer messages.
         Returns (container_id, total_affected).
+
+        A channel's posts belong to its audience, so there the caller's own
+        posts are hidden for them like everyone else's rather than deleted.
         """
+        if container_type == "channel":
+            hidden_count = await self.repo.hide_peer_messages_for_user(
+                container_type=container_type,
+                container_id=container_id,
+                user_id=user_id,
+                include_own=True,
+            )
+            return container_id, hidden_count
+
         deleted_docs = await self.repo.bulk_hard_delete_own_messages_in_container(
             container_type=container_type,
             container_id=container_id,

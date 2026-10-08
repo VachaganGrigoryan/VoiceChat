@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import socketio
 
-from app.modules.messages.emit_helpers import (
-    emit_message_notifications,
-    emit_send_result_to_channel,
-)
+from app.modules.messages.emit_helpers import fan_out_container_send
 from app.modules.messages.service import SendMessageResult
 from app.modules.notifications.service import NotificationsService
 
@@ -23,11 +20,10 @@ async def fan_out_channel_message(
     envelope so every producer of a channel message -- the channel routes and
     profile posts alike -- can share one fan-out path.
     """
-    await emit_send_result_to_channel(
-        sio, result.message.container_id, result=result
-    )
-    await emit_message_notifications(
+    await fan_out_container_send(
         sio,
+        container_type="channel",
+        container_id=result.message.container_id,
+        result=result,
         notifications=notifications,
-        message=result.message,
     )

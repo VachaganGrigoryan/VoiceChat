@@ -71,14 +71,14 @@ async def test_channel_policy_posts_comments_and_counters(inprocess_client):
     )
 
     denied = await inprocess_client.post(
-        f"/channels/{channel_id}/messages",
+        f"/messages/channel/{channel_id}/text",
         json={"text": "not allowed"},
         headers=_auth(stranger_tokens["access_token"]),
     )
     assert denied.status_code == 403, denied.text
 
     post = await inprocess_client.post(
-        f"/channels/{channel_id}/messages",
+        f"/messages/channel/{channel_id}/text",
         json={"text": "Release notes"},
         headers=_auth(owner_tokens["access_token"]),
     )
@@ -95,7 +95,7 @@ async def test_channel_policy_posts_comments_and_counters(inprocess_client):
     )
 
     marked_read = await inprocess_client.post(
-        f"/channels/{channel_id}/messages/{post_data['id']}/read",
+        f"/messages/{post_data['id']}/read",
         headers=_auth(stranger_tokens["access_token"]),
     )
     assert marked_read.status_code == 200, marked_read.text
@@ -104,7 +104,7 @@ async def test_channel_policy_posts_comments_and_counters(inprocess_client):
     assert refreshed_follow.state.last_read_message_id == post_data["id"]
 
     comment = await inprocess_client.post(
-        f"/channels/{channel_id}/messages",
+        f"/messages/channel/{channel_id}/text",
         json={
             "text": "Looks good",
             "reply_mode": "thread",
@@ -141,7 +141,7 @@ async def test_private_channel_requires_active_membership(inprocess_client):
     channel_id = created.json()["data"]["id"]
 
     denied = await inprocess_client.get(
-        f"/channels/{channel_id}/messages",
+        f"/messages/channel/{channel_id}",
         headers=_auth(stranger_tokens["access_token"]),
     )
     assert denied.status_code == 403, denied.text
@@ -156,7 +156,7 @@ async def test_private_channel_requires_active_membership(inprocess_client):
         status="active",
     )
     allowed = await inprocess_client.get(
-        f"/channels/{channel_id}/messages",
+        f"/messages/channel/{channel_id}",
         headers=_auth(stranger_tokens["access_token"]),
     )
     assert allowed.status_code == 200, allowed.text
@@ -202,7 +202,7 @@ async def test_profile_alias_renders_posts_media_and_comments(inprocess_client):
         ),
     )
     comment = await inprocess_client.post(
-        f"/channels/{channel.str_id}/messages",
+        f"/messages/channel/{channel.str_id}/text",
         json={
             "text": "Profile comment",
             "reply_mode": "thread",
@@ -264,7 +264,7 @@ async def test_private_profile_requires_approved_follow(inprocess_client):
     assert follow.json()["data"]["status"] == "pending"
 
     denied = await inprocess_client.get(
-        f"/channels/{channel.str_id}/messages",
+        f"/messages/channel/{channel.str_id}",
         headers=_auth(stranger_tokens["access_token"]),
     )
     assert denied.status_code == 403, denied.text
@@ -277,7 +277,7 @@ async def test_private_profile_requires_approved_follow(inprocess_client):
     assert accepted.json()["data"]["status"] == "active"
 
     allowed = await inprocess_client.get(
-        f"/channels/{channel.str_id}/messages",
+        f"/messages/channel/{channel.str_id}",
         headers=_auth(stranger_tokens["access_token"]),
     )
     assert allowed.status_code == 200, allowed.text

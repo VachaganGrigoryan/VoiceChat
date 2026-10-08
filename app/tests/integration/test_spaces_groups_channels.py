@@ -125,7 +125,7 @@ async def test_member_visibility_channel_readable_without_channel_membership(
     )
 
     read = await inprocess_client.get(
-        f"/channels/{channel_id}/messages", headers=_auth(member_token)
+        f"/messages/channel/{channel_id}", headers=_auth(member_token)
     )
     assert read.status_code == 200, read.text
 
@@ -160,7 +160,7 @@ async def test_private_space_channel_requires_channel_membership(inprocess_clien
     )
 
     read = await inprocess_client.get(
-        f"/channels/{channel_id}/messages", headers=_auth(member_token)
+        f"/messages/channel/{channel_id}", headers=_auth(member_token)
     )
     assert read.status_code == 403, read.text
 
@@ -173,7 +173,7 @@ async def test_private_space_channel_requires_channel_membership(inprocess_clien
     assert joined.status_code == 403, joined.text
 
     still_denied = await inprocess_client.get(
-        f"/channels/{channel_id}/messages", headers=_auth(member_token)
+        f"/messages/channel/{channel_id}", headers=_auth(member_token)
     )
     assert still_denied.status_code == 403, still_denied.text
 
@@ -314,7 +314,7 @@ async def test_space_member_is_not_automatically_a_group_participant(inprocess_c
     )
 
     posted = await inprocess_client.post(
-        f"/conversations/{group_id}/messages/text",
+        f"/messages/conversation/{group_id}/text",
         json={"text": "am I in?"},
         headers=_auth(outsider_token),
     )

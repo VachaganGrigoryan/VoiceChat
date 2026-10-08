@@ -9,6 +9,7 @@ from app.db.models.embedded import OwnerRef, TextStyleDocument
 from app.modules.authorization import AuthorizationService
 from app.modules.authorization.permissions import (
     MESSAGE_CREATE,
+    MESSAGE_PIN,
     MESSAGE_READ,
     RESOURCE_DELETE,
     RESOURCE_MANAGE,
@@ -26,7 +27,7 @@ from app.modules.channels.schemas import (
     ChannelVisibility,
     ViewerBlock,
 )
-from app.modules.messages.schemas import MessageDoc, ReplyMode
+from app.modules.messages.schemas import ReplyMode
 from app.modules.messages.service import SendMessageResult
 from app.modules.relationships.repository import RelationshipsRepository
 
@@ -41,16 +42,6 @@ _EPOCH = datetime.min.replace(tzinfo=UTC)
 
 
 class MessagesServiceProto(Protocol):
-    async def get_history(
-        self,
-        *,
-        container_type: Literal["channel"],
-        container_id: str,
-        user_id: str,
-        limit: int,
-        cursor: str | None,
-    ) -> tuple[list[MessageDoc], str | None]: ...
-
     async def send_text(
         self,
         *,
@@ -61,39 +52,6 @@ class MessagesServiceProto(Protocol):
         reply_mode: ReplyMode | None = None,
         reply_to_message_id: str | None = None,
     ) -> SendMessageResult: ...
-
-    async def upload_media(
-        self,
-        *,
-        container_type: Literal["channel"],
-        container_id: str,
-        sender_id: str,
-        message_type: str,
-        media_kind: str | None,
-        file: Any,
-        text: str | None = None,
-        duration_ms: int | None = None,
-        reply_mode: ReplyMode | None = None,
-        reply_to_message_id: str | None = None,
-    ) -> SendMessageResult: ...
-
-    async def send_rich_content(
-        self,
-        *,
-        container_type: Literal["channel"],
-        container_id: str,
-        sender_id: str,
-        body: Any,
-    ) -> SendMessageResult: ...
-
-    async def get_message(
-        self,
-        *,
-        container_type: Literal["channel"],
-        container_id: str,
-        message_id: str,
-        user_id: str,
-    ) -> MessageDoc: ...
 
 
 class UsersRepositoryProto(Protocol):
@@ -290,31 +248,6 @@ class ChannelService:
             raise self._not_found()
         return updated
 
-    async def list_messages(
-        self,
-        *,
-        channel_id: str,
-        viewer_id: str,
-        limit: int,
-        cursor: str | None,
-    ) -> tuple[list[MessageDoc], str | None]:
-        channel = await self._get(channel_id)
-        await self.authorization.require(
-            viewer_id,
-            MESSAGE_READ,
-            "channel",
-            channel.str_id,
-            message="Not allowed to read this channel",
-        )
-        messages = self._require_messages()
-        return await messages.get_history(
-            container_type="channel",
-            container_id=channel.str_id,
-            user_id=viewer_id,
-            limit=limit,
-            cursor=cursor,
-        )
-
     async def create_message(
         self,
         *,
@@ -377,77 +310,48 @@ class ChannelService:
         ).insert()
         return recipients
 
-    async def upload_media(
-        self,
-        *,
-        channel_id: str,
-        sender_id: str,
-        message_type: str,
-        media_kind: str | None,
-        file: Any,
-        text: str | None = None,
-        duration_ms: int | None = None,
-        reply_mode: ReplyMode | None = None,
-        reply_to_message_id: str | None = None,
-    ) -> SendMessageResult:
-        channel = await self._get(channel_id)
-        return await self._require_messages().upload_media(
-            container_type="channel",
-            container_id=channel.str_id,
-            sender_id=sender_id,
-            message_type=message_type,
-            media_kind=media_kind,
-            file=file,
-            text=text,
-            duration_ms=duration_ms,
-            reply_mode=reply_mode,
-            reply_to_message_id=reply_to_message_id,
+    async def pin_message(
+        self, *, channel_id: str, message_id: str, actor_user_id: str
+    ) -> ChannelDocument:
+        return await self._set_pinned(
+            channel_id=channel_id,
+            message_id=message_id,
+            actor_user_id=actor_user_id,
+            add=True,
         )
 
-    async def send_rich_content(
-        self,
-        *,
-        channel_id: str,
-        sender_id: str,
-        body: Any,
-    ) -> SendMessageResult:
-        channel = await self._get(channel_id)
-        return await self._require_messages().send_rich_content(
-            container_type="channel",
-            container_id=channel.str_id,
-            sender_id=sender_id,
-            body=body,
+    async def unpin_message(
+        self, *, channel_id: str, message_id: str, actor_user_id: str
+    ) -> ChannelDocument:
+        return await self._set_pinned(
+            channel_id=channel_id,
+            message_id=message_id,
+            actor_user_id=actor_user_id,
+            add=False,
         )
 
-    async def mark_read(
-        self, *, channel_id: str, message_id: str, user_id: str
-    ) -> MessageDoc:
+    async def _set_pinned(
+        self, *, channel_id: str, message_id: str, actor_user_id: str, add: bool
+    ) -> ChannelDocument:
+        """Pin or unpin, resolved at the channel's own scope.
+
+        The pin right is decided against the channel resource, so channel roles
+        and channel ownership govern it — not the group management right that
+        the conversation path asks about.
+        """
         channel = await self._get(channel_id)
         await self.authorization.require(
-            user_id,
-            MESSAGE_READ,
+            actor_user_id,
+            MESSAGE_PIN,
             "channel",
             channel.str_id,
-            message="Not allowed to read this channel",
+            message="Not allowed to pin messages in this channel",
         )
-        message = await self._require_messages().get_message(
-            container_type="channel",
-            container_id=channel.str_id,
-            message_id=message_id,
-            user_id=user_id,
-        )
-        relationship = await self._viewer_edge(
-            channel_id=channel.str_id, user_id=user_id
-        )
-        if relationship is not None:
-            await self.relationships.update_state(
-                relationship_id=relationship.str_id,
-                updates={
-                    "last_read_at": datetime.now(UTC),
-                    "last_read_message_id": message_id,
-                },
-            )
-        return message
+        write = self.repo.add_pinned_message if add else self.repo.remove_pinned_message
+        updated = await write(channel_id=channel.str_id, message_id=message_id)
+        if updated is None:
+            raise self._not_found()
+        return updated
 
     async def list_for_inbox(
         self, *, user_id: str, limit: int = 100
@@ -655,6 +559,35 @@ class ChannelService:
         )
         return self._state_view(updated or edge)
 
+    async def advance_read_cursor(
+        self, *, channel_id: str, user_id: str, last_read_message_id: str
+    ) -> None:
+        """Move a viewer's read cursor to one specific message.
+
+        The channel counterpart of marking a conversation read at a message: a
+        channel's per-viewer read state lives on the follow edge. A reader with
+        no edge — a stranger reading a public channel — has no cursor to move,
+        which is not an error.
+        """
+        channel = await self._get(channel_id)
+        await self.authorization.require(
+            user_id,
+            MESSAGE_READ,
+            "channel",
+            channel.str_id,
+            message="Not allowed to read this channel",
+        )
+        edge = await self._viewer_edge(channel_id=channel.str_id, user_id=user_id)
+        if edge is None:
+            return
+        await self.relationships.update_state(
+            relationship_id=edge.str_id,
+            updates={
+                "last_read_at": datetime.now(UTC),
+                "last_read_message_id": last_read_message_id,
+            },
+        )
+
     @staticmethod
     def _state_view(edge: Any) -> dict[str, Any]:
         state = edge.state
@@ -773,6 +706,7 @@ class ChannelService:
             message_count=channel.message_count,
             follower_count=channel.follower_count,
             last_message_id=channel.last_message_id,
+            pinned_message_ids=[str(mid) for mid in channel.pinned_message_ids],
             last_activity_at=channel.last_activity_at,
             legacy_conversation_id=channel.legacy_conversation_id,
             created_by=str(channel.created_by),

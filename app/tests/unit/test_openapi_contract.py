@@ -61,11 +61,11 @@ def test_all_documented_422_responses_use_error_response():
     assert mismatches == []
 
 
-def test_conversation_media_upload_openapi_exposes_new_type_contract():
+def test_container_media_upload_openapi_exposes_new_type_contract():
     spec = create_app().openapi()
 
     request_schema = spec["components"]["schemas"][
-        "Body_send_media_conversations__conversation_id__messages_media_post"
+        "Body_send_container_media_messages__container_type___container_id__media_post"
     ]
 
     assert request_schema["properties"]["type"]["enum"] == ["media", "file"]

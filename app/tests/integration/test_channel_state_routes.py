@@ -57,7 +57,7 @@ async def test_channel_inbox_reports_state_and_unread(inprocess_client):
     # Owner posts; the member has never read, so everything is unread.
     for index in range(3):
         posted = await inprocess_client.post(
-            f"/channels/{channel_id}/messages",
+            f"/messages/channel/{channel_id}/text",
             json={"text": f"message {index}"},
             headers=_auth(owner_tokens["access_token"]),
         )
