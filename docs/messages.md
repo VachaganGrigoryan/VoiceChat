@@ -22,13 +22,13 @@ Access is decided per container by [Authorization](./authorization.md): `message
 - `POST /messages/{container_type}/{container_id}/content`
   Rich content. `type` is `sticker`, `voice`, `location`, `contact` or `link_preview`, with the matching payload field.
 - `POST /messages/{container_type}/{container_id}/schedule`
-  Schedule a text message. Body: `text`, `scheduled_for`. The worker releases it when it is due.
+  Schedule a text message. Body: `text`, `scheduled_for`. The worker releases it when it is due and delivers it like a live send (to the channel room for a channel).
 - `GET /messages/{container_type}/{container_id}/scheduled`
   The caller's pending scheduled messages.
 - `GET /messages/{container_type}/{container_id}/pinned`
   The container's pinned messages.
 - `DELETE /messages/{container_type}/{container_id}`
-  Clear the caller's **own** view of the container. The caller's messages are removed, and everyone else's are hidden for the caller only.
+  Clear the caller's **own** view of the container. In a conversation the caller's messages are deleted and everyone else's are hidden for the caller. In a channel every message is only hidden for the caller; their posts stay visible to the audience.
 - `DELETE /messages/{container_type}/{container_id}/all`
   Clear the history for everyone. Requires manage rights.
 
